@@ -110,3 +110,7 @@ export function buildAnswer(license: Row | null, domain: string | null, now = Da
   }
   return { ...base, valid: status === "active", status, message: license.message.trim() || DEFAULT_MESSAGE[status] }
 }
+
+/** API key access levels, lowest first: read (GET), manage (create, edit, status, renew), full (also delete, regenerate key). */
+export const SCOPES = ["read", "manage", "full"] as const
+export type Scope = (typeof SCOPES)[number]

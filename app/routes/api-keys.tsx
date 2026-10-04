@@ -14,7 +14,8 @@ import { Label } from "#/components/ui/label"
 import { NativeSelect } from "#/components/ui/native-select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "#/components/ui/table"
 import { requireAuth } from "~/server/auth.server"
-import { createApiKey, listApiKeys, revokeApiKey, SCOPES, type ApiKeyRow, type Scope } from "~/server/api.server"
+import { SCOPES, type Scope } from "#/lib/license"
+import { createApiKey, listApiKeys, revokeApiKey, type ApiKeyRow } from "~/server/api.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "API | Warden" }]
 

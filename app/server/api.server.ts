@@ -1,4 +1,4 @@
-import { effectiveStatus, isStatus, KEY_PATTERN, parseDomains, normalizeDomain, STATUSES, type Status } from "../lib/license"
+import { effectiveStatus, isStatus, KEY_PATTERN, parseDomains, normalizeDomain, STATUSES, type Scope, type Status } from "../lib/license"
 import {
   createLicense, deleteLicense, extendLicense, getLicense, getLicenseByRef, overviewStats, recentActivity, regenerateKey,
   renewUntil, setStatus, updateLicense, type Activity, type License, type LicenseInput,
@@ -14,8 +14,6 @@ const CORS = {
   "access-control-max-age": "86400",
 }
 
-export const SCOPES = ["read", "manage", "full"] as const
-export type Scope = (typeof SCOPES)[number]
 const LEVEL: Record<Scope, number> = { read: 0, manage: 1, full: 2 }
 
 function reply(body: unknown, status = 200, extra: Record<string, string> = {}): Response {

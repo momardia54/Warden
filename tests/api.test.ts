@@ -1,7 +1,8 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { makeCtx, makeDb } from "./helpers/d1.ts"
-import { applyBody, createApiKey, handleApi, parseEndDate, type Scope } from "../app/server/api.server.ts"
+import type { Scope } from "../app/lib/license.ts"
+import { applyBody, createApiKey, handleApi, parseEndDate } from "../app/server/api.server.ts"
 
 const DAY = 86_400_000
 const ORIGIN = "https://w.example"
