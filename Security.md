@@ -4,7 +4,7 @@ Warden is **pre-1.0** (see [Roadmap.md](Roadmap.md)). It has had no independent 
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a security problem. Report it privately to the maintainer, through GitHub's "Report a vulnerability" button on the repository (Security tab) once the repository is public. Include what you found, how to reproduce it, and which version. The contact address for reports will be added here before the first public release. You will get an acknowledgement, and a fix or a clear answer, as fast as one person can manage. Credit is given unless you prefer otherwise.
+Please do not open a public issue for a security problem. Report it privately to the maintainer by email at **momar.web54@gmail.com**, or through GitHub's "Report a vulnerability" button on the repository (Security tab) once it is public. Include what you found, how to reproduce it, and which version. You will get an acknowledgement, and a fix or a clear answer, as fast as one person can manage. Credit is given unless you prefer otherwise.
 
 Supported versions: only the latest release (there is no 1.0 yet, so none is long-term supported).
 
