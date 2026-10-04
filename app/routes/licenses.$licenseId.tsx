@@ -1,7 +1,9 @@
 import { useState } from "react"
-import { Form, Link, redirect, useNavigation, useSearchParams } from "react-router"
+import { Form, Link, redirect, useFetcher, useNavigation, useSearchParams } from "react-router"
 import { CalendarPlus, Pencil, RefreshCw, Trash2 } from "lucide-react"
+import type { App } from "~/server/apps.server"
 import type { Route } from "./+types/licenses.$licenseId"
+import { ConfirmAction } from "#/components/confirm-action"
 import { FilesSection } from "#/components/files-section"
 import { HelpTip } from "#/components/help-tip"
 import { PageHeader } from "#/components/page-header"
@@ -15,7 +17,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { checkResultLabel, effectiveStatus, isStatus, STATUSES, STATUS_HINT, STATUS_LABEL } from "#/lib/license"
 import { requireAuth } from "~/server/auth.server"
 import { deleteFile, getFile, listFiles, storageConfigured, updateFile } from "~/server/files.server"
-import { deleteLicense, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
+import { formatSites } from "#/components/licenses-table"
+import { deleteLicense, listActivations, releaseActivation, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Licence | Warden" }]
 
@@ -25,8 +28,13 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   const license = await getLicense(env, params.licenseId)
   if (!license) throw new Response("Licence not found", { status: 404 })
   const origin = new URL(request.url).origin
-  const [activity, files] = await Promise.all([recentActivity(env, license.id), listFiles(env, license.id)])
-  return { license, activity, files, filesConfigured: storageConfigured(env), origin, checkUrl: `${origin}/check/${license.license_key}` }
+  const [activity, files, sharedFiles, sites] = await Promise.all([
+    recentActivity(env, license.id),
+    listFiles(env, { license }),
+    license.app_id ? listFiles(env, { app: { id: license.app_id } as App }) : Promise.resolve([]),
+    listActivations(env, license.id),
+  ])
+  return { license, activity, files, sharedFiles, sites, filesConfigured: storageConfigured(env), origin, checkUrl: `${origin}/check/${license.license_key}` }
 }
 
 export async function action({ request, context, params }: Route.ActionArgs) {
@@ -46,11 +54,13 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   } else if (intent === "regenerate") {
     await regenerateKey(env, license)
   } else if (intent === "update-file") {
-    const file = await getFile(env, license.id, String(form.get("fileId")))
-    if (file) await updateFile(env, license, file, { statuses: String(form.get("statuses") ?? ""), checkDomain: form.get("check_domain") === "true", version: String(form.get("version") ?? "") })
+    const file = await getFile(env, { license }, String(form.get("fileId")))
+    if (file) await updateFile(env, { license }, file, { statuses: String(form.get("statuses") ?? ""), checkDomain: form.get("check_domain") === "true", version: String(form.get("version") ?? "") })
   } else if (intent === "delete-file") {
-    const file = await getFile(env, license.id, String(form.get("fileId")))
-    if (file) await deleteFile(env, license, file)
+    const file = await getFile(env, { license }, String(form.get("fileId")))
+    if (file) await deleteFile(env, { license }, file)
+  } else if (intent === "release-site") {
+    await releaseActivation(env, license, String(form.get("domain") ?? ""))
   } else if (intent === "delete") {
     await deleteLicense(env, license.id)
     return redirect("/licenses")
@@ -70,37 +80,17 @@ function Fact({ label, help, children }: { label: string; help?: React.ReactNode
   )
 }
 
-function ConfirmAction({ intent, trigger, title, description, confirm }: { intent: string; trigger: React.ReactNode; title: string; description: string; confirm: string }) {
-  const [open, setOpen] = useState(false)
-  const busy = useNavigation().state === "submitting"
+function SiteRelease({ domain }: { domain: string }) {
+  const fetcher = useFetcher()
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        <Form method="post" onSubmit={() => setOpen(false)}>
-          <input type="hidden" name="intent" value={intent} />
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button type="button" variant="outline">
-                Cancel
-              </Button>
-            </DialogClose>
-            <Button type="submit" variant="destructive" disabled={busy}>
-              {confirm}
-            </Button>
-          </DialogFooter>
-        </Form>
-      </DialogContent>
-    </Dialog>
+    <Button variant="outline" size="sm" disabled={fetcher.state !== "idle"} onClick={() => fetcher.submit({ intent: "release-site", domain }, { method: "post" })}>
+      Release site
+    </Button>
   )
 }
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, files, filesConfigured, origin, checkUrl } = loaderData
+  const { license, activity, files, sharedFiles, sites, filesConfigured, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
   const effective = effectiveStatus(license)
   const curl = `curl "${checkUrl}?domain=example.com"`
@@ -121,7 +111,15 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
             <h1 className="flex items-center gap-3 text-2xl font-bold">
               {license.name} <LicenseStatusBadge license={license} />
             </h1>
-            {license.client && <p className="text-sm text-muted-foreground">{license.client}</p>}
+            <p className="text-sm text-muted-foreground">
+              {[license.customer_name, license.customer_email].filter(Boolean).join(" · ")}
+              {license.app_id && (
+                <>
+                  {license.customer_name || license.customer_email ? " · " : ""}
+                  App: <Link className="text-foreground underline underline-offset-2" to={`/apps/${license.app_id}`}>{license.app_name}</Link>
+                </>
+              )}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline">
@@ -212,6 +210,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
             <Fact label="Status reported to sites" help="What the check endpoint returns right now. Differs from the stored status only when an active licence has passed its expiry date.">{STATUS_LABEL[effective]}</Fact>
             <Fact label="Expires">{license.expires_at ? `${new Date(license.expires_at).toISOString().slice(0, 10)} (end of day, UTC)` : "Never"}</Fact>
             <Fact label="Allowed domains" help="Sites must send one of these as ?domain= for the licence to be valid.">{license.domains || "Any domain"}</Fact>
+            <Fact label="Sites in use" help="How many different sites (domains) have registered with this licence, and the maximum allowed.">{formatSites(license)}</Fact>
             <Fact label="Last check" help="The last time a site called the check URL, and the domain it reported.">
               <Ago ts={license.last_check_at} />
               {license.last_check_domain ? ` from ${license.last_check_domain}` : ""}
@@ -225,7 +224,41 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           </dl>
         </section>
 
-        <FilesSection licenseId={license.id} licenseKey={license.license_key} origin={origin} license={license} files={files} configured={filesConfigured} />
+        <section className="space-y-3 rounded-lg border bg-card p-4">
+          <div>
+            <h2 className="flex items-center gap-1.5 font-semibold">
+              Sites <HelpTip>A site registers automatically the first time it checks this licence with its domain (?domain=). When the licence has a site limit, further sites are refused once it is reached. Release a site to free its slot.</HelpTip>
+            </h2>
+            <p className="text-xs text-muted-foreground">{formatSites(license)} in use</p>
+          </div>
+          {sites.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No site has checked this licence with a domain yet.</p>
+          ) : (
+            <ul className="divide-y rounded-md border">
+              {sites.map((site) => (
+                <li key={site.domain} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+                  <div>
+                    <span className="font-medium">{site.domain}</span>
+                    <div className="text-xs text-muted-foreground">
+                      First seen <Ago ts={site.first_seen_at} /> · last check <Ago ts={site.last_seen_at} /> · {site.check_count} check{site.check_count === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <SiteRelease domain={site.domain} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <FilesSection
+          description="Downloads released by licence status. Each file lists the statuses in which it can be downloaded."
+          uploadPath={`/licenses/${license.id}/files`}
+          downloadUrl={(fileId) => `${origin}/download/${license.license_key}/${fileId}`}
+          license={license}
+          files={files}
+          shared={license.app_id && sharedFiles.length > 0 ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles } : null}
+          configured={filesConfigured}
+        />
 
         <section className="space-y-2">
           <h2 className="font-semibold">Activity</h2>

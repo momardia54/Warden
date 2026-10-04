@@ -30,6 +30,7 @@ Supported versions: only the latest release (there is no 1.0 yet, so none is lon
 - **No rate limiting on the API or the check URL** yet. Keys are long and random, so guessing is not practical, but a leaked key can be used without limit until you revoke it. Cloudflare's own WAF rate limiting rules can be put in front of `/api/*` and `/check/*` meanwhile.
 - **Single admin.** There are no separate users or roles. API key scopes are the only separation.
 - **CORS is open (`*`) on `/check/*` and `/api/*`.** Those endpoints do not use cookies, so a web page cannot use your dashboard session against them; they authenticate with the key in the address or the `Authorization` header.
+- **Site limits rely on the domain a site reports.** A customer could send another domain, or run the same code on several servers that all report the same domain. The limit controls honest use and makes sharing visible (the licence page lists every registered site); it does not technically prevent it.
 - **Downloaded files stay downloaded.** Cutting a licence off stops future downloads and updates, not copies already on a client's server. The final file, once released, cannot be taken back. Anyone who holds a valid licence key can download the files that licence allows, from anywhere, as often as they like (no download limits yet).
 - **No malware scanning or checksums** on uploaded files; you are the only uploader, so scan your own builds. SHA-256 checksums are on the roadmap.
 - Not a general-purpose secret store. Do not put passwords or personal data in licence notes.

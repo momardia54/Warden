@@ -1,336 +1,133 @@
-import { effectiveStatus, grantsAccess, isStatus, KEY_PATTERN, parseDomains, normalizeDomain, STATUSES, type Scope, type Status } from "../lib/license"
+import { KEY_PATTERN, STATUSES, isStatus, type Scope } from "../lib/license"
+import { applyAppBody, applyLicenseBody } from "./api-input.server"
+import { authenticate, type ApiKeyRow } from "./api-keys.server"
+import { CORS, fail, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
+import { serializeActivation, serializeActivity, serializeApp, serializeFile, serializeLicense } from "./api-serializers.server"
+import { appDefaults, createApp, deleteApp, findApp, getAppSummary, listApps, updateApp, type App, type AppInput } from "./apps.server"
+import { deleteFile, getFile, listFiles, storeFile, updateFile, type FileOwner } from "./files.server"
 import {
-  createLicense, deleteLicense, extendLicense, getLicense, getLicenseByRef, overviewStats, recentActivity, regenerateKey,
-  renewUntil, setStatus, updateLicense, type Activity, type License, type LicenseInput,
+  createLicense, deleteLicense, extendLicense, getLicense, getLicenseByKey, getLicenseByRef, listActivations, overviewStats, queryLicenses, recentActivity,
+  regenerateKey, releaseActivation, renewUntil, setStatus, updateLicense, type License, type LicenseInput,
 } from "./licenses.server"
-import { evaluateFileAccess } from "../lib/files"
-import { deleteFile, getFile, listFiles, releaseRule, storeFile, updateFile, type LicenseFile } from "./files.server"
 import { openApiSpec } from "./openapi.server"
-import { json, newId, randomString, sha256Hex } from "./util.server"
 
-const MAX_BODY = 64 * 1024
-const CORS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
-  "access-control-allow-headers": "Authorization, Content-Type, X-API-Key",
-  "access-control-max-age": "86400",
+type Context = { env: Env; request: Request; url: URL; origin: string; key: ApiKeyRow }
+
+const need = (ctx: Context, scope: Scope) => requirePermission(ctx.key.scope, scope)
+
+const LICENSE_DEFAULTS: LicenseInput = {
+  name: "", customer_name: "", customer_email: "", app_id: null, max_sites: null, status: "active", expires_at: null, domains: "", message: "", notes: "",
 }
 
-const LEVEL: Record<Scope, number> = { read: 0, manage: 1, full: 2 }
-
-function reply(body: unknown, status = 200, extra: Record<string, string> = {}): Response {
-  return json(body, { status, headers: { ...CORS, "cache-control": "no-store", ...extra } })
-}
-function fail(status: number, code: string, message: string): Response {
-  return reply({ error: { code, message } }, status)
+const APP_DEFAULTS: AppInput = {
+  name: "", slug: "", description: "", default_duration_days: null, default_status: "active", default_max_sites: null, default_message: "", notes: "",
 }
 
-// ---- API keys -------------------------------------------------------------------
+const toInput = (l: License): LicenseInput => ({
+  name: l.name, customer_name: l.customer_name, customer_email: l.customer_email, app_id: l.app_id, max_sites: l.max_sites, status: l.status,
+  expires_at: l.expires_at, domains: l.domains, message: l.message, notes: l.notes,
+})
 
-export type ApiKeyRow = { id: string; name: string; prefix: string; scope: Scope; created_at: number; last_used_at: number | null }
+const toAppInput = (a: App): AppInput => ({
+  name: a.name, slug: a.slug, description: a.description, default_duration_days: a.default_duration_days, default_status: a.default_status,
+  default_max_sites: a.default_max_sites, default_message: a.default_message, notes: a.notes,
+})
 
-export async function createApiKey(env: Env, name: string, scope: Scope): Promise<{ id: string; secret: string }> {
-  const secret = `wk_${randomString(40)}`
-  const id = newId("key")
-  await env.DB.prepare("INSERT INTO api_keys (id, name, prefix, key_hash, scope, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(id, name, secret.slice(0, 7), await sha256Hex(secret), scope, Date.now())
-    .run()
-  return { id, secret }
-}
-
-export async function listApiKeys(env: Env): Promise<ApiKeyRow[]> {
-  return (await env.DB.prepare("SELECT id, name, prefix, scope, created_at, last_used_at FROM api_keys ORDER BY created_at DESC").all<ApiKeyRow>()).results
-}
-
-export async function revokeApiKey(env: Env, id: string): Promise<void> {
-  await env.DB.prepare("DELETE FROM api_keys WHERE id = ?").bind(id).run()
-}
-
-async function authenticate(request: Request, env: Env, ctx: ExecutionContext): Promise<ApiKeyRow | null> {
-  const header = request.headers.get("authorization") ?? ""
-  const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : (request.headers.get("x-api-key") ?? "").trim()
-  if (!/^wk_[A-Za-z0-9]{40}$/.test(token)) return null
-  const row = await env.DB.prepare("SELECT id, name, prefix, scope, created_at, last_used_at FROM api_keys WHERE key_hash = ?").bind(await sha256Hex(token)).first<ApiKeyRow>()
-  if (row && (!row.last_used_at || Date.now() - row.last_used_at > 60_000)) {
-    ctx.waitUntil(env.DB.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").bind(Date.now(), row.id).run().then(() => {}, () => {}))
-  }
-  return row
-}
-
-// ---- shapes ---------------------------------------------------------------------
-
-const iso = (ts: number | null) => (ts ? new Date(ts).toISOString() : null)
-
-export function publicLicense(l: License, origin: string) {
-  const status = effectiveStatus(l)
-  return {
-    id: l.id,
-    name: l.name,
-    client: l.client,
-    key: l.license_key,
-    check_url: `${origin}/check/${l.license_key}`,
-    status,
-    stored_status: l.status,
-    valid: grantsAccess(status),
-    expires_at: iso(l.expires_at),
-    domains: parseDomains(l.domains),
-    message: l.message,
-    notes: l.notes,
-    external_ref: l.external_ref,
-    created_at: iso(l.created_at),
-    updated_at: iso(l.updated_at),
-    last_check_at: iso(l.last_check_at),
-    last_check_domain: l.last_check_domain,
-    check_count: l.check_count,
-  }
-}
-
-const publicFile = (f: LicenseFile, license: License, origin: string) => {
-  const rule = releaseRule(f)
-  return {
-    id: f.id,
-    name: f.name,
-    version: f.version,
-    notes: f.notes,
-    size: f.size,
-    content_type: f.content_type,
-    statuses: rule.statuses,
-    check_domain: rule.check_domain,
-    available: evaluateFileAccess(license, rule, null, Date.now(), true).allowed,
-    uploaded_at: iso(f.uploaded_at),
-    download_count: f.download_count,
-    last_download_at: iso(f.last_download_at),
-    download_url: `${origin}/download/${license.license_key}/${f.id}`,
-  }
-}
-
-const publicActivity = (a: Activity) => ({ at: iso(a.at), event: a.event, status: a.status, domain: a.domain, detail: a.detail })
-
-// ---- input ----------------------------------------------------------------------
-
-async function readJson(request: Request): Promise<Record<string, unknown> | Response> {
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_BODY) return fail(413, "too_large", "The body is larger than 64 KB.")
-  const text = await request.text()
-  if (text.length > MAX_BODY) return fail(413, "too_large", "The body is larger than 64 KB.")
-  if (!text.trim()) return {}
-  try {
-    const value = JSON.parse(text)
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return fail(400, "invalid_json", "The body must be a JSON object.")
-    return value as Record<string, unknown>
-  } catch {
-    return fail(400, "invalid_json", "The body is not valid JSON.")
-  }
-}
-
-/** "2027-03-31" (end of that day, UTC) or a full ISO date-time. null clears it. */
-export function parseEndDate(value: unknown): number | null | "invalid" {
-  if (value === null) return null
-  if (typeof value !== "string") return "invalid"
-  const v = value.trim()
-  const ms = /^\d{4}-\d{2}-\d{2}$/.test(v) ? Date.parse(`${v}T23:59:59.999Z`) : /^\d{4}-\d{2}-\d{2}T/.test(v) ? Date.parse(v) : NaN
-  return Number.isNaN(ms) ? "invalid" : ms
-}
-
-const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : null)
-
-type Parsed = { input: LicenseInput } | { response: Response }
-
-/** Merges a JSON body over `base` (an existing licence, or defaults for a new one) and validates it. */
-export function applyBody(body: Record<string, unknown>, base: LicenseInput): Parsed {
-  const input = { ...base }
-  if ("name" in body) {
-    const name = text(body.name, 120)
-    if (!name) return { response: fail(422, "invalid_name", "name must be a non-empty string of at most 120 characters.") }
-    input.name = name
-  }
-  for (const [field, max] of [["client", 120], ["message", 300], ["notes", 4000]] as const) {
-    if (field in body) {
-      const v = text(body[field], max)
-      if (v === null) return { response: fail(422, `invalid_${field}`, `${field} must be a string.`) }
-      input[field] = v
-    }
-  }
-  if ("status" in body) {
-    if (!isStatus(body.status) || body.status === "expired") {
-      return { response: fail(422, "invalid_status", `status must be one of: ${STATUSES.filter((s) => s !== "expired").join(", ")}. "expired" is set by the end date.`) }
-    }
-    input.status = body.status
-  }
-  if ("expires_at" in body) {
-    const end = parseEndDate(body.expires_at)
-    if (end === "invalid") return { response: fail(422, "invalid_expires_at", "expires_at must be null, YYYY-MM-DD or an ISO date-time.") }
-    input.expires_at = end
-  } else if ("duration_days" in body) {
-    const d = Number(body.duration_days)
-    if (!Number.isInteger(d) || d < 1 || d > 3650) return { response: fail(422, "invalid_duration_days", "duration_days must be a whole number from 1 to 3650.") }
-    input.expires_at = Date.now() + d * 86_400_000
-  }
-  if ("domains" in body) {
-    const list = Array.isArray(body.domains) ? body.domains : typeof body.domains === "string" ? body.domains.split(/[\s,]+/).filter(Boolean) : null
-    if (!list || list.some((d) => typeof d !== "string" || !normalizeDomain(d))) {
-      return { response: fail(422, "invalid_domains", "domains must be an array of valid domain names (or a comma-separated string).") }
-    }
-    input.domains = parseDomains((list as string[]).join(" ")).join(", ")
-  }
-  return { input }
-}
-
-const DEFAULTS: LicenseInput = { name: "", client: "", status: "active", expires_at: null, domains: "", message: "", notes: "" }
-const asInput = (l: License): LicenseInput => ({ name: l.name, client: l.client, status: l.status, expires_at: l.expires_at, domains: l.domains, message: l.message, notes: l.notes })
-
-// ---- routes ---------------------------------------------------------------------
-
-function need(key: ApiKeyRow, scope: Scope): Response | null {
-  return LEVEL[key.scope] >= LEVEL[scope] ? null : fail(403, "forbidden", `This key has "${key.scope}" access. This action needs "${scope}".`)
-}
-
+/** Finds a licence by its id (lic_...) or its licence key (WRD-...). */
 async function findLicense(env: Env, idOrKey: string): Promise<License | null> {
-  if (KEY_PATTERN.test(idOrKey.toUpperCase())) {
-    return env.DB.prepare("SELECT * FROM licenses WHERE license_key = ?").bind(idOrKey.toUpperCase()).first<License>()
-  }
+  const upper = idOrKey.toUpperCase()
+  if (KEY_PATTERN.test(upper)) return getLicenseByKey(env, upper)
   return /^lic_[a-z0-9]+$/.test(idOrKey) ? getLicense(env, idOrKey) : null
 }
 
-async function listLicensesApi(env: Env, url: URL, origin: string): Promise<Response> {
-  const q = url.searchParams
-  const limit = Math.min(100, Math.max(1, Number(q.get("limit")) || 25))
-  const where: string[] = []
-  const args: (string | number)[] = []
-  const now = Date.now()
-  const status = q.get("status")
-  if (status) {
-    if (!isStatus(status)) return fail(422, "invalid_status", `status must be one of: ${STATUSES.join(", ")}.`)
-    if (status === "expired") { where.push("(status = 'expired' OR (status = 'active' AND expires_at IS NOT NULL AND expires_at <= ?))"); args.push(now) }
-    else if (status === "active") { where.push("(status = 'active' AND (expires_at IS NULL OR expires_at > ?))"); args.push(now) }
-    else { where.push("status = ?"); args.push(status) }
-  }
-  const search = q.get("q")?.trim()
-  if (search) {
-    const like = `%${search.replace(/[%_\\]/g, "\\$&")}%`
-    where.push("(name LIKE ? ESCAPE '\\' OR client LIKE ? ESCAPE '\\' OR license_key LIKE ? ESCAPE '\\' OR domains LIKE ? ESCAPE '\\' OR external_ref LIKE ? ESCAPE '\\')")
-    args.push(like, like, like, like, like)
-  }
-  const ref = q.get("external_ref")
-  if (ref) { where.push("external_ref = ?"); args.push(ref) }
-  const before = q.get("before")
-  if (before) { where.push("id < ?"); args.push(before) }
-  const rows = (await env.DB.prepare(`SELECT * FROM licenses ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC LIMIT ?`).bind(...args, limit + 1).all<License>()).results
-  const page = rows.slice(0, limit)
-  return reply({ data: page.map((l) => publicLicense(l, origin)), next: rows.length > limit ? page[page.length - 1].id : null })
+/** Resolves the `app` field of a request body: undefined (absent), null (no app) or an app. */
+async function resolveAppField(env: Env, body: Record<string, unknown>): Promise<App | null | undefined | Response> {
+  if (!("app" in body)) return undefined
+  if (body.app === null) return null
+  const ref = trimmed(body.app, 60)
+  if (!ref) return fail(422, "invalid_app", "app must be an app id, an app slug or null.")
+  return (await findApp(env, ref)) ?? fail(422, "invalid_app", `No app matches "${ref}".`)
 }
 
-export async function handleApi(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const url = new URL(request.url)
-  const origin = url.origin
+// ---- licences ---------------------------------------------------------------------
+
+async function listLicensesResponse(ctx: Context, appId?: string): Promise<Response> {
+  const q = ctx.url.searchParams
+  const limit = Math.min(100, Math.max(1, Number(q.get("limit")) || 25))
+  const status = q.get("status") ?? undefined
+  if (status && !isStatus(status)) return fail(422, "invalid_status", `status must be one of: ${STATUSES.join(", ")}.`)
+  let filterApp = appId
+  const appRef = q.get("app")
+  if (!filterApp && appRef) {
+    const app = await findApp(ctx.env, appRef)
+    if (!app) return fail(422, "invalid_app", `No app matches "${appRef}".`)
+    filterApp = app.id
+  }
+  const rows = await queryLicenses(ctx.env, { status, q: q.get("q") ?? undefined, externalRef: q.get("external_ref") ?? undefined, appId: filterApp, before: q.get("before") ?? undefined, limit: limit + 1 })
+  const page = rows.slice(0, limit)
+  return reply({ data: page.map((l) => serializeLicense(l, ctx.origin)), next: rows.length > limit ? page[page.length - 1].id : null })
+}
+
+/** Creates a licence from a JSON body. Under an app, the app's defaults apply to every field the body leaves out. */
+async function createLicenseResponse(ctx: Context, forcedApp?: App): Promise<Response> {
+  const denied = need(ctx, "manage")
+  if (denied) return denied
+  const body = await readJson(ctx.request)
+  if (body instanceof Response) return body
+
+  const ref = body.external_ref === undefined || body.external_ref === null ? null : trimmed(body.external_ref, 120)
+  if (body.external_ref !== undefined && body.external_ref !== null && !ref) return fail(422, "invalid_external_ref", "external_ref must be a non-empty string of at most 120 characters.")
+  if (ref) {
+    const existing = await getLicenseByRef(ctx.env, ref)
+    if (existing) return reply(serializeLicense(existing, ctx.origin), 200, { "idempotent-replayed": "true" })
+  }
+  if (!("name" in body)) return fail(422, "invalid_name", "name is required.")
+
+  const fromBody = forcedApp === undefined ? await resolveAppField(ctx.env, body) : forcedApp
+  if (fromBody instanceof Response) return fromBody
+  const app = fromBody ?? null
+  const base: LicenseInput = { ...LICENSE_DEFAULTS, ...(app ? appDefaults(app) : {}), app_id: app?.id ?? null }
+  const parsed = applyLicenseBody(body, base)
+  if ("response" in parsed) return parsed.response
+  try {
+    return reply(serializeLicense(await createLicense(ctx.env, { ...parsed.input, external_ref: ref }), ctx.origin), 201)
+  } catch (error) {
+    // Two requests with the same reference can race; the unique index lets one succeed and the other returns that licence.
+    const existing = ref ? await getLicenseByRef(ctx.env, ref) : null
+    if (existing) return reply(serializeLicense(existing, ctx.origin), 200, { "idempotent-replayed": "true" })
+    throw error
+  }
+}
+
+async function licenseRoute(ctx: Context, segments: string[]): Promise<Response> {
+  const { env, request, origin } = ctx
   const method = request.method
-  if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS })
-  const path = url.pathname.replace(/^\/api\/v1/, "").replace(/\/+$/, "") || "/"
-
-  if (path === "/openapi.json" && method === "GET") return reply(openApiSpec(origin))
-
-  const key = await authenticate(request, env, ctx)
-  if (!key) return fail(401, "unauthorized", "Send a valid API key as Authorization: Bearer wk_...")
-
-  if (path === "/me" && method === "GET") return reply({ name: key.name, scope: key.scope, prefix: key.prefix })
-  if (path === "/stats" && method === "GET") return reply(await overviewStats(env))
-
-  if (path === "/licenses") {
-    if (method === "GET") return listLicensesApi(env, url, origin)
-    if (method === "POST") {
-      const denied = need(key, "manage")
-      if (denied) return denied
-      const body = await readJson(request)
-      if (body instanceof Response) return body
-      const ref = body.external_ref === undefined || body.external_ref === null ? null : text(body.external_ref, 120)
-      if (body.external_ref !== undefined && body.external_ref !== null && !ref) return fail(422, "invalid_external_ref", "external_ref must be a non-empty string of at most 120 characters.")
-      if (ref) {
-        const existing = await getLicenseByRef(env, ref)
-        if (existing) return reply(publicLicense(existing, origin), 200, { "idempotent-replayed": "true" })
-      }
-      if (!("name" in body)) return fail(422, "invalid_name", "name is required.")
-      const parsed = applyBody(body, DEFAULTS)
-      if ("response" in parsed) return parsed.response
-      try {
-        const created = await createLicense(env, { ...parsed.input, external_ref: ref })
-        return reply(publicLicense(created, origin), 201)
-      } catch (error) {
-        // Two requests with the same reference racing: the unique index lets one win, the other gets that licence.
-        const existing = ref ? await getLicenseByRef(env, ref) : null
-        if (existing) return reply(publicLicense(existing, origin), 200, { "idempotent-replayed": "true" })
-        throw error
-      }
-    }
+  if (segments.length === 0) {
+    if (method === "GET") return listLicensesResponse(ctx)
+    if (method === "POST") return createLicenseResponse(ctx)
     return fail(405, "method_not_allowed", "Use GET or POST.")
   }
 
-  const fm = path.match(/^\/licenses\/([A-Za-z0-9_-]+)\/files(?:\/(fil_[a-z0-9]+))?$/)
-  if (fm) {
-    const owner = await findLicense(env, fm[1])
-    if (!owner) return fail(404, "license_not_found", "No licence with that id or key.")
-    const fileId = fm[2]
-    if (method === "GET" && !fileId) return reply({ data: (await listFiles(env, owner.id)).map((f) => publicFile(f, owner, origin)) })
-    if (method === "PUT" && !fileId) {
-      const denied = need(key, "manage")
-      if (denied) return denied
-      const q = url.searchParams
-      const stored = await storeFile(env, owner, {
-        name: q.get("name") ?? "",
-        statuses: q.get("statuses") ?? undefined,
-        checkDomain: q.get("check_domain") !== "false",
-        version: q.get("version") ?? "",
-        notes: q.get("notes") ?? "",
-        contentType: request.headers.get("content-type"),
-        size: Number(request.headers.get("content-length")),
-        body: request.body,
-      })
-      return "error" in stored ? fail(stored.status, "upload_failed", stored.error) : reply(publicFile(stored.file, owner, origin), 201)
-    }
-    if (method === "PATCH" && fileId) {
-      const denied = need(key, "manage")
-      if (denied) return denied
-      const file = await getFile(env, owner.id, fileId)
-      if (!file) return fail(404, "file_not_found", "File not found for this licence.")
-      const body = await readJson(request)
-      if (body instanceof Response) return body
-      const updated = await updateFile(env, owner, file, {
-        statuses: body.statuses,
-        checkDomain: typeof body.check_domain === "boolean" ? body.check_domain : undefined,
-        version: typeof body.version === "string" ? body.version : undefined,
-        notes: typeof body.notes === "string" ? body.notes : undefined,
-      })
-      return "error" in updated ? fail(updated.status, "invalid_file", updated.error) : reply(publicFile(updated.file, owner, origin))
-    }
-    if (method === "DELETE" && fileId) {
-      const denied = need(key, "manage")
-      if (denied) return denied
-      const file = await getFile(env, owner.id, fileId)
-      if (!file) return fail(404, "file_not_found", "File not found for this licence.")
-      await deleteFile(env, owner, file)
-      return reply({ deleted: true, id: file.id })
-    }
-    return fail(405, "method_not_allowed", "Use GET or PUT on /files, and PATCH or DELETE on /files/{fileId}.")
-  }
-
-  const m = path.match(/^\/licenses\/([A-Za-z0-9_-]+)(?:\/(status|renew|regenerate-key|activity))?$/)
-  if (!m) return fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")
-  const license = await findLicense(env, m[1])
-  if (!license) return fail(404, "license_not_found", "No licence with that id or key.")
-  const sub = m[2]
+  const license = await findLicense(env, segments[0])
+  if (!license) return fail(404, "license_not_found", "No licence matches that id or key.")
+  const [, sub, extra] = segments
 
   if (!sub) {
-    if (method === "GET") return reply(publicLicense(license, origin))
+    if (method === "GET") return reply(serializeLicense(license, origin))
     if (method === "PATCH") {
-      const denied = need(key, "manage")
+      const denied = need(ctx, "manage")
       if (denied) return denied
       const body = await readJson(request)
       if (body instanceof Response) return body
-      const parsed = applyBody(body, asInput(license))
+      const app = await resolveAppField(env, body)
+      if (app instanceof Response) return app
+      const parsed = applyLicenseBody(body, { ...toInput(license), ...(app !== undefined ? { app_id: app?.id ?? null } : {}) })
       if ("response" in parsed) return parsed.response
       await updateLicense(env, license, parsed.input)
-      return reply(publicLicense((await getLicense(env, license.id))!, origin))
+      return reply(serializeLicense((await getLicense(env, license.id))!, origin))
     }
     if (method === "DELETE") {
-      const denied = need(key, "full")
+      const denied = need(ctx, "full")
       if (denied) return denied
       await deleteLicense(env, license.id)
       return reply({ deleted: true, id: license.id })
@@ -338,33 +135,174 @@ export async function handleApi(request: Request, env: Env, ctx: ExecutionContex
     return fail(405, "method_not_allowed", "Use GET, PATCH or DELETE.")
   }
 
+  if (sub === "files") return filesRoute(ctx, { license }, extra)
+
   if (sub === "activity") {
     if (method !== "GET") return fail(405, "method_not_allowed", "Use GET.")
-    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 50))
-    return reply({ data: (await recentActivity(env, license.id, limit)).map(publicActivity) })
+    const limit = Math.min(200, Math.max(1, Number(ctx.url.searchParams.get("limit")) || 50))
+    return reply({ data: (await recentActivity(env, license.id, limit)).map(serializeActivity) })
   }
 
-  if (method !== "POST") return fail(405, "method_not_allowed", "Use POST.")
-  const denied = need(key, sub === "regenerate-key" ? "full" : "manage")
-  if (denied) return denied
-  const body = await readJson(request)
-  if (body instanceof Response) return body
-
-  if (sub === "status") {
-    if (!isStatus(body.status) || body.status === "expired") return fail(422, "invalid_status", `status must be one of: ${STATUSES.filter((s) => s !== "expired").join(", ")}.`)
-    await setStatus(env, license, body.status as Status)
-  } else if (sub === "renew") {
-    if ("until" in body) {
-      const end = parseEndDate(body.until)
-      if (end === "invalid" || end === null || end <= Date.now()) return fail(422, "invalid_until", "until must be YYYY-MM-DD or an ISO date-time, in the future.")
-      await renewUntil(env, license, end)
-    } else {
-      const days = Number(body.days)
-      if (!Number.isInteger(days) || days < 1 || days > 3650) return fail(422, "invalid_days", "Send days (1 to 3650) or until (a date).")
-      await extendLicense(env, license, days)
+  if (sub === "activations") {
+    if (method === "GET" && !extra) return reply({ max_sites: license.max_sites, data: (await listActivations(env, license.id)).map(serializeActivation) })
+    if (method === "DELETE" && extra) {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      return (await releaseActivation(env, license, decodeURIComponent(extra).toLowerCase())) ? reply({ released: true, domain: extra }) : fail(404, "activation_not_found", "That domain is not registered for this licence.")
     }
-  } else {
-    await regenerateKey(env, license)
+    return fail(405, "method_not_allowed", "Use GET on /activations, and DELETE on /activations/{domain}.")
   }
-  return reply(publicLicense((await getLicense(env, license.id))!, origin))
+
+  if ((sub === "status" || sub === "renew" || sub === "regenerate-key") && !extra) {
+    if (method !== "POST") return fail(405, "method_not_allowed", "Use POST.")
+    const denied = need(ctx, sub === "regenerate-key" ? "full" : "manage")
+    if (denied) return denied
+    const body = await readJson(request)
+    if (body instanceof Response) return body
+
+    if (sub === "status") {
+      if (!isStatus(body.status) || body.status === "expired") return fail(422, "invalid_status", `status must be one of: ${STATUSES.filter((s) => s !== "expired").join(", ")}.`)
+      await setStatus(env, license, body.status)
+    } else if (sub === "renew") {
+      if ("until" in body) {
+        const until = parseExpiry(body.until)
+        if (until === "invalid" || until === null || until <= Date.now()) return fail(422, "invalid_until", "until must be a date (YYYY-MM-DD) or an ISO date-time in the future.")
+        await renewUntil(env, license, until)
+      } else {
+        const days = Number(body.days)
+        if (!Number.isInteger(days) || days < 1 || days > 3650) return fail(422, "invalid_days", "Send days (1 to 3650) or until (a date).")
+        await extendLicense(env, license, days)
+      }
+    } else {
+      await regenerateKey(env, license)
+    }
+    return reply(serializeLicense((await getLicense(env, license.id))!, origin))
+  }
+  return fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")
+}
+
+// ---- files ------------------------------------------------------------------------
+
+/** Files of a licence or of an app. Both use the same endpoints and release rules. */
+async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undefined): Promise<Response> {
+  const { env, request, url, origin } = ctx
+  const method = request.method
+  const license = "license" in owner ? owner.license : null
+  const shape = (f: Parameters<typeof serializeFile>[0]) => serializeFile(f, license, origin)
+
+  if (method === "GET" && !fileId) return reply({ data: (await listFiles(env, owner)).map(shape) })
+
+  if (method === "PUT" && !fileId) {
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    const q = url.searchParams
+    const stored = await storeFile(env, owner, {
+      name: q.get("name") ?? "",
+      statuses: q.get("statuses") ?? undefined,
+      checkDomain: q.get("check_domain") !== "false",
+      version: q.get("version") ?? "",
+      notes: q.get("notes") ?? "",
+      contentType: request.headers.get("content-type"),
+      size: Number(request.headers.get("content-length")),
+      body: request.body,
+    })
+    return "error" in stored ? fail(stored.status, "upload_failed", stored.error) : reply(shape(stored.file), 201)
+  }
+
+  if (fileId && (method === "PATCH" || method === "DELETE")) {
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    const file = await getFile(env, owner, fileId)
+    if (!file) return fail(404, "file_not_found", "File not found.")
+    if (method === "DELETE") {
+      await deleteFile(env, owner, file)
+      return reply({ deleted: true, id: file.id })
+    }
+    const body = await readJson(request)
+    if (body instanceof Response) return body
+    const updated = await updateFile(env, owner, file, {
+      statuses: body.statuses,
+      checkDomain: typeof body.check_domain === "boolean" ? body.check_domain : undefined,
+      version: typeof body.version === "string" ? body.version : undefined,
+      notes: typeof body.notes === "string" ? body.notes : undefined,
+    })
+    return "error" in updated ? fail(updated.status, "invalid_file", updated.error) : reply(shape(updated.file))
+  }
+  return fail(405, "method_not_allowed", "Use GET or PUT on /files, and PATCH or DELETE on /files/{fileId}.")
+}
+
+// ---- apps -------------------------------------------------------------------------
+
+async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
+  const { env, request, origin } = ctx
+  const method = request.method
+
+  if (segments.length === 0) {
+    if (method === "GET") return reply({ data: (await listApps(env)).map(serializeApp) })
+    if (method === "POST") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      if (!("name" in body)) return fail(422, "invalid_name", "name is required.")
+      const parsed = applyAppBody(body, APP_DEFAULTS)
+      if ("response" in parsed) return parsed.response
+      const created = await createApp(env, parsed.input)
+      return "error" in created ? fail(409, "slug_taken", created.error) : reply(serializeApp((await getAppSummary(env, created.app.id))!), 201)
+    }
+    return fail(405, "method_not_allowed", "Use GET or POST.")
+  }
+
+  const app = await findApp(env, segments[0])
+  if (!app) return fail(404, "app_not_found", "No app matches that id or slug.")
+  const [, sub, extra] = segments
+
+  if (!sub) {
+    if (method === "GET") return reply(serializeApp((await getAppSummary(env, app.id))!))
+    if (method === "PATCH") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const parsed = applyAppBody(body, toAppInput(app))
+      if ("response" in parsed) return parsed.response
+      const updated = await updateApp(env, app, parsed.input)
+      return "error" in updated ? fail(409, "slug_taken", updated.error) : reply(serializeApp((await getAppSummary(env, app.id))!))
+    }
+    if (method === "DELETE") {
+      const denied = need(ctx, "full")
+      if (denied) return denied
+      const result = await deleteApp(env, app)
+      return "error" in result ? fail(409, "app_not_empty", result.error) : reply({ deleted: true, id: app.id })
+    }
+    return fail(405, "method_not_allowed", "Use GET, PATCH or DELETE.")
+  }
+
+  if (sub === "licenses" && !extra) {
+    if (method === "GET") return listLicensesResponse(ctx, app.id)
+    if (method === "POST") return createLicenseResponse(ctx, app)
+    return fail(405, "method_not_allowed", "Use GET or POST.")
+  }
+  if (sub === "files") return filesRoute(ctx, { app }, extra)
+  return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
+}
+
+// ---- entry point ------------------------------------------------------------------
+
+export async function handleApi(request: Request, env: Env, execution: ExecutionContext): Promise<Response> {
+  const url = new URL(request.url)
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS })
+  const path = url.pathname.replace(/^\/api\/v1/, "").replace(/\/+$/, "") || "/"
+  if (path === "/openapi.json" && request.method === "GET") return reply(openApiSpec(url.origin))
+
+  const key = await authenticate(request, env, execution)
+  if (!key) return fail(401, "unauthorized", "Send a valid API key as Authorization: Bearer wk_...")
+  const ctx: Context = { env, request, url, origin: url.origin, key }
+
+  const [resource, ...rest] = path.split("/").filter(Boolean)
+  if (resource === "me" && request.method === "GET") return reply({ name: key.name, scope: key.scope, prefix: key.prefix })
+  if (resource === "stats" && request.method === "GET") return reply(await overviewStats(env))
+  if (resource === "licenses") return licenseRoute(ctx, rest)
+  if (resource === "apps") return appRoute(ctx, rest)
+  return fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")
 }

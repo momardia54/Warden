@@ -32,6 +32,8 @@ export function formatBytes(bytes: number): string {
 
 type LicenseState = { status: string; expires_at: number | null; domains: string }
 
+export type SharedFiles = { appName: string; appHref: string; files: FileRow[] }
+
 const AVAILABILITY_HELP = (
   <>
     Each file is downloadable only while the licence has one of the statuses you select. Examples: <b>Active + Completed</b> for updates, <b>Completed</b> for a final release after full payment,{" "}
@@ -40,7 +42,59 @@ const AVAILABILITY_HELP = (
 )
 const DOMAIN_HELP = "When on, the download request must include a domain (?domain=) that matches the licence's allowed domains. Ignored if the licence has no allowed domains."
 
-export function FilesSection({ licenseId, licenseKey, origin, license, files, configured }: { licenseId: string; licenseKey: string; origin: string; license: LicenseState; files: FileRow[]; configured: boolean }) {
+function FileRowItem({ file: f, license, link, onEdit, onDelete }: { file: FileRow; license: LicenseState | null; link?: string; onEdit?: () => void; onDelete?: () => void }) {
+  const rule = { statuses: splitStatuses(f.statuses), check_domain: f.check_domain === 1 }
+  const availability = license ? evaluateFileAccess(license, rule, null, Date.now(), true).allowed : null
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-sm">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium break-all">{f.name}</span>
+          {f.version && <span className="text-xs text-muted-foreground">v{f.version}</span>}
+          {availability !== null && <Badge variant={availability ? "success" : "secondary"}>{availability ? "Available now" : "Not available now"}</Badge>}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Available when status is: <span className="text-foreground">{describeStatuses(rule.statuses)}</span>
+          {rule.check_domain ? "" : " · domain not checked"}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {formatBytes(f.size)} · uploaded <Ago ts={f.uploaded_at} /> · {f.download_count} download{f.download_count === 1 ? "" : "s"}
+          {f.last_download_at ? <> (last <Ago ts={f.last_download_at} />)</> : null}
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        {link && <CopyButton text={link} className="h-8 border px-2 text-xs" />}
+        {onEdit && (
+          <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label={`Edit ${f.name}`} onClick={onEdit}>
+            <Pencil className="size-4" />
+          </Button>
+        )}
+        {onDelete && (
+          <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-destructive" aria-label={`Delete ${f.name}`} onClick={onDelete}>
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </li>
+  )
+}
+
+type FilesSectionProps = {
+  title?: string
+  description: string
+  /** Where the upload is sent, for example /licenses/<id>/files. */
+  uploadPath: string
+  /** Builds the public download link of a file. Omit when the files have no single link (shared app files). */
+  downloadUrl?: (fileId: string) => string
+  /** The licence the files are checked against, to show whether each file is available now. Omit for app files. */
+  license?: LicenseState | null
+  files: FileRow[]
+  /** Read-only list of the files that come from the licence's app. */
+  shared?: SharedFiles | null
+  configured: boolean
+}
+
+export function FilesSection({ title = "Files", description, uploadPath, downloadUrl, license = null, files, shared = null, configured }: FilesSectionProps) {
   const revalidator = useRevalidator()
   const remove = useFetcher()
   const update = useFetcher()
@@ -65,7 +119,7 @@ export function FilesSection({ licenseId, licenseKey, origin, license, files, co
     setProgress(0)
     const query = new URLSearchParams({ name: file.name, version, statuses: statuses.join(","), check_domain: String(checkDomain) })
     const xhr = new XMLHttpRequest()
-    xhr.open("PUT", `/licenses/${licenseId}/files?${query}`)
+    xhr.open("PUT", `${uploadPath}?${query}`)
     xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream")
     xhr.upload.onprogress = (e) => e.lengthComputable && setProgress(e.loaded / e.total)
     xhr.onerror = () => {
@@ -101,8 +155,8 @@ export function FilesSection({ licenseId, licenseKey, origin, license, files, co
   return (
     <section className="space-y-4 rounded-lg border bg-card p-4">
       <div>
-        <h2 className="font-semibold">Files</h2>
-        <p className="text-xs text-muted-foreground">Downloads released by licence status. Each file lists the statuses in which it can be downloaded.</p>
+        <h2 className="font-semibold">{title}</h2>
+        <p className="text-xs text-muted-foreground">{description}</p>
       </div>
 
       {!configured ? (
@@ -113,39 +167,23 @@ export function FilesSection({ licenseId, licenseKey, origin, license, files, co
         <>
           {files.length > 0 && (
             <ul className="divide-y rounded-md border">
-              {files.map((f) => {
-                const rule = { statuses: splitStatuses(f.statuses), check_domain: f.check_domain === 1 }
-                const available = evaluateFileAccess(license, rule, null, Date.now(), true).allowed
-                return (
-                  <li key={f.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-sm">
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium break-all">{f.name}</span>
-                        {f.version && <span className="text-xs text-muted-foreground">v{f.version}</span>}
-                        <Badge variant={available ? "success" : "secondary"}>{available ? "Available now" : "Not available now"}</Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Available when status is: <span className="text-foreground">{describeStatuses(rule.statuses)}</span>
-                        {rule.check_domain ? "" : " · domain not checked"}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatBytes(f.size)} · uploaded <Ago ts={f.uploaded_at} /> · {f.download_count} download{f.download_count === 1 ? "" : "s"}
-                        {f.last_download_at ? <> (last <Ago ts={f.last_download_at} />)</> : null}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <CopyButton text={`${origin}/download/${licenseKey}/${f.id}`} className="h-8 border px-2 text-xs" />
-                      <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label={`Edit ${f.name}`} onClick={() => openEditor(f)}>
-                        <Pencil className="size-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-destructive" aria-label={`Delete ${f.name}`} onClick={() => setRemoving(f)}>
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                  </li>
-                )
-              })}
+              {files.map((f) => (
+                <FileRowItem key={f.id} file={f} license={license} link={downloadUrl?.(f.id)} onEdit={() => openEditor(f)} onDelete={() => setRemoving(f)} />
+              ))}
             </ul>
+          )}
+
+          {shared && shared.files.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">
+                Shared by the app <a className="text-foreground underline underline-offset-2" href={shared.appHref}>{shared.appName}</a> (managed on the app page)
+              </p>
+              <ul className="divide-y rounded-md border">
+                {shared.files.map((f) => (
+                  <FileRowItem key={f.id} file={f} license={license} link={downloadUrl?.(f.id)} />
+                ))}
+              </ul>
+            </div>
           )}
 
           <div className="space-y-4 rounded-md border border-dashed p-3">

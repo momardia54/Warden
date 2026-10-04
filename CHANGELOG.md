@@ -11,5 +11,8 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 - Dashboard page for API keys (shown once, stored as SHA-256 hashes, revocable)
 - Status **completed** (paid in full): valid and permanent
 - **Files per licence** stored in R2 (binding `FILES`), up to 100 MB, each with a release rule (licence statuses it is available in, optional domain check). Gated `/download/<key>[/<file id>]`, download counters and log, upload, edit and delete in the dashboard and by API
-- Migrations 0001 (schema), 0002 (API keys, `external_ref`), 0003 (files) and 0004 (file release rules, `activity.event`)
-- Docs: README, docs/api.md, docs/checking.md, docs/files.md, Security.md, Roadmap.md, Licence.md
+- **Apps**: a product licensed to many customers. Defaults for new licences (status, duration, maximum sites, public message), licences listed per app, files shared by all licences of an app, `latest` version in the download list, API under `/api/v1/apps`
+- **Site limit and activations**: a licence can limit the number of sites; sites register on their first check and can be released. New check result `site_limit_reached`
+- Licences have `customer_name` and `customer_email` (`client` was renamed)
+- Migrations 0001 (schema), 0002 (API keys, `external_ref`), 0003 (files), 0004 (file release rules, `activity.event`) and 0005 (apps, activations, shared files, customer fields)
+- Docs: README, docs/api.md, docs/apps.md, docs/checking.md, docs/files.md, Security.md, Roadmap.md, Licence.md

@@ -14,6 +14,7 @@ export const STATUS_LABEL: Record<Status, string> = {
 export function checkResultLabel(status: string | null): string {
   if (status === "domain_mismatch") return "Wrong domain"
   if (status === "unknown") return "Unknown key"
+  if (status === "site_limit_reached") return "Site limit reached"
   return status && isStatus(status) ? STATUS_LABEL[status] : (status ?? "")
 }
 
@@ -88,14 +89,24 @@ export function domainAllowed(allowed: string[], domain: string | null): boolean
 
 export type CheckResponse = {
   valid: boolean
-  status: Status | "unknown" | "domain_mismatch"
+  status: Status | "unknown" | "domain_mismatch" | "site_limit_reached"
   message: string
   name?: string
+  app?: { slug: string; name: string } | null
   expires_at?: string | null
   checked_at: string
 }
 
-type Row = { name: string; status: string; expires_at: number | null; domains: string; message: string }
+type LicenseForCheck = {
+  name: string
+  status: string
+  expires_at: number | null
+  domains: string
+  message: string
+  max_sites?: number | null
+  app_slug?: string | null
+  app_name?: string | null
+}
 
 const DEFAULT_MESSAGE: Record<string, string> = {
   active: "",
@@ -108,14 +119,35 @@ const DEFAULT_MESSAGE: Record<string, string> = {
   unknown: "Unknown licence.",
 }
 
-/** Builds the JSON response of the check endpoint. Pure function. */
-export function buildCheckResponse(license: Row | null, domain: string | null, now = Date.now()): CheckResponse {
+/**
+ * Builds the JSON response of the check endpoint. Pure function.
+ * `activatedDomains` are the domains the licence has already been used on; they matter only when the licence
+ * has a site limit.
+ */
+export function buildCheckResponse(license: LicenseForCheck | null, domain: string | null, now = Date.now(), activatedDomains: string[] = []): CheckResponse {
   const checked_at = new Date(now).toISOString()
   if (!license) return { valid: false, status: "unknown", message: DEFAULT_MESSAGE.unknown, checked_at }
   const status = effectiveStatus(license, now)
-  const base = { name: license.name, expires_at: license.expires_at ? new Date(license.expires_at).toISOString() : null, checked_at }
-  if (grantsAccess(status) && !domainAllowed(parseDomains(license.domains), domain)) {
-    return { ...base, valid: false, status: "domain_mismatch", message: DEFAULT_MESSAGE.domain_mismatch }
+  const base = {
+    name: license.name,
+    app: license.app_slug ? { slug: license.app_slug, name: license.app_name ?? license.app_slug } : null,
+    expires_at: license.expires_at ? new Date(license.expires_at).toISOString() : null,
+    checked_at,
+  }
+  if (grantsAccess(status)) {
+    if (!domainAllowed(parseDomains(license.domains), domain)) {
+      return { ...base, valid: false, status: "domain_mismatch", message: DEFAULT_MESSAGE.domain_mismatch }
+    }
+    const limit = license.max_sites ?? null
+    if (limit !== null) {
+      const normalized = domain ? normalizeDomain(domain) : null
+      if (!normalized) {
+        return { ...base, valid: false, status: "domain_mismatch", message: `This licence is limited to ${limit} site${limit === 1 ? "" : "s"}. Send the site's domain with the request (?domain=).` }
+      }
+      if (!activatedDomains.includes(normalized) && activatedDomains.length >= limit) {
+        return { ...base, valid: false, status: "site_limit_reached", message: `This licence is already in use on the maximum number of sites (${limit}).` }
+      }
+    }
   }
   return { ...base, valid: grantsAccess(status), status, message: license.message.trim() || DEFAULT_MESSAGE[status] }
 }

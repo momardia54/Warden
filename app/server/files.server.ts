@@ -1,12 +1,22 @@
 import { cleanFileName, DEFAULT_RELEASE_STATUSES, describeStatuses, MAX_FILE_BYTES, parseStatuses, splitStatuses } from "../lib/files"
 import type { Status } from "../lib/license"
 import { newId } from "./util.server"
+import type { App } from "./apps.server"
 import type { License } from "./licenses.server"
+
+/** The owner of a file: a single licence, or an app (shared by every licence of that app). */
+export type FileOwner = { license: License } | { app: App }
+
+const ownerId = (owner: FileOwner) => ("license" in owner ? owner.license.id : owner.app.id)
+const ownerColumn = (owner: FileOwner) => ("license" in owner ? "license_id" : "app_id")
 
 /** A file row as stored. `statuses` is a comma separated list; use `releaseRule` for the parsed form. */
 export type LicenseFile = {
   id: string
-  license_id: string
+  /** Set for a file that belongs to one licence. */
+  license_id: string | null
+  /** Set for a file shared by all licences of an app. */
+  app_id: string | null
   name: string
   version: string
   notes: string
@@ -29,12 +39,24 @@ export function storageConfigured(env: Env): boolean {
   return Boolean(env.FILES)
 }
 
-export async function listFiles(env: Env, licenseId: string): Promise<LicenseFile[]> {
-  return (await env.DB.prepare("SELECT * FROM files WHERE license_id = ? ORDER BY uploaded_at DESC, id DESC").bind(licenseId).all<LicenseFile>()).results
+/** The files owned directly by a licence or an app. */
+export async function listFiles(env: Env, owner: FileOwner): Promise<LicenseFile[]> {
+  return (await env.DB.prepare(`SELECT * FROM files WHERE ${ownerColumn(owner)} = ? ORDER BY uploaded_at DESC, id DESC`).bind(ownerId(owner)).all<LicenseFile>()).results
 }
 
-export function getFile(env: Env, licenseId: string, fileId: string): Promise<LicenseFile | null> {
-  return env.DB.prepare("SELECT * FROM files WHERE id = ? AND license_id = ?").bind(fileId, licenseId).first<LicenseFile>()
+export function getFile(env: Env, owner: FileOwner, fileId: string): Promise<LicenseFile | null> {
+  return env.DB.prepare(`SELECT * FROM files WHERE id = ? AND ${ownerColumn(owner)} = ?`).bind(fileId, ownerId(owner)).first<LicenseFile>()
+}
+
+/** Every file a licence can see: its own files and the files of its app. */
+export async function listFilesForLicense(env: Env, license: License): Promise<LicenseFile[]> {
+  return (
+    await env.DB.prepare("SELECT * FROM files WHERE license_id = ? OR app_id = ? ORDER BY uploaded_at DESC, id DESC").bind(license.id, license.app_id).all<LicenseFile>()
+  ).results
+}
+
+export function getFileForLicense(env: Env, license: License, fileId: string): Promise<LicenseFile | null> {
+  return env.DB.prepare("SELECT * FROM files WHERE id = ? AND (license_id = ? OR app_id = ?)").bind(fileId, license.id, license.app_id).first<LicenseFile>()
 }
 
 export type StoreInput = {
@@ -53,7 +75,7 @@ export type StoreInput = {
 type Failure = { error: string; status: number }
 
 /** Validates the input, streams the body to R2 and records the file. */
-export async function storeFile(env: Env, license: License, input: StoreInput): Promise<{ file: LicenseFile } | Failure> {
+export async function storeFile(env: Env, owner: FileOwner, input: StoreInput): Promise<{ file: LicenseFile } | Failure> {
   if (!storageConfigured(env)) return { error: "File storage (R2) is not configured for this deployment.", status: 501 }
   const name = cleanFileName(input.name)
   if (!name) return { error: "A file name is required.", status: 422 }
@@ -64,28 +86,32 @@ export async function storeFile(env: Env, license: License, input: StoreInput): 
   if (!input.body) return { error: "The request has no body.", status: 422 }
 
   const id = newId("fil")
-  const key = `${license.id}/${id}`
+  const key = `${ownerId(owner)}/${id}`
   const contentType = (input.contentType || "application/octet-stream").slice(0, 120)
   await env.FILES.put(key, input.body, { httpMetadata: { contentType } })
   const now = Date.now()
   try {
-    await env.DB.batch([
+    const statements = [
       env.DB.prepare(
-        "INSERT INTO files (id, license_id, name, version, notes, statuses, check_domain, size, content_type, r2_key, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).bind(id, license.id, name, (input.version ?? "").trim().slice(0, 40), (input.notes ?? "").trim().slice(0, 500), statuses.join(","), input.checkDomain === false ? 0 : 1, input.size, contentType, key, now),
-      logChange(env, license, now, `File added: ${name} (available when ${describeStatuses(statuses)})`),
-    ])
+        `INSERT INTO files (id, license_id, app_id, name, version, notes, statuses, check_domain, size, content_type, r2_key, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        id, "license" in owner ? owner.license.id : null, "app" in owner ? owner.app.id : null, name, (input.version ?? "").trim().slice(0, 40), (input.notes ?? "").trim().slice(0, 500),
+        statuses.join(","), input.checkDomain === false ? 0 : 1, input.size, contentType, key, now
+      ),
+    ]
+    if ("license" in owner) statements.push(logChange(env, owner.license, now, `File added: ${name} (available when ${describeStatuses(statuses)})`))
+    await env.DB.batch(statements)
   } catch (error) {
     await env.FILES.delete(key)
     throw error
   }
-  return { file: (await getFile(env, license.id, id))! }
+  return { file: (await getFile(env, owner, id))! }
 }
 
 export type FileChanges = { statuses?: unknown; checkDomain?: boolean; version?: string; notes?: string }
 
 /** Updates a file's release rule or metadata. Only the fields present are changed. */
-export async function updateFile(env: Env, license: License, file: LicenseFile, changes: FileChanges): Promise<{ file: LicenseFile } | Failure> {
+export async function updateFile(env: Env, owner: FileOwner, file: LicenseFile, changes: FileChanges): Promise<{ file: LicenseFile } | Failure> {
   let statuses = file.statuses
   if (changes.statuses !== undefined) {
     const parsed = parseStatuses(changes.statuses)
@@ -96,24 +122,32 @@ export async function updateFile(env: Env, license: License, file: LicenseFile, 
   const version = changes.version === undefined ? file.version : changes.version.trim().slice(0, 40)
   const notes = changes.notes === undefined ? file.notes : changes.notes.trim().slice(0, 500)
   const statements = [env.DB.prepare("UPDATE files SET statuses = ?, check_domain = ?, version = ?, notes = ? WHERE id = ?").bind(statuses, checkDomain, version, notes, file.id)]
-  if (statuses !== file.statuses || checkDomain !== file.check_domain) {
-    statements.push(logChange(env, license, Date.now(), `File updated: ${file.name} (available when ${describeStatuses(splitStatuses(statuses))})`))
+  if ("license" in owner && (statuses !== file.statuses || checkDomain !== file.check_domain)) {
+    statements.push(logChange(env, owner.license, Date.now(), `File updated: ${file.name} (available when ${describeStatuses(splitStatuses(statuses))})`))
   }
   await env.DB.batch(statements)
-  return { file: (await getFile(env, license.id, file.id))! }
+  return { file: (await getFile(env, owner, file.id))! }
 }
 
-export async function deleteFile(env: Env, license: License, file: LicenseFile): Promise<void> {
+export async function deleteFile(env: Env, owner: FileOwner, file: LicenseFile): Promise<void> {
   if (storageConfigured(env)) await env.FILES.delete(file.r2_key)
-  await env.DB.batch([env.DB.prepare("DELETE FROM files WHERE id = ?").bind(file.id), logChange(env, license, Date.now(), `File removed: ${file.name}`)])
+  const statements = [env.DB.prepare("DELETE FROM files WHERE id = ?").bind(file.id)]
+  if ("license" in owner) statements.push(logChange(env, owner.license, Date.now(), `File removed: ${file.name}`))
+  await env.DB.batch(statements)
 }
 
-/** Deletes every stored object of a licence. Called before the licence rows are removed. */
-export async function deleteLicenseFiles(env: Env, licenseId: string): Promise<void> {
+async function deleteStoredObjects(env: Env, column: "license_id" | "app_id", id: string): Promise<void> {
   if (!storageConfigured(env)) return
-  const keys = (await listFiles(env, licenseId)).map((f) => f.r2_key)
+  const rows = (await env.DB.prepare(`SELECT r2_key FROM files WHERE ${column} = ?`).bind(id).all<{ r2_key: string }>()).results
+  const keys = rows.map((r) => r.r2_key)
   for (let i = 0; i < keys.length; i += 1000) await env.FILES.delete(keys.slice(i, i + 1000))
 }
+
+/** Deletes the stored objects of a licence. Called before the licence rows are removed. */
+export const deleteLicenseFiles = (env: Env, licenseId: string) => deleteStoredObjects(env, "license_id", licenseId)
+
+/** Deletes the stored objects of an app. Called before the app rows are removed. */
+export const deleteAppFiles = (env: Env, appId: string) => deleteStoredObjects(env, "app_id", appId)
 
 function logChange(env: Env, license: License, at: number, detail: string) {
   return env.DB.prepare("INSERT INTO activity (license_id, at, event, status, detail) VALUES (?, ?, 'change', ?, ?)").bind(license.id, at, license.status, detail)

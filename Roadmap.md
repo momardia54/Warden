@@ -11,6 +11,7 @@ This is a plan, not a promise. Order can change.
 - Dashboard: overview, licence list, licence page, extend, regenerate key
 - API with keys and scopes: create (idempotent with `external_ref`), read, edit, status, renew, regenerate key, delete, activity, stats, OpenAPI description
 - Daily clean-up of old check history
+- **Apps**: licences issued under an app with defaults, a site limit with automatic site registration, and shared releases with a "latest version" pointer
 - Status **completed** (paid in full) and **files per licence** in R2: per-file release rules by licence status, gated downloads, download log, upload by dashboard or API
 
 ## Next (towards 1.0.0)
@@ -30,9 +31,8 @@ This is a plan, not a promise. Order can change.
 
 ## Later, if there is demand
 
-- Domain activations: limit how many distinct sites may use one licence
 - Several admins and per-licence API keys
-- Licence groups (a client with several sites) and plans (templates for duration, domains and message)
+- Plans within an app (for example 1 site, 5 sites, unlimited) as named templates for duration and site limit
 - Check statistics per licence over time
 - Official client snippets (PHP/WordPress, JavaScript) kept in this repository
 - Audit log for dashboard and API changes

@@ -1,6 +1,6 @@
 # Warden
 
-**A self-hosted licence manager for Cloudflare Workers.** Create a licence for each client site, get a licence key and a check URL, and switch the licence between active, suspended, disabled or expired from a dashboard or from your own code through an API.
+**A self-hosted licence manager for Cloudflare Workers.** License a product to many customers (an **app**) or a single project (a **standalone licence**). Every licence has a licence key and a check URL, and its status can be changed from a dashboard or from your own code through an API.
 
 > **Status: pre-1.0 (0.1.x).** It works and is tested, but the API and data model may still change before 1.0.0. See [Roadmap.md](Roadmap.md) and [Security.md](Security.md).
 
@@ -8,15 +8,17 @@
 
 ## How it works
 
-1. You create a licence in Warden (or through the API). Warden gives you a **licence key** and a **check URL**.
-2. The client's site calls the check URL (for example every 12 hours) and reads the response: `valid`, `status`, `message`.
+1. You issue a licence in Warden, from the dashboard or the API, for a standalone project or under an app. Warden gives it a **licence key** and a **check URL**.
+2. The customer's site calls the check URL with its domain (for example every 12 hours) and reads the response: `valid`, `status`, `message`.
 3. You change the licence status in the dashboard, or by API. The next time the site checks, it sees the new status and acts on it.
 
 Warden **creates and manages** licences. **Enforcement lives in the site's code**, so you decide what an invalid licence does: show a notice, switch a feature off, show a maintenance page. [docs/checking.md](docs/checking.md) has PHP and JavaScript examples, including how to verify the signed response.
 
 ## Features
 
-- Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence
+- **Apps**: a product sold to many customers, with defaults for new licences (status, duration, maximum sites, message), its own licence list and releases shared by all of its licences ([docs/apps.md](docs/apps.md))
+- **Site limit**: a licence can be limited to N sites; sites register on their first check and you can release them
+- Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence, with a customer name and email
 - Statuses: **pending, active, completed, suspended, disabled, expired**. An active licence past its expiry date reports `expired` by itself. **Completed** means paid in full: valid and permanent
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
 - **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
@@ -29,12 +31,14 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 
 | | |
 |---|---|
+| ![Apps](docs/screenshots/apps.jpg) | ![App page](docs/screenshots/app.jpg) |
+| Apps with licence counts, sites and latest version | An app: releases shared by its licences, and its licences |
 | ![Licences](docs/screenshots/licences.jpg) | ![Licence page](docs/screenshots/licence.jpg) |
-| Licence list with search and status filter | Licence key, check URL and details |
-| ![Files](docs/screenshots/files.jpg) | ![Edit a file's release rule](docs/screenshots/edit-file.jpg) |
-| Files with release rules, upload, and the activity log | Changing the statuses a file is available in |
-| ![New licence](docs/screenshots/new-licence.jpg) | ![API](docs/screenshots/api.jpg) |
-| Create a licence | API keys and examples |
+| Licences of all apps, with app and status filters | Licence key, check URL and details |
+| ![Sites and files](docs/screenshots/sites-and-files.jpg) | ![Edit a file's release rule](docs/screenshots/edit-file.jpg) |
+| Registered sites, and the files a licence can download | Changing the statuses a file is available in |
+| ![New licence under an app](docs/screenshots/new-licence.jpg) | ![New app](docs/screenshots/new-app.jpg) |
+| Issuing a licence with the app's defaults | Creating an app |
 
 ## The check URL
 
@@ -89,7 +93,7 @@ curl           "https://<worker>/api/v1/licenses?status=expired"   -H "Authoriza
 | `manage` | also create, edit, set status, renew |
 | `full` | also delete and regenerate keys |
 
-Endpoints: `GET /me`, `GET /stats`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `POST /licenses/{id}/renew`, `POST /licenses/{id}/regenerate-key`, `GET /licenses/{id}/activity`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
+Endpoints: `GET /me`, `GET /stats`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
 
 ## Run and deploy
 

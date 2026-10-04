@@ -3,34 +3,36 @@ import { Link } from "react-router"
 import { KeyRound, Plus, Search } from "lucide-react"
 import type { Route } from "./+types/licenses"
 import { PageHeader } from "#/components/page-header"
-import { LicenseStatusBadge } from "#/components/status-badge"
-import { Ago } from "#/components/time"
+import { LicensesTable } from "#/components/licenses-table"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "#/components/ui/empty"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "#/components/ui/table"
 import { effectiveStatus, STATUSES, STATUS_LABEL } from "#/lib/license"
 import { requireAuth } from "~/server/auth.server"
-import { listLicenses } from "~/server/licenses.server"
+import { listApps } from "~/server/apps.server"
+import { queryLicenses } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Licences | Warden" }]
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env
   await requireAuth(request, env)
-  return { licenses: await listLicenses(env) }
+  const [licenses, apps] = await Promise.all([queryLicenses(env, { limit: 1000 }), listApps(env)])
+  return { licenses, apps: apps.map((a) => ({ id: a.id, name: a.name })) }
 }
 
 export default function Licenses({ loaderData }: Route.ComponentProps) {
-  const { licenses } = loaderData
+  const { licenses, apps } = loaderData
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState("all")
+  const [appFilter, setAppFilter] = useState("all")
 
   const shown = licenses.filter((l) => {
     if (status !== "all" && effectiveStatus(l) !== status) return false
+    if (appFilter === "none" ? l.app_id !== null : appFilter !== "all" && l.app_id !== appFilter) return false
     const q = query.trim().toLowerCase()
-    return !q || `${l.name} ${l.client} ${l.license_key} ${l.domains}`.toLowerCase().includes(q)
+    return !q || `${l.name} ${l.customer_name} ${l.customer_email} ${l.license_key} ${l.domains} ${l.app_name ?? ""}`.toLowerCase().includes(q)
   })
 
   return (
@@ -53,7 +55,7 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
                 <KeyRound />
               </EmptyMedia>
               <EmptyTitle>No licences yet</EmptyTitle>
-              <EmptyDescription>Create one for a client site. You get a key and a check URL to put in that site&apos;s code.</EmptyDescription>
+              <EmptyDescription>Create one for a customer&apos;s site. You get a licence key and a check URL to put in that site&apos;s code.</EmptyDescription>
             </EmptyHeader>
             <Button asChild>
               <Link to="/licenses/new">
@@ -66,7 +68,18 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
             <div className="flex flex-wrap gap-2">
               <div className="relative min-w-52 flex-1 sm:max-w-sm">
                 <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 opacity-50" />
-                <Input className="pl-9" placeholder="Search name, client, key or domain" value={query} onChange={(e) => setQuery(e.target.value)} />
+                <Input className="pl-9" placeholder="Search name, customer, key, domain or app" value={query} onChange={(e) => setQuery(e.target.value)} />
+              </div>
+              <div className="w-48">
+                <NativeSelect value={appFilter} onChange={(e) => setAppFilter(e.target.value)} aria-label="Filter by app">
+                  <option value="all">All apps</option>
+                  <option value="none">Standalone only</option>
+                  {apps.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </NativeSelect>
               </div>
               <div className="w-44">
                 <NativeSelect value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
@@ -80,44 +93,7 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
               </div>
             </div>
 
-            <div className="rounded-lg border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Licence</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden md:table-cell">Expires</TableHead>
-                    <TableHead className="hidden sm:table-cell">Last check</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {shown.map((l) => (
-                    <TableRow key={l.id}>
-                      <TableCell>
-                        <Link to={`/licenses/${l.id}`} className="font-medium hover:underline">
-                          {l.name}
-                        </Link>
-                        <div className="text-xs text-muted-foreground">{l.client || l.license_key}</div>
-                      </TableCell>
-                      <TableCell>
-                        <LicenseStatusBadge license={l} />
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">{l.expires_at ? new Date(l.expires_at).toISOString().slice(0, 10) : <span className="text-muted-foreground">Never</span>}</TableCell>
-                      <TableCell className="hidden sm:table-cell">
-                        <Ago ts={l.last_check_at} />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {shown.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
-                        No licence matches.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+            <LicensesTable licenses={shown} />
           </>
         )}
       </div>

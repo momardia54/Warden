@@ -1,15 +1,16 @@
 import { buildCheckResponse, KEY_PATTERN, normalizeDomain } from "../lib/license"
+import { getLicenseByKey, listActivations, recordActivation, type License } from "./licenses.server"
 import { hmacHex, json } from "./util.server"
-import type { License } from "./licenses.server"
 
 const CORS = { "access-control-allow-origin": "*", "cache-control": "no-store" }
 
 /**
  * Public endpoint: GET or POST /check/<licence key>[?domain=example.com]
- * Answers JSON with `valid` and `status`. The key in the address is the credential. The answer is
- * signed (X-Warden-Signature = HMAC-SHA256 of the body, keyed with the licence key) so a site can
- * confirm the answer really came from this server and was not forged on the way.
- * Known keys always get HTTP 200, unknown keys 404, both with a JSON body.
+ *
+ * Returns JSON with `valid` and `status`. The licence key in the path is the credential. The response is signed:
+ * X-Warden-Signature is the HMAC-SHA256 of the body, keyed with the licence key, so a site can verify that it
+ * came from this server unmodified. A known key returns HTTP 200 and an unknown key 404, both with a JSON body.
+ * When a domain is sent, the site is registered as an activation of the licence (within the licence's site limit).
  */
 export async function handleCheck(request: Request, env: Env, ctx: ExecutionContext, key: string): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...CORS, "access-control-allow-methods": "GET, POST", "access-control-allow-headers": "content-type" } })
@@ -26,14 +27,14 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
     } catch {}
   }
 
-  const license = KEY_PATTERN.test(key)
-    ? await env.DB.prepare("SELECT * FROM licenses WHERE license_key = ?").bind(key).first<License>()
-    : null
-  const answer = buildCheckResponse(license, domain, now)
-  const body = JSON.stringify(answer)
+  const license = KEY_PATTERN.test(key) ? await getLicenseByKey(env, key) : null
+  // Activations only matter for the limit, so they are loaded only for licences that have one.
+  const activated = license && license.max_sites !== null ? (await listActivations(env, license.id)).map((a) => a.domain) : []
+  const result = buildCheckResponse(license, domain, now, activated)
+  const body = JSON.stringify(result)
 
   if (license) {
-    ctx.waitUntil(recordCheck(env, license, answer.status, domain, now).catch((error) => console.error("Warden: could not record check:", error)))
+    ctx.waitUntil(recordCheck(env, license, result.status, domain, now).catch((error) => console.error("Failed to record check:", error)))
   }
   const headers: Record<string, string> = { ...CORS, "content-type": "application/json; charset=utf-8" }
   if (license) headers["x-warden-signature"] = await hmacHex(license.license_key, body)
@@ -41,6 +42,8 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
 }
 
 async function recordCheck(env: Env, license: License, status: string, domain: string | null, now: number) {
+  // A site refused for its domain or the site limit is not registered.
+  if (domain && status !== "domain_mismatch" && status !== "site_limit_reached") await recordActivation(env, license, domain, now)
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET last_check_at = ?, last_check_domain = ?, check_count = check_count + 1 WHERE id = ?").bind(now, domain, license.id),
     env.DB.prepare("INSERT INTO activity (license_id, at, event, status, domain, detail) VALUES (?, ?, 'check', ?, ?, '')").bind(license.id, now, status, domain),

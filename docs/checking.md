@@ -1,6 +1,6 @@
 # Checking a licence from a site
 
-Enforcement lives in the client site's code. Warden only responses "what is the status of this licence?".
+Enforcement lives in the customer site's code. Warden only reports the status of a licence.
 
 ```
 GET https://<your-worker>/check/<licence key>?domain=client-site.org
@@ -18,7 +18,8 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 | `suspended` | false | Temporarily stopped |
 | `disabled` | false | Switched off |
 | `expired` | false | Past its expiry date |
-| `domain_mismatch` | false | The site sent a domain that is not on the licence |
+| `domain_mismatch` | false | The site sent a domain that is not allowed for the licence, or no domain although the licence has a site limit |
+| `site_limit_reached` | false | The licence is already used on its maximum number of sites, and this domain is not one of them |
 | `unknown` | false | No such key (HTTP 404) |
 
 `message` is the text you set on the licence (or a default), meant to be shown to the site's owner.

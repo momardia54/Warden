@@ -5,7 +5,7 @@ import { createLicense, extendLicense, getLicense, overviewStats, readLicenseFor
 import { handleCheck } from "../app/server/check.server.ts"
 import { hmacHex } from "../app/server/util.server.ts"
 
-const input = { name: "Harbor Studio", client: "", status: "active" as const, expires_at: null, domains: "", message: "", notes: "" }
+const input = { name: "Harbor Studio", customer_name: "", customer_email: "", app_id: null, max_sites: null, status: "active" as const, expires_at: null, domains: "", message: "", notes: "" }
 const envOf = () => ({ DB: makeDb().DB }) as unknown as Env
 
 function form(entries: Record<string, string>) {

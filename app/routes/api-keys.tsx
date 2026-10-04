@@ -15,7 +15,7 @@ import { NativeSelect } from "#/components/ui/native-select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "#/components/ui/table"
 import { requireAuth } from "~/server/auth.server"
 import { SCOPES, type Scope } from "#/lib/license"
-import { createApiKey, listApiKeys, revokeApiKey, type ApiKeyRow } from "~/server/api.server"
+import { createApiKey, listApiKeys, revokeApiKey, type ApiKeyRow } from "~/server/api-keys.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "API | Warden" }]
 
@@ -68,10 +68,10 @@ export default function ApiKeys({ loaderData }: Route.ComponentProps) {
     }
   }, [create.state, create.data])
 
-  const example = `# create a licence (safe to retry: the same external_ref returns the first one)
+  const example = `# issue a licence under an app (the app's defaults apply; safe to retry: the same external_ref returns the first one)
 curl -X POST ${origin}/api/v1/licenses \\
   -H "Authorization: Bearer $WARDEN_KEY" -H "Content-Type: application/json" \\
-  -d '{"name": "Harbor Studio website", "client": "Harbor Studio", "domains": ["harborstudio.com"], "duration_days": 365, "external_ref": "order-1042"}'
+  -d '{"name": "Harbor Studio website", "app": "harbor-theme", "customer_name": "Harbor Studio", "customer_email": "billing@harborstudio.com", "external_ref": "order-1042"}'
 
 # renew it by 30 days, then suspend it
 curl -X POST ${origin}/api/v1/licenses/<id>/renew  -H "Authorization: Bearer $WARDEN_KEY" -d '{"days": 30}'

@@ -1,13 +1,13 @@
 # Files
 
-A licence can have any number of files attached. Each file has a **release rule**: the licence statuses in which it can be downloaded. Files are stored privately in R2 and served by the Worker only when the rule is met.
+Files can belong to a single licence, or to an **app** and be shared by every licence of that app ([apps.md](apps.md)). Each file has a **release rule**: the licence statuses in which it can be downloaded. Files are stored privately in R2 and served by the Worker only when the rule is met.
 
 ## Release rule
 
 | Setting | Meaning |
 |---|---|
 | **Available when licence status is** | One or more of `pending`, `active`, `completed`, `suspended`, `disabled`, `expired`. The file can be downloaded only while the licence's current status is one of them. Default: `active` and `completed`. |
-| **Require a matching domain** | When on (default) and the licence lists allowed domains, the request must include a matching `?domain=`. Turn it off for files someone downloads by hand. |
+| **Require a matching domain** | When on (default), the request must include a `?domain=` that the licence allows: it must match the licence's allowed domains and, if the licence has a site limit, fit within it. Turn it off for files someone downloads by hand. |
 
 `expired` is the effective status: an `active` licence past its expiry date counts as `expired`. A `completed` licence is permanent and never expires.
 
@@ -26,15 +26,17 @@ GET /download/<licence key>[?domain=example.com]
 GET /download/<licence key>/<file id>[?domain=example.com]
 ```
 
-The first returns the licence status and the files, each with `statuses`, `check_domain` and `available`, so a site can look for a newer `version` before downloading:
+The first returns the licence status and the files visible to the licence (its own files and its app's files), each with `source` (`licence` or `app`), `statuses`, `check_domain` and `available`. `latest` points to the file with the highest version among the available ones, so a site can look for a newer `version` before downloading:
 
 ```json
 {
   "valid": true,
   "status": "active",
   "message": "",
+  "app": { "slug": "harbor-theme", "name": "Harbor Theme" },
+  "latest": { "id": "fil_...", "name": "harbor-theme-1.4.0.zip", "version": "1.4.0", "download_url": "https://<worker>/download/WRD-.../fil_..." },
   "files": [
-    { "id": "fil_...", "name": "harbor-theme.zip", "version": "1.4.0", "size": 3000000, "statuses": ["active", "completed"], "check_domain": true, "available": true, "download_url": "https://<worker>/download/WRD-.../fil_..." }
+    { "id": "fil_...", "name": "harbor-theme-1.4.0.zip", "version": "1.4.0", "size": 3000000, "source": "app", "statuses": ["active", "completed"], "check_domain": true, "available": true, "download_url": "https://<worker>/download/WRD-.../fil_..." }
   ]
 }
 ```

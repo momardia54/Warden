@@ -6,10 +6,11 @@ import { buildCheckResponse, effectiveStatus } from "../app/lib/license.ts"
 import { createLicense, deleteLicense, getLicense, overviewStats, setStatus, extendLicense, recentActivity } from "../app/server/licenses.server.ts"
 import { deleteFile, getFile, listFiles, storeFile, updateFile } from "../app/server/files.server.ts"
 import { handleDownload } from "../app/server/download.server.ts"
-import { createApiKey, handleApi } from "../app/server/api.server.ts"
+import { handleApi } from "../app/server/api.server.ts"
+import { createApiKey } from "../app/server/api-keys.server.ts"
 
 const DAY = 86_400_000
-const input = { name: "Harbor", client: "", status: "active" as const, expires_at: null, domains: "", message: "", notes: "" }
+const input = { name: "Harbor", customer_name: "", customer_email: "", app_id: null, max_sites: null, status: "active" as const, expires_at: null, domains: "", message: "", notes: "" }
 
 function setup() {
   const { bucket, objects } = makeBucket()
@@ -19,7 +20,7 @@ function setup() {
 }
 const body = (text: string) => new Response(text).body
 async function upload(env: Env, license: Awaited<ReturnType<typeof createLicense>>, statuses: string, name = "theme.zip", text = "PK-zip-bytes", checkDomain = true) {
-  const res = await storeFile(env, license, { name, statuses, checkDomain, version: "1.0.0", size: new TextEncoder().encode(text).length, body: body(text), contentType: "application/zip" })
+  const res = await storeFile(env, { license }, { name, statuses, checkDomain, version: "1.0.0", size: new TextEncoder().encode(text).length, body: body(text), contentType: "application/zip" })
   assert.ok("file" in res, JSON.stringify(res))
   return res.file
 }
@@ -75,13 +76,13 @@ test("upload validation", async () => {
   const { env } = setup()
   const lic = await createLicense(env, input)
   const bad = (r: unknown) => assert.ok(r && typeof r === "object" && "error" in r, "expected an error")
-  bad(await storeFile(env, lic, { name: "", size: 5, body: body("hello") }))
-  bad(await storeFile(env, lic, { name: "a.zip", statuses: "bogus", size: 5, body: body("hello") }))
-  bad(await storeFile(env, lic, { name: "a.zip", size: 0, body: body("") }))
-  bad(await storeFile(env, lic, { name: "a.zip", size: MAX_FILE_BYTES + 1, body: body("x") }))
-  const noStorage = await storeFile({ DB: env.DB } as Env, lic, { name: "a.zip", size: 5, body: body("hello") })
+  bad(await storeFile(env, { license: lic }, { name: "", size: 5, body: body("hello") }))
+  bad(await storeFile(env, { license: lic }, { name: "a.zip", statuses: "bogus", size: 5, body: body("hello") }))
+  bad(await storeFile(env, { license: lic }, { name: "a.zip", size: 0, body: body("") }))
+  bad(await storeFile(env, { license: lic }, { name: "a.zip", size: MAX_FILE_BYTES + 1, body: body("x") }))
+  const noStorage = await storeFile({ DB: env.DB } as Env, { license: lic }, { name: "a.zip", size: 5, body: body("hello") })
   assert.equal("error" in noStorage && noStorage.status, 501)
-  assert.equal((await listFiles(env, lic.id)).length, 0)
+  assert.equal((await listFiles(env, { license: lic })).length, 0)
 })
 
 test("download rules, logging and counters", async () => {
@@ -127,8 +128,8 @@ test("download rules, logging and counters", async () => {
   assert.equal(final.status, 200)
   assert.equal(await final.text(), "final-bytes")
 
-  assert.equal((await getFile(env, lic.id, upd.id))!.download_count, 1)
-  assert.equal((await getFile(env, lic.id, fin.id))!.download_count, 1)
+  assert.equal((await getFile(env, { license: lic }, upd.id))!.download_count, 1)
+  assert.equal((await getFile(env, { license: lic }, fin.id))!.download_count, 1)
   const log = (await recentActivity(env, lic.id)).filter((a) => a.event === "download").map((a) => a.detail).join("|")
   assert.match(log, /Downloaded: theme-update.zip/)
   assert.match(log, /Download refused: theme-final.zip \(available when Completed\)/)
@@ -149,7 +150,7 @@ test("deleting a file or a licence removes the stored objects", async () => {
   const a = await upload(env, lic, "active", "a.zip")
   await upload(env, lic, "completed", "b.zip")
   assert.equal(objects.size, 2)
-  await deleteFile(env, lic, a)
+  await deleteFile(env, { license: lic }, a)
   assert.equal(objects.size, 1)
   await deleteLicense(env, lic.id)
   assert.equal(objects.size, 0)
@@ -160,8 +161,8 @@ test("a file's release rule can be changed afterwards", async () => {
   const { env } = setup()
   const lic = await createLicense(env, input)
   const file = await upload(env, lic, "completed", "final.zip")
-  assert.equal((await updateFile(env, lic, file, { statuses: "bogus" }) as any).status, 422)
-  const changed = await updateFile(env, lic, file, { statuses: ["active", "completed"], checkDomain: false, version: "2.0.0" })
+  assert.equal((await updateFile(env, { license: lic }, file, { statuses: "bogus" }) as any).status, 422)
+  const changed = await updateFile(env, { license: lic }, file, { statuses: ["active", "completed"], checkDomain: false, version: "2.0.0" })
   assert.ok("file" in changed)
   if ("file" in changed) {
     assert.equal(changed.file.statuses, "active,completed")
