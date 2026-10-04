@@ -11,6 +11,7 @@ This is a plan, not a promise. Order can change.
 - Dashboard: overview, licence list, licence page, extend, regenerate key
 - API with keys and scopes: create (idempotent with `external_ref`), read, edit, status, renew, regenerate key, delete, activity, stats, OpenAPI description
 - Daily clean-up of old check history
+- **Configurable statuses** with an expiry rule, a message and colour per status, and optional statuses per app
 - **Apps**: licences issued under an app with defaults, a site limit with automatic site registration, and shared releases with a "latest version" pointer
 - Status **completed** (paid in full) and **files per licence** in R2: per-file release rules by licence status, gated downloads, download log, upload by dashboard or API
 

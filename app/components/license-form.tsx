@@ -5,7 +5,8 @@ import { Input } from "#/components/ui/input"
 import { FieldLabel } from "#/components/help-tip"
 import { Textarea } from "#/components/ui/textarea"
 import { NativeSelect } from "#/components/ui/native-select"
-import { isStatus, STATUSES, STATUS_HINT, STATUS_LABEL } from "#/lib/license"
+import { useStatusSet } from "#/components/status-context"
+import { defaultStatusKey, findStatus } from "#/lib/statuses"
 
 export type FormValues = {
   name: string
@@ -41,6 +42,8 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
   const navigate = useNavigate()
   const [status, setStatus] = useState(values.status)
   const [appId, setAppId] = useState(values.app_id)
+  // The statuses available depend on the app: an app can have its own set.
+  const statuses = useStatusSet(appId || null)
 
   return (
     <Form method="post" className="max-w-2xl space-y-6">
@@ -54,6 +57,8 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
           value={appId}
           onChange={(e) => {
             setAppId(e.target.value)
+            // Keep the status if the new app has it, otherwise fall back to that app's default.
+            if (!findStatus(statuses, status)) setStatus(defaultStatusKey(statuses))
             if (reloadOnAppChange) navigate(e.target.value ? `?app=${e.target.value}` : "?", { replace: true })
           }}
         >
@@ -91,20 +96,20 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <FieldLabel htmlFor="status" help="Controls what sites are told when they check this licence. Change it any time. A licence past its expiry date is reported as Expired regardless.">
+          <FieldLabel htmlFor="status" help="Controls what sites are told when they check this licence. Change it any time. Statuses can be customised on the Statuses page. A status can have an expiry rule, for example Active becoming Expired after the expiry date.">
             Status
           </FieldLabel>
-          <NativeSelect id="status" name="status" value={status} onChange={(e) => setStatus(e.target.value)}>
-            {STATUSES.filter((s) => s !== "expired").map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABEL[s]}
+          <NativeSelect id="status" name="status" value={findStatus(statuses, status) ? status : defaultStatusKey(statuses)} onChange={(e) => setStatus(e.target.value)}>
+            {statuses.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.label}
               </option>
             ))}
           </NativeSelect>
-          <p className="text-xs text-muted-foreground">{isStatus(status) ? STATUS_HINT[status] : ""}</p>
+          <p className="text-xs text-muted-foreground">{findStatus(statuses, status)?.description ?? ""}</p>
         </div>
         <div className="space-y-2">
-          <FieldLabel htmlFor="expires" help="The licence is reported as Expired after this date (end of day, UTC). Leave empty for no expiry. Ignored once the status is Completed.">
+          <FieldLabel htmlFor="expires" help="After this date (end of day, UTC) a licence whose status has an expiry rule, such as Active, is reported with the status that rule points to, such as Expired. Leave empty for no expiry. Statuses without an expiry rule, such as Completed, ignore it.">
             Expiry date
           </FieldLabel>
           <Input id="expires" name="expires_at" type="date" key={values.expires} defaultValue={values.expires} />

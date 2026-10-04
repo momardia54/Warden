@@ -49,7 +49,7 @@ Errors: HTTP status plus `{ "error": { "code": "...", "message": "..." } }`. `40
 }
 ```
 
-`status` is what a site is told: an active licence past its expiry date reads `expired`. `stored_status` is what is saved. `valid` is `true` for `active` and `completed`. `app` is `null` for a standalone licence. `max_sites` is `null` when the number of sites is unlimited; `sites_used` is the number of sites that have registered.
+`status` is what a site is told: the stored status, or the status its expiry rule points to once the expiry date has passed (by default Active becomes Expired). `stored_status` is what is saved. `valid` is `true` when that status lets sites run. `app` is `null` for a standalone licence. `max_sites` is `null` when the number of sites is unlimited; `sites_used` is the number of sites that have registered.
 
 In every path below, `{id}` can be the licence id (`lic_...`) or the licence key (`WRD-...`).
 
@@ -58,7 +58,8 @@ In every path below, `{id}` can be the licence id (`lic_...`) or the licence key
 | Method and path | Scope | What it does |
 |---|---|---|
 | `GET /me` | read | The key's name and scope |
-| `GET /stats` | read | Totals and counts per status, licences ending within 14 days, active licences not checked for 3 days |
+| `GET /stats` | read | `total`, `in_force`, `not_in_force`, `expiring_within_14_days`, `not_checked_for_3_days` and `by_status` (a count per status key) |
+| `GET /statuses` | read | The default statuses ([statuses.md](statuses.md)) |
 | `GET /licenses` | read | List, newest first |
 | `POST /licenses` | manage | Create |
 | `GET /licenses/{id}` | read | One licence |
@@ -92,7 +93,7 @@ In the `/apps/{app}` paths, `{app}` is the app id (`app_...`) or its slug.
 
 `GET /licenses?status=active&app=harbor-theme&q=harbor&external_ref=order-1042&limit=25&before=<next>`
 
-Returns `{ "data": [licence, ...], "next": "lic_..." | null }`. `status` is one of `pending`, `active`, `completed`, `suspended`, `disabled`, `expired` (matched on the effective status). `app` limits the list to one app (id or slug). `q` searches name, customer, key, domains, `external_ref` and the app name. Pass `next` as `before` to get the following page. `limit` is 1 to 100.
+Returns `{ "data": [licence, ...], "next": "lic_..." | null }`. `status` is a status key (matched on the status reported to sites, so an expiry rule that has triggered counts). `app` limits the list to one app (id or slug). `q` searches name, customer, key, domains, `external_ref` and the app name. Pass `next` as `before` to get the following page. `limit` is 1 to 100.
 
 ### Create
 
@@ -105,7 +106,7 @@ Returns `{ "data": [licence, ...], "next": "lic_..." | null }`. `status` is one 
 | `customer_name` | string | Optional, up to 120 characters |
 | `customer_email` | string | Optional, a valid email address |
 | `max_sites` | integer or null | Maximum number of distinct sites (domains) that may use the licence. `null`: unlimited |
-| `status` | string | `pending`, `active` (default), `completed`, `suspended`, `disabled` |
+| `status` | string | A status key of the licence's status set. Default: the default status of the set (the app's default status when issued under an app) |
 | `expires_at` | string or null | `YYYY-MM-DD` (end of that day, UTC) or an ISO date-time. `null` or omitted: no expiry date |
 | `duration_days` | integer | Alternative to `expires_at`: ends this many days from now (1 to 3650) |
 | `domains` | array of strings | Allowed domains; subdomains match. Empty: any |
@@ -129,7 +130,7 @@ With an `app`, the duration, status, site limit and public message come from the
 
 ### Status
 
-`POST /licenses/{id}/status` with `{"status": "suspended"}`. Allowed: `pending`, `active`, `completed`, `suspended`, `disabled`. `completed` means paid in full: valid, permanent (the expiry date is ignored) and files released in Completed become available. (`expired` is never set by hand; it follows from the expiry date.)
+`POST /licenses/{id}/status` with `{"status": "suspended"}`. The value is a status key of the licence's status set ([statuses.md](statuses.md)); any status of the set can be set. An unknown key returns `422` with the valid keys.
 
 ### Renew
 
@@ -175,6 +176,10 @@ Returns `201` and the file:
 | `DELETE /licenses/{id}/files/{fileId}` | manage | Remove the file from storage |
 
 Uploading returns `501` when the deployment has no R2 bucket.
+
+### Statuses
+
+The statuses are configurable: see [statuses.md](statuses.md) for the model and the endpoints (`/statuses` for the default set, `/apps/{app}/statuses` for an app's own set).
 
 ### Sites (activations)
 

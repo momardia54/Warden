@@ -1,12 +1,13 @@
 import { evaluateFileAccess } from "../lib/files"
-import { effectiveStatus, grantsAccess, parseDomains } from "../lib/license"
+import { parseDomains } from "../lib/license"
+import { effectiveStatusKey, grantsAccess, type StatusDef, type StatusSet } from "../lib/statuses"
 import type { AppSummary } from "./apps.server"
 import { releaseRule, type LicenseFile } from "./files.server"
 import type { Activation, Activity, License } from "./licenses.server"
 import { iso } from "./api-http.server"
 
-export function serializeLicense(l: License, origin: string) {
-  const status = effectiveStatus(l)
+export function serializeLicense(l: License, origin: string, set: StatusSet) {
+  const status = effectiveStatusKey(l, set)
   return {
     id: l.id,
     name: l.name,
@@ -17,7 +18,7 @@ export function serializeLicense(l: License, origin: string) {
     check_url: `${origin}/check/${l.license_key}`,
     status,
     stored_status: l.status,
-    valid: grantsAccess(status),
+    valid: grantsAccess(set, status),
     expires_at: iso(l.expires_at),
     domains: parseDomains(l.domains),
     max_sites: l.max_sites,
@@ -58,8 +59,8 @@ export function serializeApp(a: AppSummary) {
  * A file. For a licence's own file, `available` and `download_url` are included. A file shared by an app has no
  * single download URL (the URL contains a licence key), so those fields are omitted.
  */
-export function serializeFile(f: LicenseFile, license: License | null, origin: string) {
-  const rule = releaseRule(f)
+export function serializeFile(f: LicenseFile, license: License | null, origin: string, set: StatusSet) {
+  const rule = releaseRule(f, set)
   return {
     id: f.id,
     name: f.name,
@@ -69,12 +70,23 @@ export function serializeFile(f: LicenseFile, license: License | null, origin: s
     content_type: f.content_type,
     statuses: rule.statuses,
     check_domain: rule.check_domain,
-    ...(license ? { available: evaluateFileAccess(license, rule, null, Date.now(), true).allowed, download_url: `${origin}/download/${license.license_key}/${f.id}` } : {}),
+    ...(license ? { available: evaluateFileAccess(license, rule, null, Date.now(), true, set).allowed, download_url: `${origin}/download/${license.license_key}/${f.id}` } : {}),
     uploaded_at: iso(f.uploaded_at),
     download_count: f.download_count,
     last_download_at: iso(f.last_download_at),
   }
 }
+
+export const serializeStatus = (s: StatusDef) => ({
+  key: s.key,
+  label: s.label,
+  description: s.description,
+  tone: s.tone,
+  grants_access: s.grants_access,
+  on_expiry: s.on_expiry,
+  check_message: s.check_message,
+  is_default: s.is_default,
+})
 
 export const serializeActivity = (a: Activity) => ({ at: iso(a.at), event: a.event, status: a.status, domain: a.domain, detail: a.detail })
 

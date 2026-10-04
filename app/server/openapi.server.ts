@@ -19,7 +19,7 @@ export function openApiSpec(origin: string) {
     security: secured,
     paths: {
       "/me": { get: { summary: "Who the key belongs to", responses: { 200: { description: "Key name and scope" }, 401: err } } },
-      "/stats": { get: { summary: "Counts by status", responses: { 200: { description: "Totals, counts per status, licences ending in 14 days, active licences not checked for 3 days" }, 401: err } } },
+      "/stats": { get: { summary: "Licence statistics", responses: { 200: { description: "{ total, in_force, not_in_force, expiring_within_14_days, not_checked_for_3_days, by_status }" }, 401: err } } },
       "/licenses": {
         get: {
           summary: "List licences",
@@ -96,6 +96,42 @@ export function openApiSpec(origin: string) {
         parameters: [idParam, { name: "domain", in: "path", required: true, schema: { type: "string" } }],
         delete: { summary: "Release a site to free its slot (permission: manage)", responses: { 200: { description: "{ released: true, domain }" }, 403: err, 404: err } },
       },
+      "/statuses": {
+        get: { summary: "The default statuses", description: "The statuses of every licence that has no app, and of every app that has no statuses of its own.", responses: { 200: { description: "{ data: Status[] }" }, 401: err } },
+        post: { summary: "Add a default status (permission: manage)", requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 201: { description: "The status" }, 403: err, 422: err } },
+      },
+      "/statuses/order": {
+        post: { summary: "Reorder the default statuses (permission: manage)", requestBody: body({ type: "object", required: ["keys"], properties: { keys: { type: "array", items: { type: "string" } } } }), responses: { 200: { description: "{ data: Status[] }" }, 403: err, 422: err } },
+      },
+      "/statuses/{key}": {
+        parameters: [{ name: "key", in: "path", required: true, schema: { type: "string" } }],
+        patch: { summary: "Change a status (permission: manage). The key cannot be changed", requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 200: { description: "The status" }, 403: err, 404: err, 422: err } },
+        delete: {
+          summary: "Delete a status (permission: full)",
+          description: "Licences that use the status move to `move_to`, which is required when any licence uses it. File release rules and app defaults that name the status are updated.",
+          parameters: [{ name: "move_to", in: "query", description: "Key of the status the licences move to", schema: { type: "string" } }],
+          responses: { 200: { description: "{ data: Status[] }" }, 403: err, 404: err, 409: err },
+        },
+      },
+      "/apps/{app}/statuses": {
+        parameters: [appParam],
+        get: { summary: "The statuses that apply to the app", description: "`custom` is true when the app has statuses of its own, false when it uses the default statuses.", responses: { 200: { description: "{ custom, data: Status[] }" }, 404: err } },
+        post: { summary: "Add a status to the app's own set (permission: manage). Customize the app's statuses first", requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 201: { description: "The status" }, 403: err, 409: err, 422: err } },
+        delete: { summary: "Remove the app's own statuses so it uses the default statuses again (permission: full)", description: "Licences using a status the default set lacks must be mapped: send `{ \"mapping\": { \"custom_key\": \"default_key\" } }`.", requestBody: { content: { "application/json": { schema: { type: "object", properties: { mapping: { type: "object", additionalProperties: { type: "string" } } } } } } }, responses: { 200: { description: "{ custom: false, data: Status[] }" }, 403: err, 409: err } },
+      },
+      "/apps/{app}/statuses/customize": {
+        parameters: [appParam],
+        post: { summary: "Give the app its own statuses, starting as a copy of the default statuses (permission: manage)", responses: { 201: { description: "{ custom: true, data: Status[] }" }, 403: err, 409: err } },
+      },
+      "/apps/{app}/statuses/order": {
+        parameters: [appParam],
+        post: { summary: "Reorder the app's own statuses (permission: manage)", requestBody: body({ type: "object", required: ["keys"], properties: { keys: { type: "array", items: { type: "string" } } } }), responses: { 200: { description: "{ data: Status[] }" }, 403: err, 409: err, 422: err } },
+      },
+      "/apps/{app}/statuses/{key}": {
+        parameters: [appParam, { name: "key", in: "path", required: true, schema: { type: "string" } }],
+        patch: { summary: "Change a status of the app's own set (permission: manage)", requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 200: { description: "The status" }, 403: err, 404: err, 409: err, 422: err } },
+        delete: { summary: "Delete a status of the app's own set (permission: full). Same `move_to` rule as for the default statuses", parameters: [{ name: "move_to", in: "query", schema: { type: "string" } }], responses: { 200: { description: "{ data: Status[] }" }, 403: err, 404: err, 409: err } },
+      },
       "/apps": {
         get: { summary: "List apps with their statistics", responses: { 200: { description: "{ data: App[] }" }, 401: err } },
         post: {
@@ -151,7 +187,7 @@ export function openApiSpec(origin: string) {
             customer_email: { type: "string", maxLength: 200 },
             app: { type: ["string", "null"], description: "App id or slug, or null for a standalone licence. On create, the app's defaults fill every field not sent" },
             max_sites: { type: ["integer", "null"], minimum: 1, description: "Maximum number of distinct sites (domains) that may use the licence. null for unlimited" },
-            status: { enum: ["pending", "active", "completed", "suspended", "disabled"], default: "active" },
+            status: { type: "string", description: "A status key of the licence's status set (GET /statuses, or GET /apps/{app}/statuses). Defaults to the default status of the set" },
             expires_at: { type: ["string", "null"], description: "YYYY-MM-DD (end of that day, UTC), an ISO date-time, or null for no end date" },
             duration_days: { type: "integer", description: "On create or edit: end date = today + this many days (ignored when expires_at is sent)" },
             domains: { type: "array", items: { type: "string" } },
@@ -160,13 +196,26 @@ export function openApiSpec(origin: string) {
             external_ref: { type: "string", maxLength: 120, description: "Create only. Your own reference (order id), unique" },
           },
         },
+        StatusInput: {
+          type: "object",
+          properties: {
+            label: { type: "string", maxLength: 40 },
+            key: { type: "string", description: "Identifier: lowercase letters, digits and underscores, starting with a letter. Generated from the label if omitted. Create only" },
+            description: { type: "string", maxLength: 200 },
+            tone: { enum: ["success", "warning", "danger", "info", "neutral"], default: "neutral", description: "Colour of the dashboard badge" },
+            grants_access: { type: "boolean", default: false, description: "Sites can run under this status: the check response has valid = true" },
+            on_expiry: { type: ["string", "null"], description: "Key of the status a licence takes on, as seen by sites, after its expiry date. null: the expiry date does not apply" },
+            check_message: { type: "string", maxLength: 300, description: "Message returned to sites for this status when the licence has no public message" },
+            is_default: { type: "boolean", description: "New licences start with this status. Exactly one status of a set is the default" },
+          },
+        },
         AppInput: {
           type: "object",
           properties: {
             name: { type: "string", maxLength: 80 },
             slug: { type: "string", description: "Lowercase letters, digits and hyphens, 2 to 48 characters. Generated from the name if omitted" },
             description: { type: "string", maxLength: 500 },
-            default_status: { enum: ["pending", "active", "completed", "suspended", "disabled"], default: "active" },
+            default_status: { type: "string", description: "Status key new licences of the app start with" },
             default_duration_days: { type: ["integer", "null"], description: "Days a new licence is valid. null for no expiry" },
             default_max_sites: { type: ["integer", "null"], description: "Maximum sites of a new licence. null for unlimited" },
             default_message: { type: "string", maxLength: 300 },
@@ -177,7 +226,7 @@ export function openApiSpec(origin: string) {
           type: "object",
           properties: {
             id: { type: "string" }, name: { type: "string" }, customer_name: { type: "string" }, customer_email: { type: "string" }, app: { type: ["object", "null"], properties: { id: { type: "string" }, slug: { type: "string" }, name: { type: "string" } } }, max_sites: { type: ["integer", "null"] }, sites_used: { type: "integer" }, key: { type: "string" }, check_url: { type: "string" },
-            status: { type: "string", description: "Effective status: an active licence past its end date reads expired" },
+            status: { type: "string", description: "The status reported to sites: the stored status, or the status its expiry rule points to once the expiry date has passed" },
             stored_status: { type: "string" }, valid: { type: "boolean", description: "true for active and completed" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
             message: { type: "string" }, notes: { type: "string" }, external_ref: { type: ["string", "null"] },
             created_at: { type: "string" }, updated_at: { type: "string" }, last_check_at: { type: ["string", "null"] }, last_check_domain: { type: ["string", "null"] }, check_count: { type: "integer" },

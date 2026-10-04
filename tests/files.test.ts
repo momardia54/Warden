@@ -1,8 +1,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { makeBucket, makeCtx, makeDb } from "./helpers/d1.ts"
-import { cleanFileName, evaluateFileAccess, MAX_FILE_BYTES, parseStatuses } from "../app/lib/files.ts"
-import { buildCheckResponse, effectiveStatus } from "../app/lib/license.ts"
+import { cleanFileName, evaluateFileAccess, MAX_FILE_BYTES } from "../app/lib/files.ts"
+import { buildCheckResponse } from "../app/lib/license.ts"
+import { DEFAULT_STATUSES, effectiveStatusKey, parseStatusKeys } from "../app/lib/statuses.ts"
 import { createLicense, deleteLicense, getLicense, overviewStats, setStatus, extendLicense, recentActivity } from "../app/server/licenses.server.ts"
 import { deleteFile, getFile, listFiles, storeFile, updateFile } from "../app/server/files.server.ts"
 import { handleDownload } from "../app/server/download.server.ts"
@@ -34,42 +35,42 @@ test("file names are cleaned", () => {
 })
 
 test("statuses are parsed in canonical order and validated", () => {
-  assert.deepEqual(parseStatuses("completed, active"), ["active", "completed"])
-  assert.deepEqual(parseStatuses(["Suspended", "suspended"]), ["suspended"])
-  assert.equal(parseStatuses(""), null)
-  assert.equal(parseStatuses("active,bogus"), null)
-  assert.equal(parseStatuses(5), null)
+  assert.deepEqual(parseStatusKeys("completed, active", DEFAULT_STATUSES), ["active", "completed"])
+  assert.deepEqual(parseStatusKeys(["Suspended", "suspended"], DEFAULT_STATUSES), ["suspended"])
+  assert.equal(parseStatusKeys("", DEFAULT_STATUSES), null)
+  assert.equal(parseStatusKeys("active,bogus", DEFAULT_STATUSES), null)
+  assert.equal(parseStatusKeys(5, DEFAULT_STATUSES), null)
 })
 
 test("completed is valid and permanent", () => {
   const now = Date.now()
   const done = { name: "x", status: "completed", expires_at: now - DAY, domains: "", message: "" }
-  assert.equal(effectiveStatus(done, now), "completed") // the expiry date does not apply once completed
-  assert.equal(buildCheckResponse(done, null, now).valid, true)
+  assert.equal(effectiveStatusKey(done, DEFAULT_STATUSES, now), "completed") // the expiry date does not apply once completed
+  assert.equal(buildCheckResponse(done, null, now, [], DEFAULT_STATUSES).valid, true)
 })
 
 test("a file is released only in the statuses it lists", () => {
   const now = Date.now()
   const lic = { status: "active", expires_at: null as number | null, domains: "" }
-  const rule = (statuses: string, check_domain = true) => ({ statuses: parseStatuses(statuses)!, check_domain })
+  const rule = (statuses: string, check_domain = true) => ({ statuses: parseStatusKeys(statuses, DEFAULT_STATUSES)!, check_domain })
 
-  assert.equal(evaluateFileAccess(lic, rule("active,completed"), null, now).allowed, true)
-  assert.equal(evaluateFileAccess(lic, rule("completed"), null, now).allowed, false)
-  assert.match(evaluateFileAccess(lic, rule("completed"), null, now).message, /Completed/)
-  assert.equal(evaluateFileAccess({ ...lic, status: "completed" }, rule("completed"), null, now).allowed, true)
-  assert.equal(evaluateFileAccess({ ...lic, status: "suspended" }, rule("suspended"), null, now).allowed, true) // e.g. a maintenance notice
-  for (const status of ["pending", "suspended", "disabled"]) assert.equal(evaluateFileAccess({ ...lic, status }, rule("active,completed"), null, now).allowed, false)
+  assert.equal(evaluateFileAccess(lic, rule("active,completed"), null, now, false, DEFAULT_STATUSES).allowed, true)
+  assert.equal(evaluateFileAccess(lic, rule("completed"), null, now, false, DEFAULT_STATUSES).allowed, false)
+  assert.match(evaluateFileAccess(lic, rule("completed"), null, now, false, DEFAULT_STATUSES).message, /Completed/)
+  assert.equal(evaluateFileAccess({ ...lic, status: "completed" }, rule("completed"), null, now, false, DEFAULT_STATUSES).allowed, true)
+  assert.equal(evaluateFileAccess({ ...lic, status: "suspended" }, rule("suspended"), null, now, false, DEFAULT_STATUSES).allowed, true) // e.g. a maintenance notice
+  for (const status of ["pending", "suspended", "disabled"]) assert.equal(evaluateFileAccess({ ...lic, status }, rule("active,completed"), null, now, false, DEFAULT_STATUSES).allowed, false)
 
   // expiry is part of the effective status
-  assert.equal(evaluateFileAccess({ ...lic, expires_at: now - 1 }, rule("active"), null, now).allowed, false)
-  assert.equal(evaluateFileAccess({ ...lic, expires_at: now - 1 }, rule("expired"), null, now).allowed, true)
+  assert.equal(evaluateFileAccess({ ...lic, expires_at: now - 1 }, rule("active"), null, now, false, DEFAULT_STATUSES).allowed, false)
+  assert.equal(evaluateFileAccess({ ...lic, expires_at: now - 1 }, rule("expired"), null, now, false, DEFAULT_STATUSES).allowed, true)
 
   // domain check is per file
   const locked = { ...lic, domains: "harborstudio.com" }
-  assert.equal(evaluateFileAccess(locked, rule("active"), "other.com", now).allowed, false)
-  assert.equal(evaluateFileAccess(locked, rule("active"), "shop.harborstudio.com", now).allowed, true)
-  assert.equal(evaluateFileAccess(locked, rule("active", false), null, now).allowed, true)
-  assert.equal(evaluateFileAccess(locked, rule("active"), null, now, true).allowed, true) // dashboard preview
+  assert.equal(evaluateFileAccess(locked, rule("active"), "other.com", now, false, DEFAULT_STATUSES).allowed, false)
+  assert.equal(evaluateFileAccess(locked, rule("active"), "shop.harborstudio.com", now, false, DEFAULT_STATUSES).allowed, true)
+  assert.equal(evaluateFileAccess(locked, rule("active", false), null, now, false, DEFAULT_STATUSES).allowed, true)
+  assert.equal(evaluateFileAccess(locked, rule("active"), null, now, true, DEFAULT_STATUSES).allowed, true) // dashboard preview
 })
 
 test("upload validation", async () => {
@@ -177,7 +178,7 @@ test("renewing a completed licence keeps it completed; stats count it", async ()
   const lic = await createLicense(env, { ...input, status: "completed" as never })
   await extendLicense(env, lic, 30)
   assert.equal((await getLicense(env, lic.id))!.status, "completed")
-  assert.equal((await overviewStats(env)).counts.completed, 1)
+  assert.equal((await overviewStats(env)).byStatus.completed, 1)
 })
 
 test("API: upload, list, update, delete, permissions", async () => {

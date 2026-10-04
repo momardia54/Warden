@@ -4,7 +4,8 @@ import { PageHeader } from "#/components/page-header"
 import { StatCard } from "#/components/stat-card"
 import { Ago } from "#/components/time"
 import { Button } from "#/components/ui/button"
-import { checkResultLabel } from "#/lib/license"
+import { StatusBadge } from "#/components/status-badge"
+import { useAllStatuses, useStatusLabel } from "#/components/status-context"
 import { requireAuth } from "~/server/auth.server"
 import { overviewStats, recentChecks } from "~/server/licenses.server"
 
@@ -19,16 +20,36 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 export default function Overview({ loaderData }: Route.ComponentProps) {
   const { stats, checks } = loaderData
+  const statusLabel = useStatusLabel()
+  const allStatuses = useAllStatuses()
+  const byStatus = Object.entries(stats.byStatus).sort((a, b) => b[1] - a[1])
   return (
     <>
       <PageHeader crumbs={[{ label: "Overview" }]} />
       <div className="space-y-6 p-4 pt-0">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard title="Active" value={stats.counts.active} hint={`of ${stats.total} licences`} help="Licences currently in the Active status and not past their expiry date." />
-          <StatCard title="Suspended or disabled" value={stats.counts.suspended + stats.counts.disabled} help="Licences that sites currently see as not valid because you suspended or disabled them." />
-          <StatCard title="Expiring within 14 days" value={stats.endingSoon} help="Active licences whose expiry date is within the next 14 days. Extend or renew them before they expire." />
-          <StatCard title="No check in 3+ days" value={stats.silent} help="Active licences whose site has not called the check URL for 3 days. The site may be offline, or the check may have been removed from its code." />
+          <StatCard title="In force" value={stats.inForce} hint={`of ${stats.total} licences`} help="Licences whose current status lets the site run, and whose expiry rule has not triggered." />
+          <StatCard title="Not in force" value={stats.notInForce} help="Licences that sites currently see as not valid, for example suspended, disabled or expired ones." />
+          <StatCard title="Expiring within 14 days" value={stats.endingSoon} help="Licences in force whose expiry date is within the next 14 days. Extend or renew them before they expire." />
+          <StatCard title="No check in 3+ days" value={stats.silent} help="Licences in force whose site has not called the check URL for 3 days. The site may be offline, or the check may have been removed from its code." />
         </div>
+
+        {byStatus.length > 0 && (
+          <section className="space-y-2">
+            <h2 className="font-semibold">By status</h2>
+            <div className="flex flex-wrap gap-2">
+              {byStatus.map(([key, count]) => {
+                const def = allStatuses.find((s) => s.key === key)
+                return (
+                  <span key={key} className="flex items-center gap-1.5 text-sm">
+                    <StatusBadge status={def ?? { label: key, tone: "neutral" }} />
+                    <span className="text-muted-foreground">{count}</span>
+                  </span>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
         <section className="space-y-2">
           <h2 className="font-semibold">Recent checks</h2>
@@ -43,7 +64,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                       {c.name}
                     </Link>
                     <span className="text-muted-foreground">
-                      {c.domain ?? "no domain"} · {checkResultLabel(c.status)} · <Ago ts={c.at} />
+                      {c.domain ?? "no domain"} · {statusLabel(c.status)} · <Ago ts={c.at} />
                     </span>
                   </li>
                 ))}

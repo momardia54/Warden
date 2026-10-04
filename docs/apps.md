@@ -16,12 +16,16 @@ Dashboard: **Apps**, **New app**. API: `POST /api/v1/apps`.
 |---|---|
 | Name and identifier | The identifier (slug) is generated from the name and used in the API, for example `harbor-theme` |
 | Description | Shown on the app page |
-| Default status | The status a new licence starts with. Use Pending to hold licences until payment is confirmed |
+| Default status | The status a new licence starts with, from the app's statuses. For example a status that holds licences until payment is confirmed |
 | Default duration (days) | A new licence expires this many days after it is issued. Empty: no expiry |
 | Default maximum sites | How many sites one licence may be used on. Empty: unlimited |
 | Default public message | The message new licences return to sites |
 
 The defaults are a starting point. Every value can be changed on each licence.
+
+## Statuses
+
+An app uses the default statuses unless you give it its own set on the app page. See [statuses.md](statuses.md#statuses-per-app).
 
 ## Issuing licences
 

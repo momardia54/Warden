@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { makeBucket, makeCtx, makeDb } from "./helpers/d1.ts"
 import { compareVersions, isValidSlug, latestVersioned, slugify } from "../app/lib/apps.ts"
 import { buildCheckResponse } from "../app/lib/license.ts"
+import { DEFAULT_STATUSES } from "../app/lib/statuses.ts"
 import { appDefaults, createApp, deleteApp, findApp, getAppSummary, listApps, readAppForm, updateApp } from "../app/server/apps.server.ts"
 import { handleCheck } from "../app/server/check.server.ts"
 import { handleDownload } from "../app/server/download.server.ts"
@@ -43,12 +44,12 @@ test("app form validation", () => {
     for (const [k, v] of Object.entries(entries)) f.set(k, v)
     return f
   }
-  assert.ok("error" in readAppForm(form({ name: "" })))
-  assert.ok("error" in readAppForm(form({ name: "X", slug: "Bad Slug" })))
-  assert.ok("error" in readAppForm(form({ name: "X", default_duration_days: "0" })))
-  assert.ok("error" in readAppForm(form({ name: "X", default_max_sites: "abc" })))
-  assert.ok("error" in readAppForm(form({ name: "X", default_status: "expired" })))
-  const ok = readAppForm(form({ name: "Harbor Theme", default_duration_days: "365", default_max_sites: "3" }))
+  assert.ok("error" in readAppForm(form({ name: "" }), DEFAULT_STATUSES))
+  assert.ok("error" in readAppForm(form({ name: "X", slug: "Bad Slug" }), DEFAULT_STATUSES))
+  assert.ok("error" in readAppForm(form({ name: "X", default_duration_days: "0" }), DEFAULT_STATUSES))
+  assert.ok("error" in readAppForm(form({ name: "X", default_max_sites: "abc" }), DEFAULT_STATUSES))
+  assert.ok("error" in readAppForm(form({ name: "X", default_status: "expired" }), DEFAULT_STATUSES))
+  const ok = readAppForm(form({ name: "Harbor Theme", default_duration_days: "365", default_max_sites: "3" }), DEFAULT_STATUSES)
   assert.ok("input" in ok)
   if ("input" in ok) assert.deepEqual([ok.input.slug, ok.input.default_duration_days, ok.input.default_max_sites], ["harbor-theme", 365, 3])
 })
@@ -81,18 +82,18 @@ test("apps: unique slug, defaults, summary, delete rules", async () => {
 test("site limit in the check response", () => {
   const lic = { name: "L", status: "active", expires_at: null, domains: "", message: "", max_sites: 2, app_slug: "harbor-theme", app_name: "Harbor Theme" }
   const now = Date.now()
-  assert.equal(buildCheckResponse(lic, "a.com", now, []).valid, true)
-  assert.deepEqual(buildCheckResponse(lic, "a.com", now, []).app, { slug: "harbor-theme", name: "Harbor Theme" })
-  assert.equal(buildCheckResponse(lic, "b.com", now, ["a.com"]).valid, true)
-  assert.equal(buildCheckResponse(lic, "a.com", now, ["a.com", "b.com"]).valid, true) // a known site stays valid
-  const full = buildCheckResponse(lic, "c.com", now, ["a.com", "b.com"])
+  assert.equal(buildCheckResponse(lic, "a.com", now, [], DEFAULT_STATUSES).valid, true)
+  assert.deepEqual(buildCheckResponse(lic, "a.com", now, [], DEFAULT_STATUSES).app, { slug: "harbor-theme", name: "Harbor Theme" })
+  assert.equal(buildCheckResponse(lic, "b.com", now, ["a.com"], DEFAULT_STATUSES).valid, true)
+  assert.equal(buildCheckResponse(lic, "a.com", now, ["a.com", "b.com"], DEFAULT_STATUSES).valid, true) // a known site stays valid
+  const full = buildCheckResponse(lic, "c.com", now, ["a.com", "b.com"], DEFAULT_STATUSES)
   assert.deepEqual([full.valid, full.status], [false, "site_limit_reached"])
-  const noDomain = buildCheckResponse(lic, null, now, [])
+  const noDomain = buildCheckResponse(lic, null, now, [], DEFAULT_STATUSES)
   assert.deepEqual([noDomain.valid, noDomain.status], [false, "domain_mismatch"])
   assert.match(noDomain.message, /2 sites/)
-  assert.equal(buildCheckResponse({ ...lic, max_sites: null }, null, now, []).valid, true) // no limit: no domain needed
-  assert.equal(buildCheckResponse({ ...lic, status: "suspended" }, "c.com", now, ["a.com", "b.com"]).status, "suspended") // status wins
-  assert.equal(buildCheckResponse({ ...lic, domains: "a.com" }, "b.com", now, []).status, "domain_mismatch") // the allowed list still applies
+  assert.equal(buildCheckResponse({ ...lic, max_sites: null }, null, now, [], DEFAULT_STATUSES).valid, true) // no limit: no domain needed
+  assert.equal(buildCheckResponse({ ...lic, status: "suspended" }, "c.com", now, ["a.com", "b.com"], DEFAULT_STATUSES).status, "suspended") // status wins
+  assert.equal(buildCheckResponse({ ...lic, domains: "a.com" }, "b.com", now, [], DEFAULT_STATUSES).status, "domain_mismatch") // the allowed list still applies
 })
 
 test("check endpoint registers sites and enforces the limit", async () => {

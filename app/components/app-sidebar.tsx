@@ -1,4 +1,4 @@
-import { Boxes, KeyRound, Braces, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, ShieldCheck, Sun } from "lucide-react"
+import { Boxes, KeyRound, Braces, Tags, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, ShieldCheck, Sun } from "lucide-react"
 import { NavLink, useFetcher, useLocation } from "react-router"
 import { useTheme } from "next-themes"
 import {
@@ -29,6 +29,7 @@ const NAV = [
   { title: "Overview", to: "/overview", icon: LayoutDashboard },
   { title: "Apps", to: "/apps", icon: Boxes },
   { title: "Licences", to: "/licenses", icon: KeyRound },
+  { title: "Statuses", to: "/statuses", icon: Tags },
   { title: "API", to: "/api-keys", icon: Braces },
 ]
 

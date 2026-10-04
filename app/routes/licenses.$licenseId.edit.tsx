@@ -4,6 +4,7 @@ import { PageHeader } from "#/components/page-header"
 import { LicenseForm } from "#/components/license-form"
 import { requireAuth } from "~/server/auth.server"
 import { getApp, listApps } from "~/server/apps.server"
+import { loadStatusSets } from "~/server/statuses.server"
 import { getLicense, readLicenseForm, updateLicense } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Edit licence | Warden" }]
@@ -21,7 +22,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   await requireAuth(request, env)
   const license = await getLicense(env, params.licenseId)
   if (!license) throw new Response("Not found", { status: 404 })
-  const parsed = readLicenseForm(await request.formData())
+  const parsed = readLicenseForm(await request.formData(), await loadStatusSets(env))
   if ("error" in parsed) return { error: parsed.error }
   if (parsed.input.app_id && !(await getApp(env, parsed.input.app_id))) return { error: "The selected app no longer exists." }
   await updateLicense(env, license, parsed.input)
@@ -36,8 +37,7 @@ export default function EditLicense({ loaderData, actionData }: Route.ComponentP
     customer_email: license.customer_email,
     app_id: license.app_id ?? "",
     max_sites: license.max_sites?.toString() ?? "",
-    // "Expired" is not a selectable status: it follows from the expiry date.
-    status: license.status === "expired" ? "active" : license.status,
+    status: license.status,
     expires: license.expires_at ? new Date(license.expires_at).toISOString().slice(0, 10) : "",
     domains: license.domains,
     message: license.message,

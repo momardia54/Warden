@@ -9,8 +9,8 @@ import { Badge } from "#/components/ui/badge"
 import { Button } from "#/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "#/components/ui/dialog"
 import { Input } from "#/components/ui/input"
-import { DEFAULT_RELEASE_STATUSES, describeStatuses, evaluateFileAccess, MAX_FILE_BYTES, splitStatuses } from "#/lib/files"
-import type { Status } from "#/lib/license"
+import { defaultReleaseStatuses, evaluateFileAccess, MAX_FILE_BYTES } from "#/lib/files"
+import { describeStatusKeys, splitStatusKeys, type StatusSet } from "#/lib/statuses"
 
 export type FileRow = {
   id: string
@@ -36,15 +36,15 @@ export type SharedFiles = { appName: string; appHref: string; files: FileRow[] }
 
 const AVAILABILITY_HELP = (
   <>
-    Each file is downloadable only while the licence has one of the statuses you select. Examples: <b>Active + Completed</b> for updates, <b>Completed</b> for a final release after full payment,{" "}
-    <b>Suspended</b> for a maintenance notice.
+    Each file is downloadable only while the licence has one of the statuses you select. Examples: for example every status that lets the site run for updates, only the paid-in-full status for a final release,{" "}
+    or only the suspended status for a maintenance notice.
   </>
 )
 const DOMAIN_HELP = "When on, the download request must include a domain (?domain=) that matches the licence's allowed domains. Ignored if the licence has no allowed domains."
 
-function FileRowItem({ file: f, license, link, onEdit, onDelete }: { file: FileRow; license: LicenseState | null; link?: string; onEdit?: () => void; onDelete?: () => void }) {
-  const rule = { statuses: splitStatuses(f.statuses), check_domain: f.check_domain === 1 }
-  const availability = license ? evaluateFileAccess(license, rule, null, Date.now(), true).allowed : null
+function FileRowItem({ file: f, license, statuses, link, onEdit, onDelete }: { file: FileRow; license: LicenseState | null; statuses: StatusSet; link?: string; onEdit?: () => void; onDelete?: () => void }) {
+  const rule = { statuses: splitStatusKeys(f.statuses, statuses), check_domain: f.check_domain === 1 }
+  const availability = license ? evaluateFileAccess(license, rule, null, Date.now(), true, statuses).allowed : null
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-sm">
       <div className="min-w-0 space-y-1">
@@ -54,7 +54,7 @@ function FileRowItem({ file: f, license, link, onEdit, onDelete }: { file: FileR
           {availability !== null && <Badge variant={availability ? "success" : "secondary"}>{availability ? "Available now" : "Not available now"}</Badge>}
         </div>
         <div className="text-xs text-muted-foreground">
-          Available when status is: <span className="text-foreground">{describeStatuses(rule.statuses)}</span>
+          Available when status is: <span className="text-foreground">{describeStatusKeys(rule.statuses, statuses)}</span>
           {rule.check_domain ? "" : " · domain not checked"}
         </div>
         <div className="text-xs text-muted-foreground">
@@ -89,24 +89,26 @@ type FilesSectionProps = {
   /** The licence the files are checked against, to show whether each file is available now. Omit for app files. */
   license?: LicenseState | null
   files: FileRow[]
+  /** The statuses that apply to these files: the status set of the licence's app, or of the app that owns them. */
+  statuses: StatusSet
   /** Read-only list of the files that come from the licence's app. */
   shared?: SharedFiles | null
   configured: boolean
 }
 
-export function FilesSection({ title = "Files", description, uploadPath, downloadUrl, license = null, files, shared = null, configured }: FilesSectionProps) {
+export function FilesSection({ title = "Files", description, uploadPath, downloadUrl, license = null, files, statuses: statusSet, shared = null, configured }: FilesSectionProps) {
   const revalidator = useRevalidator()
   const remove = useFetcher()
   const update = useFetcher()
   const input = useRef<HTMLInputElement>(null)
   const [version, setVersion] = useState("")
-  const [statuses, setStatuses] = useState<Status[]>(DEFAULT_RELEASE_STATUSES)
+  const [statuses, setStatuses] = useState<string[]>(() => defaultReleaseStatuses(statusSet))
   const [checkDomain, setCheckDomain] = useState(true)
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState("")
   const [removing, setRemoving] = useState<FileRow | null>(null)
   const [editing, setEditing] = useState<FileRow | null>(null)
-  const [editStatuses, setEditStatuses] = useState<Status[]>([])
+  const [editStatuses, setEditStatuses] = useState<string[]>([])
   const [editCheckDomain, setEditCheckDomain] = useState(true)
   const [editVersion, setEditVersion] = useState("")
 
@@ -145,7 +147,7 @@ export function FilesSection({ title = "Files", description, uploadPath, downloa
 
   function openEditor(file: FileRow) {
     setEditing(file)
-    setEditStatuses(splitStatuses(file.statuses))
+    setEditStatuses(splitStatusKeys(file.statuses, statusSet))
     setEditCheckDomain(file.check_domain === 1)
     setEditVersion(file.version)
   }
@@ -168,7 +170,7 @@ export function FilesSection({ title = "Files", description, uploadPath, downloa
           {files.length > 0 && (
             <ul className="divide-y rounded-md border">
               {files.map((f) => (
-                <FileRowItem key={f.id} file={f} license={license} link={downloadUrl?.(f.id)} onEdit={() => openEditor(f)} onDelete={() => setRemoving(f)} />
+                <FileRowItem key={f.id} file={f} license={license} statuses={statusSet} link={downloadUrl?.(f.id)} onEdit={() => openEditor(f)} onDelete={() => setRemoving(f)} />
               ))}
             </ul>
           )}
@@ -180,7 +182,7 @@ export function FilesSection({ title = "Files", description, uploadPath, downloa
               </p>
               <ul className="divide-y rounded-md border">
                 {shared.files.map((f) => (
-                  <FileRowItem key={f.id} file={f} license={license} link={downloadUrl?.(f.id)} />
+                  <FileRowItem key={f.id} file={f} license={license} statuses={statusSet} link={downloadUrl?.(f.id)} />
                 ))}
               </ul>
             </div>
@@ -204,7 +206,7 @@ export function FilesSection({ title = "Files", description, uploadPath, downloa
             </div>
             <div className="space-y-1.5">
               <FieldLabel help={AVAILABILITY_HELP}>Available when licence status is</FieldLabel>
-              <StatusPicker value={statuses} onChange={setStatuses} disabled={uploading} />
+              <StatusPicker statuses={statusSet} value={statuses} onChange={setStatuses} disabled={uploading} />
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <label className="flex items-center gap-2 text-sm">
@@ -230,7 +232,7 @@ export function FilesSection({ title = "Files", description, uploadPath, downloa
           <div className="space-y-4">
             <div className="space-y-1.5">
               <FieldLabel help={AVAILABILITY_HELP}>Available when licence status is</FieldLabel>
-              <StatusPicker value={editStatuses} onChange={setEditStatuses} />
+              <StatusPicker statuses={statusSet} value={editStatuses} onChange={setEditStatuses} />
             </div>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" className="size-4 accent-primary" checked={editCheckDomain} onChange={(e) => setEditCheckDomain(e.target.checked)} />

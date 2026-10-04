@@ -1,4 +1,5 @@
-import { isStatus, normalizeDomain, parseDomains, STATUSES } from "../lib/license"
+import { normalizeDomain, parseDomains } from "../lib/license"
+import { findStatus, type StatusSet } from "../lib/statuses"
 import type { AppInput } from "./apps.server"
 import { MAX_DURATION_DAYS } from "./apps.server"
 import { parseOptionalCount, validEmail, type LicenseInput } from "./licenses.server"
@@ -7,10 +8,8 @@ import { fail, parseExpiry, trimmed } from "./api-http.server"
 
 type Parsed<T> = { input: T } | { response: Response }
 
-const STORED_STATUSES = STATUSES.filter((s) => s !== "expired")
-
 /** Merges a JSON body over `base` (an existing licence, or the defaults for a new one) and validates it. */
-export function applyLicenseBody(body: Record<string, unknown>, base: LicenseInput): Parsed<LicenseInput> {
+export function applyLicenseBody(body: Record<string, unknown>, base: LicenseInput, statuses: StatusSet): Parsed<LicenseInput> {
   const input = { ...base }
   if ("name" in body) {
     const name = trimmed(body.name, 120)
@@ -30,8 +29,8 @@ export function applyLicenseBody(body: Record<string, unknown>, base: LicenseInp
     input.customer_email = email
   }
   if ("status" in body) {
-    if (!isStatus(body.status) || body.status === "expired") {
-      return { response: fail(422, "invalid_status", `status must be one of: ${STORED_STATUSES.join(", ")}. "expired" follows from the expiry date and cannot be set.`) }
+    if (typeof body.status !== "string" || !findStatus(statuses, body.status)) {
+      return { response: fail(422, "invalid_status", `status must be one of: ${statuses.map((s) => s.key).join(", ")}.`) }
     }
     input.status = body.status
   }
@@ -62,7 +61,7 @@ export function applyLicenseBody(body: Record<string, unknown>, base: LicenseInp
 }
 
 /** Merges a JSON body over `base` and validates an app. A missing slug is generated from the name. */
-export function applyAppBody(body: Record<string, unknown>, base: AppInput): Parsed<AppInput> {
+export function applyAppBody(body: Record<string, unknown>, base: AppInput, statuses: StatusSet): Parsed<AppInput> {
   const input = { ...base }
   if ("name" in body) {
     const name = trimmed(body.name, 80)
@@ -85,8 +84,8 @@ export function applyAppBody(body: Record<string, unknown>, base: AppInput): Par
     }
   }
   if ("default_status" in body) {
-    if (!isStatus(body.default_status) || body.default_status === "expired") {
-      return { response: fail(422, "invalid_default_status", `default_status must be one of: ${STORED_STATUSES.join(", ")}.`) }
+    if (typeof body.default_status !== "string" || !findStatus(statuses, body.default_status)) {
+      return { response: fail(422, "invalid_default_status", `default_status must be one of: ${statuses.map((s) => s.key).join(", ")}.`) }
     }
     input.default_status = body.default_status
   }

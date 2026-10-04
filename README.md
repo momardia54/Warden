@@ -19,7 +19,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 - **Apps**: a product sold to many customers, with defaults for new licences (status, duration, maximum sites, message), its own licence list and releases shared by all of its licences ([docs/apps.md](docs/apps.md))
 - **Site limit**: a licence can be limited to N sites; sites register on their first check and you can release them
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence, with a customer name and email
-- Statuses: **pending, active, completed, suspended, disabled, expired**. An active licence past its expiry date reports `expired` by itself. **Completed** means paid in full: valid and permanent
+- **Configurable statuses**: a default set (pending, active, completed, suspended, disabled, expired) that you can rename, change, extend and cut down. Each status says whether sites can run, what it becomes when the expiry date passes, its colour and its message to sites. An app can have its own set ([docs/statuses.md](docs/statuses.md))
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
 - **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
 - Activity log per licence: every check (which domain, which result) and every change
@@ -37,8 +37,10 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | Licences of all apps, with app and status filters | Licence key, check URL and details |
 | ![Sites and files](docs/screenshots/sites-and-files.jpg) | ![Edit a file's release rule](docs/screenshots/edit-file.jpg) |
 | Registered sites, and the files a licence can download | Changing the statuses a file is available in |
-| ![New licence under an app](docs/screenshots/new-licence.jpg) | ![New app](docs/screenshots/new-app.jpg) |
-| Issuing a licence with the app's defaults | Creating an app |
+| ![Statuses](docs/screenshots/statuses.jpg) | ![Edit a status](docs/screenshots/edit-status.jpg) |
+| The default statuses, with usage | What a status does: sites, expiry rule, message |
+| ![App statuses](docs/screenshots/app-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
+| An app with its own statuses | Issuing a licence with the app's defaults |
 
 ## The check URL
 
@@ -50,7 +52,7 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 { "name": "Harbor Studio website", "valid": true, "status": "active", "message": "", "expires_at": "2027-03-31T23:59:59.999Z", "checked_at": "2026-10-04T16:17:30.248Z" }
 ```
 
-`valid` is `true` only when the status is `active`, the expiry date has not passed, and the domain matches (if the licence lists domains). Other `status` values: `pending`, `suspended`, `disabled`, `expired`, `domain_mismatch`, `unknown` (HTTP 404). Full details and verification code: [docs/checking.md](docs/checking.md).
+`valid` is `true` only when the licence's status lets sites run (by default Active and Completed), its expiry rule has not triggered, and the domain is allowed. `status` is the licence's status key, or `domain_mismatch`, `site_limit_reached` or `unknown` (HTTP 404). Full details and verification code: [docs/checking.md](docs/checking.md).
 
 Recommended in the site: check about every 12 hours, act only on a response you could read and verify, and **keep the last known state on network errors or 5xx**, so a Warden outage never locks a client out.
 
@@ -93,7 +95,7 @@ curl           "https://<worker>/api/v1/licenses?status=expired"   -H "Authoriza
 | `manage` | also create, edit, set status, renew |
 | `full` | also delete and regenerate keys |
 
-Endpoints: `GET /me`, `GET /stats`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
+Endpoints: `GET /me`, `GET /stats`, `GET|POST /statuses`, `PATCH|DELETE /statuses/{key}`, `GET /apps/{app}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
 
 ## Run and deploy
 

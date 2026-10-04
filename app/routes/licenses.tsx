@@ -8,7 +8,8 @@ import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "#/components/ui/empty"
-import { effectiveStatus, STATUSES, STATUS_LABEL } from "#/lib/license"
+import { useAllStatuses, useStatusSets } from "#/components/status-context"
+import { effectiveStatusKey } from "#/lib/statuses"
 import { requireAuth } from "~/server/auth.server"
 import { listApps } from "~/server/apps.server"
 import { queryLicenses } from "~/server/licenses.server"
@@ -27,9 +28,11 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState("all")
   const [appFilter, setAppFilter] = useState("all")
+  const sets = useStatusSets()
+  const allStatuses = useAllStatuses()
 
   const shown = licenses.filter((l) => {
-    if (status !== "all" && effectiveStatus(l) !== status) return false
+    if (status !== "all" && effectiveStatusKey(l, (l.app_id && sets.byApp[l.app_id]) || sets.default) !== status) return false
     if (appFilter === "none" ? l.app_id !== null : appFilter !== "all" && l.app_id !== appFilter) return false
     const q = query.trim().toLowerCase()
     return !q || `${l.name} ${l.customer_name} ${l.customer_email} ${l.license_key} ${l.domains} ${l.app_name ?? ""}`.toLowerCase().includes(q)
@@ -84,9 +87,9 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
               <div className="w-44">
                 <NativeSelect value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
                   <option value="all">All statuses</option>
-                  {STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {STATUS_LABEL[s]}
+                  {allStatuses.map((s) => (
+                    <option key={s.key} value={s.key}>
+                      {s.label}
                     </option>
                   ))}
                 </NativeSelect>

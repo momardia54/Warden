@@ -59,7 +59,7 @@ test("create, idempotent create, validation", async () => {
   assert.equal(again.json.id, a.json.id)
 
   assert.equal((await call("POST", "/licenses", keys.manage, {})).status, 422)
-  assert.equal((await call("POST", "/licenses", keys.manage, { name: "x", status: "expired" })).json.error.code, "invalid_status")
+  assert.equal((await call("POST", "/licenses", keys.manage, { name: "x", status: "bogus" })).json.error.code, "invalid_status")
   assert.equal((await call("POST", "/licenses", keys.manage, { name: "x", expires_at: "tomorrow" })).json.error.code, "invalid_expires_at")
   assert.equal((await call("POST", "/licenses", keys.manage, { name: "x", domains: ["bad domain!"] })).json.error.code, "invalid_domains")
   assert.equal((await call("POST", "/licenses", keys.manage, { name: "x", external_ref: "" })).json.error.code, "invalid_external_ref")
@@ -80,7 +80,7 @@ test("read by id or key, patch, status, activity", async () => {
   assert.equal((await call("POST", `/licenses/${l.id}/status`, keys.manage, { status: "suspended" })).json.status, "suspended")
   assert.equal((await call("POST", `/licenses/${l.id}/status`, keys.manage, { status: "nope" })).status, 422)
   const log = (await call("GET", `/licenses/${l.id}/activity`, keys.read)).json.data.map((a: any) => a.detail).join("|")
-  assert.match(log, /Status active -> suspended/)
+  assert.match(log, /Status Active -> Suspended/)
 })
 
 test("renew by days and until, expired licences come back", async () => {
@@ -135,7 +135,7 @@ test("list: filters, search, pagination, stats", async () => {
   assert.equal(new Set([...page1.data, ...page2.data, ...page3.data].map((l: any) => l.id)).size, 7)
 
   const stats = (await call("GET", "/stats", keys.read)).json
-  assert.deepEqual([stats.total, stats.counts.active, stats.counts.expired, stats.counts.suspended], [7, 5, 1, 1])
+  assert.deepEqual([stats.total, stats.by_status.active, stats.by_status.expired, stats.by_status.suspended, stats.in_force, stats.not_in_force], [7, 5, 1, 1, 5, 2])
 })
 
 test("helpers", () => {

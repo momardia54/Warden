@@ -6,7 +6,7 @@ import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
 import { Textarea } from "#/components/ui/textarea"
 import { slugify } from "#/lib/apps"
-import { STATUSES, STATUS_LABEL } from "#/lib/license"
+import type { StatusSet } from "#/lib/statuses"
 
 export type AppFormValues = {
   name: string
@@ -21,7 +21,7 @@ export type AppFormValues = {
 
 export const EMPTY_APP_FORM: AppFormValues = { name: "", slug: "", description: "", default_status: "active", default_duration_days: "", default_max_sites: "", default_message: "", notes: "" }
 
-export function AppForm({ values, error, submitLabel, cancelTo }: { values: AppFormValues; error?: string; submitLabel: string; cancelTo: string }) {
+export function AppForm({ values, statuses, error, submitLabel, cancelTo }: { values: AppFormValues; statuses: StatusSet; error?: string; submitLabel: string; cancelTo: string }) {
   const busy = useNavigation().state === "submitting"
   const [name, setName] = useState(values.name)
   const [slug, setSlug] = useState(values.slug)
@@ -83,9 +83,9 @@ export function AppForm({ values, error, submitLabel, cancelTo }: { values: AppF
               Status
             </FieldLabel>
             <NativeSelect id="default_status" name="default_status" defaultValue={values.default_status}>
-              {STATUSES.filter((s) => s !== "expired").map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABEL[s]}
+              {statuses.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
                 </option>
               ))}
             </NativeSelect>

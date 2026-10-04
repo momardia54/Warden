@@ -1,35 +1,4 @@
-export const STATUSES = ["pending", "active", "completed", "suspended", "disabled", "expired"] as const
-export type Status = (typeof STATUSES)[number]
-
-export const STATUS_LABEL: Record<Status, string> = {
-  pending: "Pending",
-  active: "Active",
-  completed: "Completed",
-  suspended: "Suspended",
-  disabled: "Disabled",
-  expired: "Expired",
-}
-
-/** Display label for any result the check endpoint can return, including the ones that are not stored statuses. */
-export function checkResultLabel(status: string | null): string {
-  if (status === "domain_mismatch") return "Wrong domain"
-  if (status === "unknown") return "Unknown key"
-  if (status === "site_limit_reached") return "Site limit reached"
-  return status && isStatus(status) ? STATUS_LABEL[status] : (status ?? "")
-}
-
-export const STATUS_HINT: Record<Status, string> = {
-  pending: "Created but not in effect yet, for example before the first payment is received.",
-  active: "In effect. The site runs normally.",
-  completed: "Paid in full. Permanent: the expiry date no longer applies.",
-  suspended: "Temporarily on hold, for example for a late payment. Set to Active to resume.",
-  disabled: "Permanently switched off.",
-  expired: "Past its expiry date. Set automatically.",
-}
-
-export function isStatus(value: unknown): value is Status {
-  return typeof value === "string" && (STATUSES as readonly string[]).includes(value)
-}
+import { effectiveStatusKey, findStatus, grantsAccess, type StatusSet } from "./statuses"
 
 /** Uppercase letters and digits without the look-alikes 0, O, 1, I and L. */
 const KEY_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789"
@@ -50,18 +19,6 @@ export function generateLicenseKey(random: Crypto = globalThis.crypto): string {
 }
 
 export const KEY_PATTERN = /^WRD(-[A-Z0-9]{5}){4}$/
-
-/** The status reported to sites. An active licence past its expiry date is reported as "expired". */
-export function effectiveStatus(license: { status: string; expires_at: number | null }, now = Date.now()): Status {
-  const status = isStatus(license.status) ? license.status : "disabled"
-  if (status === "active" && license.expires_at !== null && license.expires_at <= now) return "expired"
-  return status
-}
-
-/** True for the statuses under which a site may run: active and completed. */
-export function grantsAccess(status: string): boolean {
-  return status === "active" || status === "completed"
-}
 
 export function parseDomains(raw: string): string[] {
   return raw
@@ -89,7 +46,8 @@ export function domainAllowed(allowed: string[], domain: string | null): boolean
 
 export type CheckResponse = {
   valid: boolean
-  status: Status | "unknown" | "domain_mismatch" | "site_limit_reached"
+  /** A licence status key, or one of "unknown", "domain_mismatch" and "site_limit_reached". */
+  status: string
   message: string
   name?: string
   app?: { slug: string; name: string } | null
@@ -108,13 +66,7 @@ type LicenseForCheck = {
   app_name?: string | null
 }
 
-const DEFAULT_MESSAGE: Record<string, string> = {
-  active: "",
-  completed: "",
-  pending: "This licence is not active yet.",
-  suspended: "This licence is suspended.",
-  disabled: "This licence has been disabled.",
-  expired: "This licence has expired.",
+const MESSAGE: Record<string, string> = {
   domain_mismatch: "This licence is not valid for this domain.",
   unknown: "Unknown licence.",
 }
@@ -122,21 +74,21 @@ const DEFAULT_MESSAGE: Record<string, string> = {
 /**
  * Builds the JSON response of the check endpoint. Pure function.
  * `activatedDomains` are the domains the licence has already been used on; they matter only when the licence
- * has a site limit.
+ * has a site limit. `statuses` is the status set of the licence's app (or the default set).
  */
-export function buildCheckResponse(license: LicenseForCheck | null, domain: string | null, now = Date.now(), activatedDomains: string[] = []): CheckResponse {
+export function buildCheckResponse(license: LicenseForCheck | null, domain: string | null, now: number, activatedDomains: string[], statuses: StatusSet): CheckResponse {
   const checked_at = new Date(now).toISOString()
-  if (!license) return { valid: false, status: "unknown", message: DEFAULT_MESSAGE.unknown, checked_at }
-  const status = effectiveStatus(license, now)
+  if (!license) return { valid: false, status: "unknown", message: MESSAGE.unknown, checked_at }
+  const status = effectiveStatusKey(license, statuses, now)
   const base = {
     name: license.name,
     app: license.app_slug ? { slug: license.app_slug, name: license.app_name ?? license.app_slug } : null,
     expires_at: license.expires_at ? new Date(license.expires_at).toISOString() : null,
     checked_at,
   }
-  if (grantsAccess(status)) {
+  if (grantsAccess(statuses, status)) {
     if (!domainAllowed(parseDomains(license.domains), domain)) {
-      return { ...base, valid: false, status: "domain_mismatch", message: DEFAULT_MESSAGE.domain_mismatch }
+      return { ...base, valid: false, status: "domain_mismatch", message: MESSAGE.domain_mismatch }
     }
     const limit = license.max_sites ?? null
     if (limit !== null) {
@@ -149,7 +101,7 @@ export function buildCheckResponse(license: LicenseForCheck | null, domain: stri
       }
     }
   }
-  return { ...base, valid: grantsAccess(status), status, message: license.message.trim() || DEFAULT_MESSAGE[status] }
+  return { ...base, valid: grantsAccess(statuses, status), status, message: license.message.trim() || (findStatus(statuses, status)?.check_message ?? "") }
 }
 
 /** API key permission levels, lowest first: read (GET only), manage (also create, edit, set status, renew), full (also delete licences and regenerate keys). */

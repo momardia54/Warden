@@ -6,10 +6,10 @@ Files can belong to a single licence, or to an **app** and be shared by every li
 
 | Setting | Meaning |
 |---|---|
-| **Available when licence status is** | One or more of `pending`, `active`, `completed`, `suspended`, `disabled`, `expired`. The file can be downloaded only while the licence's current status is one of them. Default: `active` and `completed`. |
+| **Available when licence status is** | One or more statuses of the licence's status set ([statuses.md](statuses.md)). The file can be downloaded only while the licence's current status is one of them. Default: the statuses that let sites run (by default Active and Completed). |
 | **Require a matching domain** | When on (default), the request must include a `?domain=` that the licence allows: it must match the licence's allowed domains and, if the licence has a site limit, fit within it. Turn it off for files someone downloads by hand. |
 
-`expired` is the effective status: an `active` licence past its expiry date counts as `expired`. A `completed` licence is permanent and never expires.
+The current status takes the status's expiry rule into account: with the default statuses, an Active licence past its expiry date counts as Expired, and a Completed licence never expires. Release rules refer to status keys, so they follow the licence if you rename a status's label, and are updated if you delete a status.
 
 Typical rules:
 

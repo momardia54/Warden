@@ -1,7 +1,8 @@
 import { isValidSlug, latestVersioned, slugify } from "../lib/apps"
-import { isStatus, type Status } from "../lib/license"
+import { defaultStatusKey, effectiveStatusKey, findStatus, type StatusSet } from "../lib/statuses"
 import { deleteAppFiles } from "./files.server"
 import { parseOptionalCount, type LicenseInput } from "./licenses.server"
+import { loadStatusSets, setFor } from "./statuses.server"
 import { newId } from "./util.server"
 
 export type App = {
@@ -10,7 +11,8 @@ export type App = {
   slug: string
   description: string
   default_duration_days: number | null
-  default_status: Status
+  /** Key of the status new licences of this app start with, within the app's status set. */
+  default_status: string
   default_max_sites: number | null
   default_message: string
   notes: string
@@ -32,15 +34,15 @@ export type AppSummary = App & {
 
 export const MAX_DURATION_DAYS = 3650
 
-/** Validates the dashboard form and returns the cleaned input, or an error message. */
-export function readAppForm(form: FormData): { input: AppInput } | { error: string } {
+/** Validates the dashboard form and returns the cleaned input, or an error message. `statuses` is the status set the app uses. */
+export function readAppForm(form: FormData, statuses: StatusSet): { input: AppInput } | { error: string } {
   const name = String(form.get("name") ?? "").trim()
   if (!name) return { error: "Enter a name for the app." }
   if (name.length > 80) return { error: "The name must be 80 characters or fewer." }
   const slug = String(form.get("slug") ?? "").trim().toLowerCase() || slugify(name)
   if (!isValidSlug(slug)) return { error: "The identifier must be 2 to 48 characters: lowercase letters, digits and single hyphens." }
-  const status = String(form.get("default_status") ?? "active")
-  if (!isStatus(status) || status === "expired") return { error: "Choose a valid default status." }
+  const status = String(form.get("default_status") ?? defaultStatusKey(statuses))
+  if (!findStatus(statuses, status)) return { error: "Choose a valid default status." }
   const duration = parseOptionalCount(form.get("default_duration_days"), MAX_DURATION_DAYS)
   if (duration === "invalid") return { error: `Default duration must be a whole number of days from 1 to ${MAX_DURATION_DAYS}, or empty for no expiry.` }
   const maxSites = parseOptionalCount(form.get("default_max_sites"))
@@ -103,14 +105,19 @@ export async function listApps(env: Env, now = Date.now()): Promise<AppSummary[]
     await env.DB.prepare(
       `SELECT a.*,
         (SELECT COUNT(*) FROM licenses l WHERE l.app_id = a.id) AS licenses,
-        (SELECT COUNT(*) FROM licenses l WHERE l.app_id = a.id AND (l.status = 'completed' OR (l.status = 'active' AND (l.expires_at IS NULL OR l.expires_at > ?)))) AS in_force,
         (SELECT COUNT(*) FROM activations x JOIN licenses l ON l.id = x.license_id WHERE l.app_id = a.id) AS sites,
         (SELECT COUNT(*) FROM files f WHERE f.app_id = a.id) AS files
        FROM apps a ORDER BY a.name COLLATE NOCASE`
-    ).bind(now).all<Omit<AppSummary, "latest_version">>()
+    ).all<Omit<AppSummary, "latest_version" | "in_force">>()
   ).results
   const versions = (await env.DB.prepare("SELECT app_id, version FROM files WHERE app_id IS NOT NULL AND version != ''").all<{ app_id: string; version: string }>()).results
-  return apps.map((app) => ({ ...app, latest_version: latestVersioned(versions.filter((v) => v.app_id === app.id))?.version ?? null }))
+  const sets = await loadStatusSets(env)
+  const licenses = (await env.DB.prepare("SELECT app_id, status, expires_at FROM licenses WHERE app_id IS NOT NULL").all<{ app_id: string; status: string; expires_at: number | null }>()).results
+  return apps.map((app) => {
+    const set = setFor(sets, app.id)
+    const inForce = licenses.filter((l) => l.app_id === app.id && findStatus(set, effectiveStatusKey(l, set, now))?.grants_access).length
+    return { ...app, in_force: inForce, latest_version: latestVersioned(versions.filter((v) => v.app_id === app.id))?.version ?? null }
+  })
 }
 
 export async function getAppSummary(env: Env, idOrSlug: string): Promise<AppSummary | null> {

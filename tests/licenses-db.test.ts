@@ -1,10 +1,13 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { makeCtx, makeDb } from "./helpers/d1.ts"
+import { DEFAULT_STATUSES } from "../app/lib/statuses.ts"
 import { createLicense, extendLicense, getLicense, overviewStats, readLicenseForm, recentActivity, regenerateKey, setStatus, deleteLicense, pruneActivity, updateLicense } from "../app/server/licenses.server.ts"
 import { handleCheck } from "../app/server/check.server.ts"
 import { hmacHex } from "../app/server/util.server.ts"
 
+import { loadStatusSets } from "../app/server/statuses.server.ts"
+const SETS = { default: DEFAULT_STATUSES, byApp: {} }
 const input = { name: "Harbor Studio", customer_name: "", customer_email: "", app_id: null, max_sites: null, status: "active" as const, expires_at: null, domains: "", message: "", notes: "" }
 const envOf = () => ({ DB: makeDb().DB }) as unknown as Env
 
@@ -15,10 +18,10 @@ function form(entries: Record<string, string>) {
 }
 
 test("form validation", () => {
-  assert.ok("error" in readLicenseForm(form({ name: " " })))
-  assert.ok("error" in readLicenseForm(form({ name: "x", expires_at: "10/10/2026" })))
-  assert.ok("error" in readLicenseForm(form({ name: "x", domains: "bad domain!" })))
-  const ok = readLicenseForm(form({ name: "x", expires_at: "2026-12-31", domains: "https://www.a.org, b.org" }))
+  assert.ok("error" in readLicenseForm(form({ name: " " }), SETS))
+  assert.ok("error" in readLicenseForm(form({ name: "x", expires_at: "10/10/2026" }), SETS))
+  assert.ok("error" in readLicenseForm(form({ name: "x", domains: "bad domain!" }), SETS))
+  const ok = readLicenseForm(form({ name: "x", expires_at: "2026-12-31", domains: "https://www.a.org, b.org" }), SETS)
   assert.ok("input" in ok)
   if ("input" in ok) {
     assert.equal(ok.input.domains, "a.org, b.org")
@@ -44,7 +47,7 @@ test("create, change status, extend, regenerate, delete", async () => {
 
   await updateLicense(env, after, { ...input, name: "Renamed" })
   const log = (await recentActivity(env, lic.id)).map((a) => a.detail).join("|")
-  assert.match(log, /Status active -> suspended/)
+  assert.match(log, /Status Active -> Suspended/)
   assert.match(log, /Key regenerated/)
   assert.match(log, /Details edited/)
 
@@ -88,7 +91,7 @@ test("overview counts and pruning", async () => {
   await createLicense(env, { ...input, expires_at: now - 1000 })
   await createLicense(env, { ...input, status: "suspended" })
   const stats = await overviewStats(env, now)
-  assert.deepEqual([stats.total, stats.counts.active, stats.counts.expired, stats.counts.suspended, stats.endingSoon], [4, 2, 1, 1, 1])
+  assert.deepEqual([stats.total, stats.byStatus.active, stats.byStatus.expired, stats.byStatus.suspended, stats.endingSoon], [4, 2, 1, 1, 1])
   assert.equal((await overviewStats(env, now + 4 * 86_400_000)).silent, 2)
 
   const lic = await createLicense(env, input)

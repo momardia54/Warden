@@ -14,10 +14,12 @@ import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert"
 import { Button } from "#/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "#/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "#/components/ui/dropdown-menu"
-import { checkResultLabel, effectiveStatus, isStatus, STATUSES, STATUS_HINT, STATUS_LABEL } from "#/lib/license"
+import { useStatusSet } from "#/components/status-context"
+import { effectiveStatusKey, findStatus, statusLabel } from "#/lib/statuses"
 import { requireAuth } from "~/server/auth.server"
 import { deleteFile, getFile, listFiles, storageConfigured, updateFile } from "~/server/files.server"
 import { formatSites } from "#/components/licenses-table"
+import { getStatusSet } from "~/server/statuses.server"
 import { deleteLicense, listActivations, releaseActivation, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Licence | Warden" }]
@@ -47,7 +49,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
 
   if (intent === "status") {
     const status = String(form.get("status"))
-    if (isStatus(status) && status !== "expired") await setStatus(env, license, status)
+    if (findStatus(await getStatusSet(env, license.app_id), status)) await setStatus(env, license, status)
   } else if (intent === "extend") {
     const days = Number(form.get("days"))
     if (Number.isInteger(days) && days > 0 && days <= 3650) await extendLicense(env, license, days)
@@ -92,7 +94,8 @@ function SiteRelease({ domain }: { domain: string }) {
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
   const { license, activity, files, sharedFiles, sites, filesConfigured, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
-  const effective = effectiveStatus(license)
+  const statuses = useStatusSet(license.app_id)
+  const effective = effectiveStatusKey(license, statuses)
   const curl = `curl "${checkUrl}?domain=example.com"`
 
   return (
@@ -132,14 +135,14 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                 <Button variant="outline">Change status</Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">
-                {STATUSES.filter((s) => s !== "expired").map((s) => (
-                  <Form method="post" key={s}>
+                {statuses.map((s) => (
+                  <Form method="post" key={s.key}>
                     <input type="hidden" name="intent" value="status" />
-                    <input type="hidden" name="status" value={s} />
-                    <DropdownMenuItem asChild disabled={license.status === s}>
+                    <input type="hidden" name="status" value={s.key} />
+                    <DropdownMenuItem asChild disabled={license.status === s.key}>
                       <button type="submit" className="w-full flex-col items-start gap-0.5 text-left">
-                        <span className="font-medium">{STATUS_LABEL[s]}</span>
-                        <span className="text-xs text-muted-foreground">{STATUS_HINT[s]}</span>
+                        <span className="font-medium">{s.label}</span>
+                        <span className="text-xs text-muted-foreground">{s.description}</span>
                       </button>
                     </DropdownMenuItem>
                   </Form>
@@ -207,7 +210,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
         <section className="rounded-lg border bg-card p-4">
           <h2 className="mb-3 font-semibold">Details</h2>
           <dl className="grid gap-4 sm:grid-cols-3">
-            <Fact label="Status reported to sites" help="What the check endpoint returns right now. Differs from the stored status only when an active licence has passed its expiry date.">{STATUS_LABEL[effective]}</Fact>
+            <Fact label="Status reported to sites" help="What the check endpoint returns right now. It differs from the stored status only when the status has an expiry rule and the expiry date has passed.">{statusLabel(statuses, effective)}</Fact>
             <Fact label="Expires">{license.expires_at ? `${new Date(license.expires_at).toISOString().slice(0, 10)} (end of day, UTC)` : "Never"}</Fact>
             <Fact label="Allowed domains" help="Sites must send one of these as ?domain= for the licence to be valid.">{license.domains || "Any domain"}</Fact>
             <Fact label="Sites in use" help="How many different sites (domains) have registered with this licence, and the maximum allowed.">{formatSites(license)}</Fact>
@@ -255,6 +258,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           uploadPath={`/licenses/${license.id}/files`}
           downloadUrl={(fileId) => `${origin}/download/${license.license_key}/${fileId}`}
           license={license}
+          statuses={statuses}
           files={files}
           shared={license.app_id && sharedFiles.length > 0 ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles } : null}
           configured={filesConfigured}
@@ -272,7 +276,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                     <span>
                       {a.event === "check" ? (
                         <>
-                          Check from <span className="font-medium">{a.domain ?? "unknown domain"}</span>: {checkResultLabel(a.status)}
+                          Check from <span className="font-medium">{a.domain ?? "unknown domain"}</span>: {statusLabel(statuses, a.status)}
                         </>
                       ) : a.event === "download" ? (
                         <>
