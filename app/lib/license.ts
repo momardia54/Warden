@@ -61,7 +61,7 @@ export function parseDomains(raw: string): string[] {
     .filter((d): d is string => Boolean(d))
 }
 
-/** "https://www.OCWOF.org/path" -> "ocwof.org". The leading "www." is ignored so both forms match. */
+/** "https://www.HarborStudio.com/path" -> "harborstudio.com". The leading "www." is ignored so both forms match. */
 export function normalizeDomain(raw: string): string | null {
   let host = raw.trim().toLowerCase()
   if (!host) return null

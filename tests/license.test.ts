@@ -20,24 +20,24 @@ test("an active licence past its end date is expired; other statuses are unchang
 })
 
 test("domains are normalised and matched with subdomains", () => {
-  assert.equal(normalizeDomain("https://WWW.OCWOF.org/path?x=1"), "ocwof.org")
+  assert.equal(normalizeDomain("https://WWW.HarborStudio.com/path?x=1"), "harborstudio.com")
   assert.equal(normalizeDomain("not a domain!"), null)
-  assert.deepEqual(parseDomains("ocwof.org, www.staging.ocwof.org"), ["ocwof.org", "staging.ocwof.org"])
+  assert.deepEqual(parseDomains("harborstudio.com, www.staging.harborstudio.com"), ["harborstudio.com", "staging.harborstudio.com"])
   assert.equal(domainAllowed([], null), true)
-  assert.equal(domainAllowed(["ocwof.org"], "shop.ocwof.org"), true)
-  assert.equal(domainAllowed(["ocwof.org"], "evilocwof.org"), false)
-  assert.equal(domainAllowed(["ocwof.org"], null), false)
+  assert.equal(domainAllowed(["harborstudio.com"], "shop.harborstudio.com"), true)
+  assert.equal(domainAllowed(["harborstudio.com"], "evilharborstudio.com"), false)
+  assert.equal(domainAllowed(["harborstudio.com"], null), false)
 })
 
 test("answers", () => {
   const now = Date.parse("2026-10-10T00:00:00Z")
-  const base = { name: "OCWOF", status: "active", expires_at: null, domains: "", message: "" }
+  const base = { name: "Harbor Studio", status: "active", expires_at: null, domains: "", message: "" }
   assert.deepEqual([buildAnswer(base, null, now).valid, buildAnswer(base, null, now).status], [true, "active"])
   assert.equal(buildAnswer(null, null, now).status, "unknown")
   assert.equal(buildAnswer({ ...base, status: "suspended", message: "Payment late" }, null, now).message, "Payment late")
   assert.equal(buildAnswer({ ...base, status: "disabled" }, null, now).valid, false)
   assert.equal(buildAnswer({ ...base, expires_at: now - 1 }, null, now).status, "expired")
-  const locked = { ...base, domains: "ocwof.org" }
-  assert.equal(buildAnswer(locked, "ocwof.org", now).valid, true)
+  const locked = { ...base, domains: "harborstudio.com" }
+  assert.equal(buildAnswer(locked, "harborstudio.com", now).valid, true)
   assert.equal(buildAnswer(locked, "other.com", now).status, "domain_mismatch")
 })

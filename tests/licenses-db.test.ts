@@ -5,7 +5,7 @@ import { createLicense, extendLicense, getLicense, overviewStats, readLicenseFor
 import { handleCheck } from "../app/server/check.server.ts"
 import { hmacHex } from "../app/server/util.server.ts"
 
-const input = { name: "OCWOF", client: "", status: "active" as const, expires_at: null, domains: "", message: "", notes: "" }
+const input = { name: "Harbor Studio", client: "", status: "active" as const, expires_at: null, domains: "", message: "", notes: "" }
 const envOf = () => ({ DB: makeDb().DB }) as unknown as Env
 
 function form(entries: Record<string, string>) {
@@ -55,9 +55,9 @@ test("create, change status, extend, regenerate, delete", async () => {
 test("check endpoint: answers, signature, logging, unknown keys", async () => {
   const env = envOf()
   const { ctx, settle } = makeCtx()
-  const lic = await createLicense(env, { ...input, domains: "ocwof.org" })
+  const lic = await createLicense(env, { ...input, domains: "harborstudio.com" })
 
-  const ok = await handleCheck(new Request(`https://w.dev/check/${lic.license_key}?domain=www.ocwof.org`), env, ctx, lic.license_key)
+  const ok = await handleCheck(new Request(`https://w.dev/check/${lic.license_key}?domain=www.harborstudio.com`), env, ctx, lic.license_key)
   const text = await ok.text()
   assert.equal(ok.status, 200)
   assert.equal(JSON.parse(text).valid, true)
@@ -67,7 +67,7 @@ test("check endpoint: answers, signature, logging, unknown keys", async () => {
   assert.equal((await wrong.json() as { status: string }).status, "domain_mismatch")
 
   await setStatus(env, lic, "disabled")
-  const off = await handleCheck(new Request(`https://w.dev/check/${lic.license_key}?domain=ocwof.org`, { method: "POST", body: "{}" }), env, ctx, lic.license_key)
+  const off = await handleCheck(new Request(`https://w.dev/check/${lic.license_key}?domain=harborstudio.com`, { method: "POST", body: "{}" }), env, ctx, lic.license_key)
   assert.equal((await off.json() as { valid: boolean }).valid, false)
 
   const unknown = await handleCheck(new Request("https://w.dev/check/WRD-AAAAA-AAAAA-AAAAA-AAAAA"), env, ctx, "WRD-AAAAA-AAAAA-AAAAA-AAAAA")
@@ -77,7 +77,7 @@ test("check endpoint: answers, signature, logging, unknown keys", async () => {
   await settle()
   const row = (await getLicense(env, lic.id))!
   assert.equal(row.check_count, 3)
-  assert.equal(row.last_check_domain, "ocwof.org")
+  assert.equal(row.last_check_domain, "harborstudio.com")
 })
 
 test("overview counts and pruning", async () => {
