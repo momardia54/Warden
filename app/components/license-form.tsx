@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Form, Link, useNavigation } from "react-router"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
-import { Label } from "#/components/ui/label"
+import { FieldLabel } from "#/components/help-tip"
 import { Textarea } from "#/components/ui/textarea"
 import { NativeSelect } from "#/components/ui/native-select"
 import { isStatus, STATUSES, STATUS_HINT, STATUS_LABEL } from "#/lib/license"
@@ -18,18 +18,18 @@ export function LicenseForm({ values, error, submitLabel, cancelTo }: { values: 
     <Form method="post" className="max-w-2xl space-y-6">
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="name">Licence name</Label>
+          <FieldLabel htmlFor="name" help="An internal name to recognise the licence, for example the site or project.">Name</FieldLabel>
           <Input id="name" name="name" required autoFocus defaultValue={values.name} placeholder="Harbor Studio website" />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="client">Client (optional)</Label>
+          <FieldLabel htmlFor="client" help="The customer this licence belongs to. Optional; searchable in the licence list.">Client</FieldLabel>
           <Input id="client" name="client" defaultValue={values.client} placeholder="Harbor Studio" />
         </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="status">Status</Label>
+          <FieldLabel htmlFor="status" help="Controls what sites are told when they check this licence. Change it any time. A licence past its expiry date is reported as Expired regardless.">Status</FieldLabel>
           <NativeSelect id="status" name="status" value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUSES.filter((s) => s !== "expired").map((s) => (
               <option key={s} value={s}>
@@ -40,29 +40,27 @@ export function LicenseForm({ values, error, submitLabel, cancelTo }: { values: 
           <p className="text-xs text-muted-foreground">{isStatus(status) ? STATUS_HINT[status] : ""}</p>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="expires">End date (optional)</Label>
+          <FieldLabel htmlFor="expires" help="The licence is reported as Expired after this date (end of day, UTC). Leave empty for no expiry. Ignored once the status is Completed.">Expiry date</FieldLabel>
           <Input id="expires" name="expires_at" type="date" defaultValue={values.expires} />
-          <p className="text-xs text-muted-foreground">After this day the licence reports &ldquo;expired&rdquo; by itself. Leave empty for no end date.</p>
+          <p className="text-xs text-muted-foreground">Optional. Leave empty for no expiry.</p>
         </div>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="domains">Allowed domains (optional)</Label>
+        <FieldLabel htmlFor="domains" help="Restricts the licence to these domains. A site sends its domain as ?domain= when it checks. Subdomains of an allowed domain match. Leave empty to allow any domain.">Allowed domains</FieldLabel>
         <Input id="domains" name="domains" defaultValue={values.domains} placeholder="harborstudio.com, staging.harborstudio.com" />
-        <p className="text-xs text-muted-foreground">
-          If set, the check only says &ldquo;valid&rdquo; when the site sends one of these in <code>?domain=</code>. Subdomains match.
-        </p>
+        <p className="text-xs text-muted-foreground">Comma separated. Optional. Leave empty to allow any domain.</p>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="message">Message for the site (optional)</Label>
-        <Input id="message" name="message" defaultValue={values.message} placeholder="Payment overdue, please get in touch" maxLength={300} />
-        <p className="text-xs text-muted-foreground">Returned as <code>message</code> in the check answer. Your site can show it when the licence is not active.</p>
+        <FieldLabel htmlFor="message" help="Returned to the site in the check response as the message field. Your site can show it when the licence is not valid, for example a payment reminder. Visible to anyone with the licence key.">Public message</FieldLabel>
+        <Input id="message" name="message" defaultValue={values.message} placeholder="Payment overdue. Please contact support." maxLength={300} />
+        <p className="text-xs text-muted-foreground">Optional. Returned to the site in the check response.</p>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="notes">Private notes (optional)</Label>
-        <Textarea id="notes" name="notes" rows={4} defaultValue={values.notes} placeholder="Payment plan, contact details... Never sent to the site." />
+        <FieldLabel htmlFor="notes" help="For your own reference. Never returned by the check endpoint or the download endpoint.">Internal notes</FieldLabel>
+        <Textarea id="notes" name="notes" rows={4} defaultValue={values.notes} placeholder="Payment plan, contact details, agreement reference" />
       </div>
 
       {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}

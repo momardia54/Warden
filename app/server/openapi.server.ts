@@ -63,11 +63,13 @@ export function openApiSpec(origin: string) {
         parameters: [idParam],
         get: { summary: "List the files attached to a licence", responses: { 200: { description: "{ data: File[] }" }, 404: err } },
         put: {
-          summary: "Upload a file (scope manage)",
-          description: "The request body is the raw file (not multipart); send Content-Length. Up to 100 MB. Query: `name` (required), `kind` (`update` or `final`), `version`, `notes`. `update` files download while the licence is active or completed; `final` files only once it is completed (paid in full).",
+          summary: "Upload a file (permission: manage)",
+          description:
+            "The request body is the raw file, not multipart, and the request needs a Content-Length header. Maximum size 100 MB. The file can be downloaded while the licence status is one of `statuses`.",
           parameters: [
-            { name: "name", in: "query", required: true, schema: { type: "string" } },
-            { name: "kind", in: "query", schema: { enum: ["update", "final"], default: "update" } },
+            { name: "name", in: "query", required: true, description: "Download file name", schema: { type: "string" } },
+            { name: "statuses", in: "query", description: "Comma separated licence statuses in which the file is available", schema: { type: "string", default: "active,completed", example: "active,completed" } },
+            { name: "check_domain", in: "query", description: "Require the requesting domain to match the licence's allowed domains", schema: { type: "boolean", default: true } },
             { name: "version", in: "query", schema: { type: "string" } },
             { name: "notes", in: "query", schema: { type: "string" } },
           ],
@@ -75,7 +77,15 @@ export function openApiSpec(origin: string) {
           responses: { 201: { description: "The file" }, 403: err, 413: err, 422: err, 501: err },
         },
       },
-      "/licenses/{id}/files/{fileId}": { parameters: [idParam, { name: "fileId", in: "path", required: true, schema: { type: "string" } }], delete: { summary: "Delete a file (scope manage)", responses: { 200: { description: "{ deleted: true, id }" }, 404: err } } },
+      "/licenses/{id}/files/{fileId}": {
+        parameters: [idParam, { name: "fileId", in: "path", required: true, schema: { type: "string" } }],
+        patch: {
+          summary: "Update a file's release rule or metadata (permission: manage)",
+          requestBody: body({ type: "object", properties: { statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" }, version: { type: "string" }, notes: { type: "string" } } }),
+          responses: { 200: { description: "The file" }, 403: err, 404: err, 422: err },
+        },
+        delete: { summary: "Delete a file (permission: manage)", responses: { 200: { description: "{ deleted: true, id }" }, 404: err } },
+      },
       "/licenses/{id}/activity": { parameters: [idParam], get: { summary: "Recent checks and changes", parameters: [{ name: "limit", in: "query", schema: { type: "integer", maximum: 200, default: 50 } }], responses: { 200: { description: "{ data: Activity[] }" }, 404: err } } },
     },
     components: {

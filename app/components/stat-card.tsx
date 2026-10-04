@@ -1,19 +1,25 @@
 import { TrendingDown, TrendingUp } from "lucide-react"
+import { HelpTip } from "#/components/help-tip"
 
 export function StatCard({
   title,
   value,
   trend,
   hint,
+  help,
 }: {
   title: string
   value: string | number
   trend?: number
   hint?: string
+  help?: React.ReactNode
 }) {
   return (
     <div className="rounded-lg border bg-card p-4">
-      <h3 className="text-sm font-medium text-muted-foreground">{title}</h3>
+      <h3 className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+        {title}
+        {help && <HelpTip>{help}</HelpTip>}
+      </h3>
       <div className="mt-1 flex items-end gap-2">
         <p className="text-2xl font-bold">{value}</p>
         {trend !== undefined && (

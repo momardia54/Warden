@@ -1,24 +1,24 @@
 # Roadmap
 
-Warden is **pre-1.0**. The data model, the check answer and the `/api/v1` endpoints can still change between 0.x versions; changes are listed in [CHANGELOG.md](CHANGELOG.md). Version 1.0.0 means the check answer and API are stable and only change in backward compatible ways.
+Warden is **pre-1.0**. The data model, the check response and the `/api/v1` endpoints can still change between 0.x versions; changes are listed in [CHANGELOG.md](CHANGELOG.md). Version 1.0.0 means the check response and API are stable and only change in backward compatible ways.
 
 This is a plan, not a promise. Order can change.
 
 ## Done (0.1.x)
 
-- Licences with key, check URL, five statuses, end dates, allowed domains, message for the site, private notes
-- Signed check answers (`X-Warden-Signature`), activity log
+- Licences with key, check URL, five statuses, expiry dates, allowed domains, message for the site, private notes
+- Signed check responses (`X-Warden-Signature`), activity log
 - Dashboard: overview, licence list, licence page, extend, regenerate key
 - API with keys and scopes: create (idempotent with `external_ref`), read, edit, status, renew, regenerate key, delete, activity, stats, OpenAPI description
 - Daily clean-up of old check history
-- Status **completed** (paid in full) and **files per licence** in R2: update and final files, gated downloads, download log, upload by dashboard or API
+- Status **completed** (paid in full) and **files per licence** in R2: per-file release rules by licence status, gated downloads, download log, upload by dashboard or API
 
 ## Next (towards 1.0.0)
 
 - [ ] **Webhooks out**: call a URL when a licence changes status, expires, or when a site has not checked for N days (replaces email, same approach as the other tools in this folder)
 - [ ] **Rate limiting** for the API and the check URL
-- [ ] **Public-key signatures** (Ed25519) so a site holds only a public key and cannot forge answers
-- [ ] **Grace period** per licence: report `valid: true` with a warning for N days after the end date
+- [ ] **Public-key signatures** (Ed25519) so a site holds only a public key and cannot forge responses
+- [ ] **Grace period** per licence: report `valid: true` with a warning for N days after the expiry date
 - [ ] **Import and export** of all licences as JSON/CSV
 - [ ] **Renewal reminders** in the dashboard: a list of licences ending soon with a one-click extend
 - [ ] **Tests against a real Worker** in CI (today: unit tests plus a local D1 stand-in and manual runs)
@@ -26,7 +26,7 @@ This is a plan, not a promise. Order can change.
 - [ ] **Larger files**: direct-to-R2 uploads for files over 100 MB, and range (resumable) downloads
 - [ ] **Download limits** and time-limited, signed download links
 - [ ] **Docs site** and a one-click deploy button once the repository is public
-- [ ] Review of the whole API surface and the answer format, then freeze for 1.0.0
+- [ ] Review of the whole API surface and the response format, then freeze for 1.0.0
 
 ## Later, if there is demand
 

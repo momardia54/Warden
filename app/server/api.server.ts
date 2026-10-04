@@ -1,9 +1,10 @@
-import { effectiveStatus, isInForce, isStatus, KEY_PATTERN, parseDomains, normalizeDomain, STATUSES, type Scope, type Status } from "../lib/license"
+import { effectiveStatus, grantsAccess, isStatus, KEY_PATTERN, parseDomains, normalizeDomain, STATUSES, type Scope, type Status } from "../lib/license"
 import {
   createLicense, deleteLicense, extendLicense, getLicense, getLicenseByRef, overviewStats, recentActivity, regenerateKey,
   renewUntil, setStatus, updateLicense, type Activity, type License, type LicenseInput,
 } from "./licenses.server"
-import { deleteFile, getFile, listFiles, storeFile, type LicenseFile } from "./files.server"
+import { evaluateFileAccess } from "../lib/files"
+import { deleteFile, getFile, listFiles, releaseRule, storeFile, updateFile, type LicenseFile } from "./files.server"
 import { openApiSpec } from "./openapi.server"
 import { json, newId, randomString, sha256Hex } from "./util.server"
 
@@ -70,7 +71,7 @@ export function publicLicense(l: License, origin: string) {
     check_url: `${origin}/check/${l.license_key}`,
     status,
     stored_status: l.status,
-    valid: isInForce(status),
+    valid: grantsAccess(status),
     expires_at: iso(l.expires_at),
     domains: parseDomains(l.domains),
     message: l.message,
@@ -84,13 +85,26 @@ export function publicLicense(l: License, origin: string) {
   }
 }
 
-const publicFile = (f: LicenseFile, licenseKey: string, origin: string) => ({
-  id: f.id, name: f.name, kind: f.kind, version: f.version, notes: f.notes, size: f.size, content_type: f.content_type,
-  uploaded_at: iso(f.uploaded_at), download_count: f.download_count, last_download_at: iso(f.last_download_at),
-  download_url: `${origin}/download/${licenseKey}/${f.id}`,
-})
+const publicFile = (f: LicenseFile, license: License, origin: string) => {
+  const rule = releaseRule(f)
+  return {
+    id: f.id,
+    name: f.name,
+    version: f.version,
+    notes: f.notes,
+    size: f.size,
+    content_type: f.content_type,
+    statuses: rule.statuses,
+    check_domain: rule.check_domain,
+    available: evaluateFileAccess(license, rule, null, Date.now(), true).allowed,
+    uploaded_at: iso(f.uploaded_at),
+    download_count: f.download_count,
+    last_download_at: iso(f.last_download_at),
+    download_url: `${origin}/download/${license.license_key}/${f.id}`,
+  }
+}
 
-const publicActivity = (a: Activity) => ({ at: iso(a.at), kind: a.kind, status: a.status, domain: a.domain, detail: a.detail })
+const publicActivity = (a: Activity) => ({ at: iso(a.at), event: a.event, status: a.status, domain: a.domain, detail: a.detail })
 
 // ---- input ----------------------------------------------------------------------
 
@@ -254,26 +268,47 @@ export async function handleApi(request: Request, env: Env, ctx: ExecutionContex
     const owner = await findLicense(env, fm[1])
     if (!owner) return fail(404, "license_not_found", "No licence with that id or key.")
     const fileId = fm[2]
-    if (method === "GET" && !fileId) return reply({ data: (await listFiles(env, owner.id)).map((f) => publicFile(f, owner.license_key, origin)) })
+    if (method === "GET" && !fileId) return reply({ data: (await listFiles(env, owner.id)).map((f) => publicFile(f, owner, origin)) })
     if (method === "PUT" && !fileId) {
       const denied = need(key, "manage")
       if (denied) return denied
       const q = url.searchParams
       const stored = await storeFile(env, owner, {
-        name: q.get("name") ?? "", kind: q.get("kind") ?? "update", version: q.get("version") ?? "", notes: q.get("notes") ?? "",
-        contentType: request.headers.get("content-type"), size: Number(request.headers.get("content-length")), body: request.body,
+        name: q.get("name") ?? "",
+        statuses: q.get("statuses") ?? undefined,
+        checkDomain: q.get("check_domain") !== "false",
+        version: q.get("version") ?? "",
+        notes: q.get("notes") ?? "",
+        contentType: request.headers.get("content-type"),
+        size: Number(request.headers.get("content-length")),
+        body: request.body,
       })
-      return "error" in stored ? fail(stored.status, "upload_failed", stored.error) : reply(publicFile(stored.file, owner.license_key, origin), 201)
+      return "error" in stored ? fail(stored.status, "upload_failed", stored.error) : reply(publicFile(stored.file, owner, origin), 201)
+    }
+    if (method === "PATCH" && fileId) {
+      const denied = need(key, "manage")
+      if (denied) return denied
+      const file = await getFile(env, owner.id, fileId)
+      if (!file) return fail(404, "file_not_found", "File not found for this licence.")
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const updated = await updateFile(env, owner, file, {
+        statuses: body.statuses,
+        checkDomain: typeof body.check_domain === "boolean" ? body.check_domain : undefined,
+        version: typeof body.version === "string" ? body.version : undefined,
+        notes: typeof body.notes === "string" ? body.notes : undefined,
+      })
+      return "error" in updated ? fail(updated.status, "invalid_file", updated.error) : reply(publicFile(updated.file, owner, origin))
     }
     if (method === "DELETE" && fileId) {
       const denied = need(key, "manage")
       if (denied) return denied
       const file = await getFile(env, owner.id, fileId)
-      if (!file) return fail(404, "file_not_found", "No such file on this licence.")
+      if (!file) return fail(404, "file_not_found", "File not found for this licence.")
       await deleteFile(env, owner, file)
       return reply({ deleted: true, id: file.id })
     }
-    return fail(405, "method_not_allowed", "Use GET or PUT on /files, DELETE on /files/{fileId}.")
+    return fail(405, "method_not_allowed", "Use GET or PUT on /files, and PATCH or DELETE on /files/{fileId}.")
   }
 
   const m = path.match(/^\/licenses\/([A-Za-z0-9_-]+)(?:\/(status|renew|regenerate-key|activity))?$/)

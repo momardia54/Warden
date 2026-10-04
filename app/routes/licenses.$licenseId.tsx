@@ -3,6 +3,7 @@ import { Form, Link, redirect, useNavigation, useSearchParams } from "react-rout
 import { CalendarPlus, Pencil, RefreshCw, Trash2 } from "lucide-react"
 import type { Route } from "./+types/licenses.$licenseId"
 import { FilesSection } from "#/components/files-section"
+import { HelpTip } from "#/components/help-tip"
 import { PageHeader } from "#/components/page-header"
 import { LicenseStatusBadge } from "#/components/status-badge"
 import { CodeBlock, CopyField } from "#/components/code-block"
@@ -11,9 +12,9 @@ import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert"
 import { Button } from "#/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "#/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "#/components/ui/dropdown-menu"
-import { answerLabel, effectiveStatus, isStatus, STATUSES, STATUS_HINT, STATUS_LABEL } from "#/lib/license"
+import { checkResultLabel, effectiveStatus, isStatus, STATUSES, STATUS_HINT, STATUS_LABEL } from "#/lib/license"
 import { requireAuth } from "~/server/auth.server"
-import { deleteFile, getFile, listFiles, storageConfigured } from "~/server/files.server"
+import { deleteFile, getFile, listFiles, storageConfigured, updateFile } from "~/server/files.server"
 import { deleteLicense, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Licence | Warden" }]
@@ -44,6 +45,9 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     if (Number.isInteger(days) && days > 0 && days <= 3650) await extendLicense(env, license, days)
   } else if (intent === "regenerate") {
     await regenerateKey(env, license)
+  } else if (intent === "update-file") {
+    const file = await getFile(env, license.id, String(form.get("fileId")))
+    if (file) await updateFile(env, license, file, { statuses: String(form.get("statuses") ?? ""), checkDomain: form.get("check_domain") === "true", version: String(form.get("version") ?? "") })
   } else if (intent === "delete-file") {
     const file = await getFile(env, license.id, String(form.get("fileId")))
     if (file) await deleteFile(env, license, file)
@@ -54,10 +58,13 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   return null
 }
 
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+function Fact({ label, help, children }: { label: string; help?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        {label}
+        {help && <HelpTip>{help}</HelpTip>}
+      </dt>
       <dd className="text-sm">{children}</dd>
     </div>
   )
@@ -144,7 +151,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline">
-                  <CalendarPlus /> Extend
+                  <CalendarPlus /> Extend expiry
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -154,7 +161,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                     <input type="hidden" name="days" value={days} />
                     <DropdownMenuItem asChild>
                       <button type="submit" className="w-full">
-                        {days === 365 ? "1 year" : `${days} days`}
+                        {days === 365 ? "+ 1 year" : `+ ${days} days`}
                       </button>
                     </DropdownMenuItem>
                   </Form>
@@ -165,23 +172,27 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
         </div>
 
         <section className="space-y-3 rounded-lg border bg-card p-4">
-          <h2 className="font-semibold">Key and check URL</h2>
+          <h2 className="font-semibold">Licence key and check URL</h2>
           <div className="space-y-1">
-            <p className="text-xs text-muted-foreground">Licence key</p>
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              Licence key <HelpTip>Identifies and authenticates this licence. Anyone holding it can check the licence status and download the files it allows. Treat it as a secret.</HelpTip>
+            </p>
             <CopyField value={license.license_key} />
           </div>
           <div className="space-y-1">
-            <p className="text-xs text-muted-foreground">Check URL (the key is already inside it)</p>
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              Check URL{" "}
+              <HelpTip>
+                The endpoint the client&apos;s site calls (GET), for example every 12 hours. It returns JSON with valid, status, message and expires_at, signed in the X-Warden-Signature header (HMAC-SHA256 of the body, keyed with the licence key).
+                Append ?domain=example.com so domain restrictions can be applied.
+              </HelpTip>
+            </p>
             <CopyField value={checkUrl} />
           </div>
           <div className="space-y-1">
-            <p className="text-xs text-muted-foreground">Try it</p>
+            <p className="text-xs text-muted-foreground">Example request</p>
             <CodeBlock code={curl} language="bash" />
           </div>
-          <p className="text-xs text-muted-foreground">
-            The answer is JSON: <code>valid</code> (true only when active, in date and on an allowed domain), <code>status</code>, <code>message</code>, <code>expires_at</code>. It carries an <code>X-Warden-Signature</code> header,
-            the HMAC-SHA256 of the body keyed with the licence key, so your site can check the answer is genuine.
-          </p>
           <ConfirmAction
             intent="regenerate"
             trigger={
@@ -198,19 +209,19 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
         <section className="rounded-lg border bg-card p-4">
           <h2 className="mb-3 font-semibold">Details</h2>
           <dl className="grid gap-4 sm:grid-cols-3">
-            <Fact label="Reported status">{STATUS_LABEL[effective]}</Fact>
-            <Fact label="Ends">{license.expires_at ? `${new Date(license.expires_at).toISOString().slice(0, 10)} (end of day, UTC)` : "No end date"}</Fact>
-            <Fact label="Allowed domains">{license.domains || "Any"}</Fact>
-            <Fact label="Last check">
+            <Fact label="Status reported to sites" help="What the check endpoint returns right now. Differs from the stored status only when an active licence has passed its expiry date.">{STATUS_LABEL[effective]}</Fact>
+            <Fact label="Expires">{license.expires_at ? `${new Date(license.expires_at).toISOString().slice(0, 10)} (end of day, UTC)` : "Never"}</Fact>
+            <Fact label="Allowed domains" help="Sites must send one of these as ?domain= for the licence to be valid.">{license.domains || "Any domain"}</Fact>
+            <Fact label="Last check" help="The last time a site called the check URL, and the domain it reported.">
               <Ago ts={license.last_check_at} />
               {license.last_check_domain ? ` from ${license.last_check_domain}` : ""}
             </Fact>
-            <Fact label="Checks so far">{license.check_count}</Fact>
+            <Fact label="Total checks">{license.check_count}</Fact>
             <Fact label="Created">
               <When ts={license.created_at} />
             </Fact>
-            {license.message && <Fact label="Message for the site">{license.message}</Fact>}
-            {license.notes && <Fact label="Private notes">{license.notes}</Fact>}
+            {license.message && <Fact label="Public message" help="Returned to sites in the check response.">{license.message}</Fact>}
+            {license.notes && <Fact label="Internal notes">{license.notes}</Fact>}
           </dl>
         </section>
 
@@ -226,11 +237,11 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                 {activity.map((a) => (
                   <li key={a.id} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
                     <span>
-                      {a.kind === "check" ? (
+                      {a.event === "check" ? (
                         <>
-                          Check from <span className="font-medium">{a.domain ?? "unknown domain"}</span>, answered {answerLabel(a.status).toLowerCase()}
+                          Check from <span className="font-medium">{a.domain ?? "unknown domain"}</span>: {checkResultLabel(a.status)}
                         </>
-                      ) : a.kind === "download" ? (
+                      ) : a.event === "download" ? (
                         <>
                           {a.detail}
                           {a.domain ? <> from <span className="font-medium">{a.domain}</span></> : null}
@@ -257,7 +268,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
             </Button>
           }
           title="Delete this licence?"
-          description="Its history is deleted too, and the check URL answers 'unknown' from now on, which a site will treat as invalid. To switch a site off but keep the record, set the status to Disabled instead."
+          description="Its history is deleted too, and the check URL returns 'unknown' from now on, which a site will treat as invalid. To switch a site off but keep the record, set the status to Disabled instead."
           confirm="Delete"
         />
       </div>

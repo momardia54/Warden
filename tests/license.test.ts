@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { buildAnswer, domainAllowed, effectiveStatus, generateLicenseKey, KEY_PATTERN, normalizeDomain, parseDomains } from "../app/lib/license.ts"
+import { buildCheckResponse, domainAllowed, effectiveStatus, generateLicenseKey, KEY_PATTERN, normalizeDomain, parseDomains } from "../app/lib/license.ts"
 
 const DAY = 86_400_000
 
@@ -32,12 +32,12 @@ test("domains are normalised and matched with subdomains", () => {
 test("answers", () => {
   const now = Date.parse("2026-10-10T00:00:00Z")
   const base = { name: "Harbor Studio", status: "active", expires_at: null, domains: "", message: "" }
-  assert.deepEqual([buildAnswer(base, null, now).valid, buildAnswer(base, null, now).status], [true, "active"])
-  assert.equal(buildAnswer(null, null, now).status, "unknown")
-  assert.equal(buildAnswer({ ...base, status: "suspended", message: "Payment late" }, null, now).message, "Payment late")
-  assert.equal(buildAnswer({ ...base, status: "disabled" }, null, now).valid, false)
-  assert.equal(buildAnswer({ ...base, expires_at: now - 1 }, null, now).status, "expired")
+  assert.deepEqual([buildCheckResponse(base, null, now).valid, buildCheckResponse(base, null, now).status], [true, "active"])
+  assert.equal(buildCheckResponse(null, null, now).status, "unknown")
+  assert.equal(buildCheckResponse({ ...base, status: "suspended", message: "Payment late" }, null, now).message, "Payment late")
+  assert.equal(buildCheckResponse({ ...base, status: "disabled" }, null, now).valid, false)
+  assert.equal(buildCheckResponse({ ...base, expires_at: now - 1 }, null, now).status, "expired")
   const locked = { ...base, domains: "harborstudio.com" }
-  assert.equal(buildAnswer(locked, "harborstudio.com", now).valid, true)
-  assert.equal(buildAnswer(locked, "other.com", now).status, "domain_mismatch")
+  assert.equal(buildCheckResponse(locked, "harborstudio.com", now).valid, true)
+  assert.equal(buildCheckResponse(locked, "other.com", now).status, "domain_mismatch")
 })

@@ -4,7 +4,7 @@ import { PageHeader } from "#/components/page-header"
 import { StatCard } from "#/components/stat-card"
 import { Ago } from "#/components/time"
 import { Button } from "#/components/ui/button"
-import { answerLabel } from "#/lib/license"
+import { checkResultLabel } from "#/lib/license"
 import { requireAuth } from "~/server/auth.server"
 import { overviewStats, recentChecks } from "~/server/licenses.server"
 
@@ -24,14 +24,14 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
       <PageHeader crumbs={[{ label: "Overview" }]} />
       <div className="space-y-6 p-4 pt-0">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard title="Active" value={stats.counts.active} hint={`of ${stats.total}`} />
-          <StatCard title="Suspended or disabled" value={stats.counts.suspended + stats.counts.disabled} />
-          <StatCard title="Ending in 14 days" value={stats.endingSoon} />
-          <StatCard title="Not checked for 3+ days" value={stats.silent} hint="active licences" />
+          <StatCard title="Active" value={stats.counts.active} hint={`of ${stats.total} licences`} help="Licences currently in the Active status and not past their expiry date." />
+          <StatCard title="Suspended or disabled" value={stats.counts.suspended + stats.counts.disabled} help="Licences that sites currently see as not valid because you suspended or disabled them." />
+          <StatCard title="Expiring within 14 days" value={stats.endingSoon} help="Active licences whose expiry date is within the next 14 days. Extend or renew them before they expire." />
+          <StatCard title="No check in 3+ days" value={stats.silent} help="Active licences whose site has not called the check URL for 3 days. The site may be offline, or the check may have been removed from its code." />
         </div>
 
         <section className="space-y-2">
-          <h2 className="font-semibold">Latest checks</h2>
+          <h2 className="font-semibold">Recent checks</h2>
           <div className="rounded-lg border">
             {checks.length === 0 ? (
               <p className="p-6 text-center text-sm text-muted-foreground">No site has called a check URL yet.</p>
@@ -43,7 +43,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                       {c.name}
                     </Link>
                     <span className="text-muted-foreground">
-                      {c.domain ?? "no domain"} · {answerLabel(c.status)} · <Ago ts={c.at} />
+                      {c.domain ?? "no domain"} · {checkResultLabel(c.status)} · <Ago ts={c.at} />
                     </span>
                   </li>
                 ))}

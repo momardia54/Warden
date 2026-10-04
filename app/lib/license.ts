@@ -10,30 +10,31 @@ export const STATUS_LABEL: Record<Status, string> = {
   expired: "Expired",
 }
 
-/** Label for any status the check endpoint can answer, including the non-stored ones. */
-export function answerLabel(status: string | null): string {
+/** Display label for any result the check endpoint can return, including the ones that are not stored statuses. */
+export function checkResultLabel(status: string | null): string {
   if (status === "domain_mismatch") return "Wrong domain"
   if (status === "unknown") return "Unknown key"
   return status && isStatus(status) ? STATUS_LABEL[status] : (status ?? "")
 }
 
 export const STATUS_HINT: Record<Status, string> = {
-  pending: "Created but not yet in force, for example waiting for the first payment.",
-  active: "In force. The site should run normally.",
-  completed: "Paid in full: permanent, no end date applies. Unlocks the final files.",
-  suspended: "Temporarily stopped, for example a late payment. Set it back to active to resume.",
-  disabled: "Switched off for good.",
-  expired: "Past its end date.",
+  pending: "Created but not in effect yet, for example before the first payment is received.",
+  active: "In effect. The site runs normally.",
+  completed: "Paid in full. Permanent: the expiry date no longer applies.",
+  suspended: "Temporarily on hold, for example for a late payment. Set to Active to resume.",
+  disabled: "Permanently switched off.",
+  expired: "Past its expiry date. Set automatically.",
 }
 
 export function isStatus(value: unknown): value is Status {
   return typeof value === "string" && (STATUSES as readonly string[]).includes(value)
 }
 
-const KEY_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789" // no 0/O/1/I/L, easy to read out loud
+/** Uppercase letters and digits without the look-alikes 0, O, 1, I and L. */
+const KEY_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789"
 const KEY_PREFIX = "WRD"
 
-/** WRD-XXXXX-XXXXX-XXXXX-XXXXX: 20 random characters, about 98 bits. */
+/** Generates a key in the format WRD-XXXXX-XXXXX-XXXXX-XXXXX (20 random characters, about 98 bits of entropy). */
 export function generateLicenseKey(random: Crypto = globalThis.crypto): string {
   const limit = 256 - (256 % KEY_ALPHABET.length)
   let chars = ""
@@ -49,15 +50,15 @@ export function generateLicenseKey(random: Crypto = globalThis.crypto): string {
 
 export const KEY_PATTERN = /^WRD(-[A-Z0-9]{5}){4}$/
 
-/** What a site is told. `status` is the effective one: an active licence past its end date reads "expired". */
+/** The status reported to sites. An active licence past its expiry date is reported as "expired". */
 export function effectiveStatus(license: { status: string; expires_at: number | null }, now = Date.now()): Status {
   const status = isStatus(license.status) ? license.status : "disabled"
   if (status === "active" && license.expires_at !== null && license.expires_at <= now) return "expired"
   return status
 }
 
-/** Statuses a site may run under: in force (active) or paid in full (completed). */
-export function isInForce(status: string): boolean {
+/** True for the statuses under which a site may run: active and completed. */
+export function grantsAccess(status: string): boolean {
   return status === "active" || status === "completed"
 }
 
@@ -68,7 +69,7 @@ export function parseDomains(raw: string): string[] {
     .filter((d): d is string => Boolean(d))
 }
 
-/** "https://www.HarborStudio.com/path" -> "harborstudio.com". The leading "www." is ignored so both forms match. */
+/** Reduces a URL or host to a bare lowercase domain without scheme, path, port or leading "www.". Returns null if invalid. */
 export function normalizeDomain(raw: string): string | null {
   let host = raw.trim().toLowerCase()
   if (!host) return null
@@ -76,7 +77,7 @@ export function normalizeDomain(raw: string): string | null {
   return /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(host) ? host : null
 }
 
-/** True when the licence has no domain list, or the site's domain (or a subdomain of one) is on it. */
+/** True if the licence has no domain restriction, or the domain is an allowed domain or a subdomain of one. */
 export function domainAllowed(allowed: string[], domain: string | null): boolean {
   if (allowed.length === 0) return true
   if (!domain) return false
@@ -85,7 +86,7 @@ export function domainAllowed(allowed: string[], domain: string | null): boolean
   return allowed.some((a) => d === a || d.endsWith(`.${a}`))
 }
 
-export type CheckAnswer = {
+export type CheckResponse = {
   valid: boolean
   status: Status | "unknown" | "domain_mismatch"
   message: string
@@ -107,18 +108,18 @@ const DEFAULT_MESSAGE: Record<string, string> = {
   unknown: "Unknown licence.",
 }
 
-/** The JSON answer for one check. Pure, so it is easy to test. */
-export function buildAnswer(license: Row | null, domain: string | null, now = Date.now()): CheckAnswer {
+/** Builds the JSON response of the check endpoint. Pure function. */
+export function buildCheckResponse(license: Row | null, domain: string | null, now = Date.now()): CheckResponse {
   const checked_at = new Date(now).toISOString()
   if (!license) return { valid: false, status: "unknown", message: DEFAULT_MESSAGE.unknown, checked_at }
   const status = effectiveStatus(license, now)
   const base = { name: license.name, expires_at: license.expires_at ? new Date(license.expires_at).toISOString() : null, checked_at }
-  if (isInForce(status) && !domainAllowed(parseDomains(license.domains), domain)) {
+  if (grantsAccess(status) && !domainAllowed(parseDomains(license.domains), domain)) {
     return { ...base, valid: false, status: "domain_mismatch", message: DEFAULT_MESSAGE.domain_mismatch }
   }
-  return { ...base, valid: isInForce(status), status, message: license.message.trim() || DEFAULT_MESSAGE[status] }
+  return { ...base, valid: grantsAccess(status), status, message: license.message.trim() || DEFAULT_MESSAGE[status] }
 }
 
-/** API key access levels, lowest first: read (GET), manage (create, edit, status, renew), full (also delete, regenerate key). */
+/** API key permission levels, lowest first: read (GET only), manage (also create, edit, set status, renew), full (also delete licences and regenerate keys). */
 export const SCOPES = ["read", "manage", "full"] as const
 export type Scope = (typeof SCOPES)[number]

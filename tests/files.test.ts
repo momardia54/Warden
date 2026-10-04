@@ -1,10 +1,10 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { makeBucket, makeCtx, makeDb } from "./helpers/d1.ts"
-import { cleanFileName, fileAccess, MAX_FILE_BYTES } from "../app/lib/files.ts"
-import { buildAnswer, effectiveStatus } from "../app/lib/license.ts"
+import { cleanFileName, evaluateFileAccess, MAX_FILE_BYTES, parseStatuses } from "../app/lib/files.ts"
+import { buildCheckResponse, effectiveStatus } from "../app/lib/license.ts"
 import { createLicense, deleteLicense, getLicense, overviewStats, setStatus, extendLicense, recentActivity } from "../app/server/licenses.server.ts"
-import { deleteFile, getFile, listFiles, storeFile } from "../app/server/files.server.ts"
+import { deleteFile, getFile, listFiles, storeFile, updateFile } from "../app/server/files.server.ts"
 import { handleDownload } from "../app/server/download.server.ts"
 import { createApiKey, handleApi } from "../app/server/api.server.ts"
 
@@ -18,8 +18,8 @@ function setup() {
   return { env, objects, ctx, settle }
 }
 const body = (text: string) => new Response(text).body
-async function upload(env: Env, license: Awaited<ReturnType<typeof createLicense>>, kind: string, name = "theme.zip", text = "PK-zip-bytes") {
-  const res = await storeFile(env, license, { name, kind, version: "1.0.0", size: new TextEncoder().encode(text).length, body: body(text), contentType: "application/zip" })
+async function upload(env: Env, license: Awaited<ReturnType<typeof createLicense>>, statuses: string, name = "theme.zip", text = "PK-zip-bytes", checkDomain = true) {
+  const res = await storeFile(env, license, { name, statuses, checkDomain, version: "1.0.0", size: new TextEncoder().encode(text).length, body: body(text), contentType: "application/zip" })
   assert.ok("file" in res, JSON.stringify(res))
   return res.file
 }
@@ -32,35 +32,54 @@ test("file names are cleaned", () => {
   assert.equal(cleanFileName(".htaccess"), "htaccess")
 })
 
-test("completed is valid, permanent, and unlocks final files only", () => {
+test("statuses are parsed in canonical order and validated", () => {
+  assert.deepEqual(parseStatuses("completed, active"), ["active", "completed"])
+  assert.deepEqual(parseStatuses(["Suspended", "suspended"]), ["suspended"])
+  assert.equal(parseStatuses(""), null)
+  assert.equal(parseStatuses("active,bogus"), null)
+  assert.equal(parseStatuses(5), null)
+})
+
+test("completed is valid and permanent", () => {
   const now = Date.now()
   const done = { name: "x", status: "completed", expires_at: now - DAY, domains: "", message: "" }
-  assert.equal(effectiveStatus(done, now), "completed") // an end date does not expire a completed licence
-  assert.equal(buildAnswer(done, null, now).valid, true)
-  assert.equal(fileAccess(done, "final", null, now).allowed, true)
-  assert.equal(fileAccess(done, "update", null, now).allowed, true)
+  assert.equal(effectiveStatus(done, now), "completed") // the expiry date does not apply once completed
+  assert.equal(buildCheckResponse(done, null, now).valid, true)
+})
 
-  const active = { ...done, status: "active", expires_at: null }
-  assert.equal(fileAccess(active, "update", null, now).allowed, true)
-  assert.equal(fileAccess(active, "final", null, now).allowed, false)
-  for (const status of ["pending", "suspended", "disabled"]) assert.equal(fileAccess({ ...active, status }, "update", null, now).allowed, false)
-  assert.equal(fileAccess({ ...active, expires_at: now - 1 }, "update", null, now).allowed, false)
+test("a file is released only in the statuses it lists", () => {
+  const now = Date.now()
+  const lic = { status: "active", expires_at: null as number | null, domains: "" }
+  const rule = (statuses: string, check_domain = true) => ({ statuses: parseStatuses(statuses)!, check_domain })
 
-  const locked = { ...active, domains: "harborstudio.com" }
-  assert.equal(fileAccess(locked, "update", "other.com", now).allowed, false)
-  assert.equal(fileAccess(locked, "update", "shop.harborstudio.com", now).allowed, true)
-  assert.equal(fileAccess({ ...locked, status: "completed" }, "final", null, now).allowed, true) // domains do not apply to final files
+  assert.equal(evaluateFileAccess(lic, rule("active,completed"), null, now).allowed, true)
+  assert.equal(evaluateFileAccess(lic, rule("completed"), null, now).allowed, false)
+  assert.match(evaluateFileAccess(lic, rule("completed"), null, now).message, /Completed/)
+  assert.equal(evaluateFileAccess({ ...lic, status: "completed" }, rule("completed"), null, now).allowed, true)
+  assert.equal(evaluateFileAccess({ ...lic, status: "suspended" }, rule("suspended"), null, now).allowed, true) // e.g. a maintenance notice
+  for (const status of ["pending", "suspended", "disabled"]) assert.equal(evaluateFileAccess({ ...lic, status }, rule("active,completed"), null, now).allowed, false)
+
+  // expiry is part of the effective status
+  assert.equal(evaluateFileAccess({ ...lic, expires_at: now - 1 }, rule("active"), null, now).allowed, false)
+  assert.equal(evaluateFileAccess({ ...lic, expires_at: now - 1 }, rule("expired"), null, now).allowed, true)
+
+  // domain check is per file
+  const locked = { ...lic, domains: "harborstudio.com" }
+  assert.equal(evaluateFileAccess(locked, rule("active"), "other.com", now).allowed, false)
+  assert.equal(evaluateFileAccess(locked, rule("active"), "shop.harborstudio.com", now).allowed, true)
+  assert.equal(evaluateFileAccess(locked, rule("active", false), null, now).allowed, true)
+  assert.equal(evaluateFileAccess(locked, rule("active"), null, now, true).allowed, true) // dashboard preview
 })
 
 test("upload validation", async () => {
   const { env } = setup()
   const lic = await createLicense(env, input)
   const bad = (r: unknown) => assert.ok(r && typeof r === "object" && "error" in r, "expected an error")
-  bad(await storeFile(env, lic, { name: "", kind: "update", size: 5, body: body("hello") }))
-  bad(await storeFile(env, lic, { name: "a.zip", kind: "bogus", size: 5, body: body("hello") }))
-  bad(await storeFile(env, lic, { name: "a.zip", kind: "update", size: 0, body: body("") }))
-  bad(await storeFile(env, lic, { name: "a.zip", kind: "update", size: MAX_FILE_BYTES + 1, body: body("x") }))
-  const noStorage = await storeFile({ DB: env.DB } as Env, lic, { name: "a.zip", kind: "update", size: 5, body: body("hello") })
+  bad(await storeFile(env, lic, { name: "", size: 5, body: body("hello") }))
+  bad(await storeFile(env, lic, { name: "a.zip", statuses: "bogus", size: 5, body: body("hello") }))
+  bad(await storeFile(env, lic, { name: "a.zip", size: 0, body: body("") }))
+  bad(await storeFile(env, lic, { name: "a.zip", size: MAX_FILE_BYTES + 1, body: body("x") }))
+  const noStorage = await storeFile({ DB: env.DB } as Env, lic, { name: "a.zip", size: 5, body: body("hello") })
   assert.equal("error" in noStorage && noStorage.status, 501)
   assert.equal((await listFiles(env, lic.id)).length, 0)
 })
@@ -68,15 +87,16 @@ test("upload validation", async () => {
 test("download rules, logging and counters", async () => {
   const { env, ctx, settle } = setup()
   const lic = await createLicense(env, { ...input, domains: "harborstudio.com" })
-  const upd = await upload(env, lic, "update", "theme-update.zip", "update-bytes")
-  const fin = await upload(env, lic, "final", "theme-final.zip", "final-bytes")
+  const upd = await upload(env, lic, "active,completed", "theme-update.zip", "update-bytes")
+  const fin = await upload(env, lic, "completed", "theme-final.zip", "final-bytes", false)
+  const maint = await upload(env, lic, "suspended", "maintenance.html", "<h1>Back soon</h1>", false)
   const get = async (path: string) => {
     const res = await handleDownload(new Request(`https://w.dev/download/${path}`), env, ctx, lic.license_key, path.split("/")[1]?.split("?")[0] ?? null)
     await settle()
     return res
   }
 
-  // active licence: the update downloads, the final file stays locked
+  // active licence: the update downloads, the completed-only file is refused
   const ok = await get(`${lic.license_key}/${upd.id}?domain=harborstudio.com`)
   assert.equal(ok.status, 200)
   assert.equal(await ok.text(), "update-bytes")
@@ -89,15 +109,17 @@ test("download rules, logging and counters", async () => {
 
   const lockedFinal = await get(`${lic.license_key}/${fin.id}?domain=harborstudio.com`)
   assert.equal(lockedFinal.status, 403)
-  assert.match((await lockedFinal.json() as any).message, /paid in full/)
+  assert.match((await lockedFinal.json() as any).message, /status is: Completed/)
 
   // listing shows what is available
   const list = await (await get(`${lic.license_key}?domain=harborstudio.com`)).json() as any
-  assert.deepEqual(list.files.map((f: any) => [f.kind, f.available]).sort(), [["final", false], ["update", true]])
+  assert.deepEqual(list.files.map((f: any) => [f.name, f.available]).sort(), [["maintenance.html", false], ["theme-final.zip", false], ["theme-update.zip", true]])
+  assert.deepEqual(list.files.find((f: any) => f.name === "theme-final.zip").statuses, ["completed"])
 
   // suspended: nothing downloads
   await setStatus(env, (await getLicense(env, lic.id))!, "suspended")
   assert.equal((await get(`${lic.license_key}/${upd.id}?domain=harborstudio.com`)).status, 403)
+  assert.equal(await (await get(`${lic.license_key}/${maint.id}`)).text(), "<h1>Back soon</h1>") // released only while suspended
 
   // completed (paid in full): both download, no domain needed for the final file
   await setStatus(env, (await getLicense(env, lic.id))!, "completed")
@@ -107,9 +129,9 @@ test("download rules, logging and counters", async () => {
 
   assert.equal((await getFile(env, lic.id, upd.id))!.download_count, 1)
   assert.equal((await getFile(env, lic.id, fin.id))!.download_count, 1)
-  const log = (await recentActivity(env, lic.id)).filter((a) => a.kind === "download").map((a) => a.detail).join("|")
-  assert.match(log, /Downloaded: theme-update.zip \(update\)/)
-  assert.match(log, /Download refused: theme-final.zip \(final\)/)
+  const log = (await recentActivity(env, lic.id)).filter((a) => a.event === "download").map((a) => a.detail).join("|")
+  assert.match(log, /Downloaded: theme-update.zip/)
+  assert.match(log, /Download refused: theme-final.zip \(available when Completed\)/)
 
   // unknown key and unknown file
   const unknown = await handleDownload(new Request("https://w.dev/download/WRD-AAAAA-AAAAA-AAAAA-AAAAA"), env, ctx, "WRD-AAAAA-AAAAA-AAAAA-AAAAA", null)
@@ -117,21 +139,36 @@ test("download rules, logging and counters", async () => {
   assert.equal((await get(`${lic.license_key}/fil_nothere`)).status, 404)
   // a file id from another licence is not reachable through this key
   const other = await createLicense(env, input)
-  const foreign = await upload(env, other, "update", "x.zip")
+  const foreign = await upload(env, other, "active", "x.zip")
   assert.equal((await get(`${lic.license_key}/${foreign.id}`)).status, 404)
 })
 
 test("deleting a file or a licence removes the stored objects", async () => {
   const { env, objects } = setup()
   const lic = await createLicense(env, input)
-  const a = await upload(env, lic, "update", "a.zip")
-  await upload(env, lic, "final", "b.zip")
+  const a = await upload(env, lic, "active", "a.zip")
+  await upload(env, lic, "completed", "b.zip")
   assert.equal(objects.size, 2)
   await deleteFile(env, lic, a)
   assert.equal(objects.size, 1)
   await deleteLicense(env, lic.id)
   assert.equal(objects.size, 0)
   assert.equal((await env.DB.prepare("SELECT COUNT(*) AS c FROM files").first<{ c: number }>())!.c, 0)
+})
+
+test("a file's release rule can be changed afterwards", async () => {
+  const { env } = setup()
+  const lic = await createLicense(env, input)
+  const file = await upload(env, lic, "completed", "final.zip")
+  assert.equal((await updateFile(env, lic, file, { statuses: "bogus" }) as any).status, 422)
+  const changed = await updateFile(env, lic, file, { statuses: ["active", "completed"], checkDomain: false, version: "2.0.0" })
+  assert.ok("file" in changed)
+  if ("file" in changed) {
+    assert.equal(changed.file.statuses, "active,completed")
+    assert.equal(changed.file.check_domain, 0)
+    assert.equal(changed.file.version, "2.0.0")
+  }
+  assert.match((await recentActivity(env, lic.id)).map((a) => a.detail).join("|"), /File updated: final.zip \(available when Active, Completed\)/)
 })
 
 test("renewing a completed licence keeps it completed; stats count it", async () => {
@@ -142,7 +179,7 @@ test("renewing a completed licence keeps it completed; stats count it", async ()
   assert.equal((await overviewStats(env)).counts.completed, 1)
 })
 
-test("API: upload, list, download link, delete, scopes, completed", async () => {
+test("API: upload, list, update, delete, permissions", async () => {
   const { env, ctx, settle } = setup()
   const read = (await createApiKey(env, "r", "read")).secret
   const manage = (await createApiKey(env, "m", "manage")).secret
@@ -155,16 +192,25 @@ test("API: upload, list, download link, delete, scopes, completed", async () => 
   }
   const lic = (await call("POST", "/licenses", manage, JSON.stringify({ name: "A" }))).json
 
-  const put = await call("PUT", `/licenses/${lic.id}/files?name=theme.zip&kind=final&version=2.0`, manage, "zip-bytes")
+  const put = await call("PUT", `/licenses/${lic.id}/files?name=theme.zip&statuses=completed&version=2.0&check_domain=false`, manage, "zip-bytes")
   assert.equal(put.status, 201)
-  assert.equal(put.json.kind, "final")
+  assert.deepEqual([put.json.statuses, put.json.check_domain, put.json.available], [["completed"], false, false])
   assert.equal(put.json.download_url, `https://w.dev/download/${lic.key}/${put.json.id}`)
   assert.equal((await call("PUT", `/licenses/${lic.id}/files?name=x.zip`, read, "zz")).status, 403)
-  assert.equal((await call("PUT", `/licenses/${lic.id}/files?kind=final`, manage, "zz")).status, 422)
+  assert.equal((await call("PUT", `/licenses/${lic.id}/files?statuses=completed`, manage, "zz")).status, 422)
+  assert.equal((await call("PUT", `/licenses/${lic.id}/files?name=x.zip&statuses=nope`, manage, "zz")).status, 422)
+  assert.deepEqual((await call("PUT", `/licenses/${lic.id}/files?name=default.zip`, manage, "zz")).json.statuses, ["active", "completed"])
 
-  assert.equal((await call("GET", `/licenses/${lic.id}/files`, read)).json.data.length, 1)
+  assert.equal((await call("GET", `/licenses/${lic.id}/files`, read)).json.data.length, 2)
   assert.equal((await call("POST", `/licenses/${lic.id}/status`, manage, JSON.stringify({ status: "completed" }))).json.valid, true)
+  assert.equal((await call("GET", `/licenses/${lic.id}/files`, read)).json.data.find((f: any) => f.name === "theme.zip").available, true)
+
+  const patched = await call("PATCH", `/licenses/${lic.id}/files/${put.json.id}`, manage, JSON.stringify({ statuses: ["suspended"], check_domain: true }))
+  assert.deepEqual([patched.json.statuses, patched.json.check_domain], [["suspended"], true])
+  assert.equal((await call("PATCH", `/licenses/${lic.id}/files/${put.json.id}`, read, "{}")).status, 403)
+  assert.equal((await call("PATCH", `/licenses/${lic.id}/files/${put.json.id}`, manage, JSON.stringify({ statuses: [] }))).status, 422)
+
   assert.equal((await call("DELETE", `/licenses/${lic.id}/files/${put.json.id}`, read)).status, 403)
   assert.equal((await call("DELETE", `/licenses/${lic.id}/files/${put.json.id}`, manage)).json.deleted, true)
-  assert.equal((await call("GET", `/licenses/${lic.id}/files`, read)).json.data.length, 0)
+  assert.equal((await call("GET", `/licenses/${lic.id}/files`, read)).json.data.length, 1)
 })

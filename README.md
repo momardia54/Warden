@@ -9,34 +9,32 @@
 ## How it works
 
 1. You create a licence in Warden (or through the API). Warden gives you a **licence key** and a **check URL**.
-2. The client's site calls the check URL (for example every 12 hours) and reads the answer: `valid`, `status`, `message`.
+2. The client's site calls the check URL (for example every 12 hours) and reads the response: `valid`, `status`, `message`.
 3. You change the licence status in the dashboard, or by API. The next time the site checks, it sees the new status and acts on it.
 
-Warden **creates and manages** licences. **Enforcement lives in the site's code**, so you decide what an invalid licence does: show a notice, switch a feature off, show a maintenance page. [docs/checking.md](docs/checking.md) has PHP and JavaScript examples, including how to verify the signed answer.
+Warden **creates and manages** licences. **Enforcement lives in the site's code**, so you decide what an invalid licence does: show a notice, switch a feature off, show a maintenance page. [docs/checking.md](docs/checking.md) has PHP and JavaScript examples, including how to verify the signed response.
 
 ## Features
 
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence
-- Statuses: **pending, active, completed, suspended, disabled, expired**. An active licence past its end date reports `expired` by itself. **Completed** means paid in full: permanent, valid, and it releases the final files
-- Optional end date, optional allowed domains (subdomains match), a message for the site, private notes
-- **Signed answers** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
-- Activity log per licence: every check (which domain, what answer) and every change
-- Overview: active count, ending soon, active licences that stopped checking in
-- **Files per licence** (stored in R2): *update* files download while the licence is active or completed; *final* files only once it is completed. Use them to ship theme updates, or to hand over the final licence-free build when the client has paid in full ([docs/files.md](docs/files.md))
-- One-click **extend** (30 days, 90 days, 1 year) and **regenerate key**
+- Statuses: **pending, active, completed, suspended, disabled, expired**. An active licence past its expiry date reports `expired` by itself. **Completed** means paid in full: valid and permanent
+- Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
+- **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
+- Activity log per licence: every check (which domain, which result) and every change
+- Overview: active count, licences expiring soon, active licences whose site stopped checking in
+- **Files per licence** (stored in R2), each with a release rule: the licence statuses in which it can be downloaded. Use it to ship updates while a licence is in effect, to release a final build when the client has paid in full, or to serve a notice while a licence is suspended ([docs/files.md](docs/files.md))
+- **Extend expiry** in one click (+30 days, +90 days, +1 year) and **regenerate key**
 - **API** with scoped keys, idempotent create, renew, status, search and paging, plus an OpenAPI description
 - Single admin login from Worker secrets, no third-party services, runs on the Workers and D1 free plans
 
 | | |
 |---|---|
 | ![Licences](docs/screenshots/licences.jpg) | ![Licence page](docs/screenshots/licence.jpg) |
-| Licence list with search and status filter | Key, check URL, details, extend |
-| ![Change status](docs/screenshots/change-status.jpg) | ![New licence](docs/screenshots/new-licence.jpg) |
-| Change status | Create a licence |
-| ![Files](docs/screenshots/files.jpg) | ![API](docs/screenshots/api.jpg) |
-| Files: update and final, locked or available | API keys and examples |
-| ![Activity](docs/screenshots/activity.jpg) | |
-| Every check, download and change is logged | |
+| Licence list with search and status filter | Licence key, check URL and details |
+| ![Files](docs/screenshots/files.jpg) | ![Edit a file's release rule](docs/screenshots/edit-file.jpg) |
+| Files with release rules, upload, and the activity log | Changing the statuses a file is available in |
+| ![New licence](docs/screenshots/new-licence.jpg) | ![API](docs/screenshots/api.jpg) |
+| Create a licence | API keys and examples |
 
 ## The check URL
 
@@ -48,25 +46,26 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 { "name": "Harbor Studio website", "valid": true, "status": "active", "message": "", "expires_at": "2027-03-31T23:59:59.999Z", "checked_at": "2026-10-04T16:17:30.248Z" }
 ```
 
-`valid` is `true` only when the status is `active`, the end date has not passed, and the domain matches (if the licence lists domains). Other `status` values: `pending`, `suspended`, `disabled`, `expired`, `domain_mismatch`, `unknown` (HTTP 404). Full details and verification code: [docs/checking.md](docs/checking.md).
+`valid` is `true` only when the status is `active`, the expiry date has not passed, and the domain matches (if the licence lists domains). Other `status` values: `pending`, `suspended`, `disabled`, `expired`, `domain_mismatch`, `unknown` (HTTP 404). Full details and verification code: [docs/checking.md](docs/checking.md).
 
-Recommended in the site: check about every 12 hours, act only on an answer you could read and verify, and **keep the last known state on network errors or 5xx**, so a Warden outage never locks a client out.
+Recommended in the site: check about every 12 hours, act only on a response you could read and verify, and **keep the last known state on network errors or 5xx**, so a Warden outage never locks a client out.
 
-## Files: updates and the final hand-over
+## Files
 
-Attach files to a licence in the dashboard (or by API) and mark each one:
+Attach files to a licence in the dashboard or by API. Each file has a **release rule**: the licence statuses in which it can be downloaded, and whether the site's domain must match.
 
-| Kind | Downloadable when |
-|---|---|
-| **Update** | the licence is `active` or `completed` (and the domain matches, if the licence lists domains) |
-| **Final** | the licence is `completed`, meaning paid in full. Domains are not checked |
+| Example | Statuses | Domain check |
+|---|---|---|
+| Updates for a licensed site | active, completed | on |
+| Final release after full payment | completed | off |
+| Maintenance or renewal notice | suspended | off |
 
 ```
-GET https://<your-worker>/download/<licence key>                         # files, and which are available now
+GET https://<your-worker>/download/<licence key>                         # status and files, with availability
 GET https://<your-worker>/download/<licence key>/<file id>?domain=site   # the file, or a JSON refusal (HTTP 403)
 ```
 
-Typical use: ship theme updates while the client is on a payment plan; when the last payment arrives, set the licence to **completed**, and the final build (the theme without the licence check) unlocks. After installing it, the site never calls Warden again. Every download and refusal is logged. Details: [docs/files.md](docs/files.md).
+When the last payment of a project arrives, set the licence to **Completed**: it stays valid permanently and a file released in Completed becomes available. Every download and refusal is logged. Details and examples: [docs/files.md](docs/files.md).
 
 ## The API
 
@@ -90,7 +89,7 @@ curl           "https://<worker>/api/v1/licenses?status=expired"   -H "Authoriza
 | `manage` | also create, edit, set status, renew |
 | `full` | also delete and regenerate keys |
 
-Endpoints: `GET /me`, `GET /stats`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `POST /licenses/{id}/renew`, `POST /licenses/{id}/regenerate-key`, `GET /licenses/{id}/activity`, `GET|PUT /licenses/{id}/files`, `DELETE /licenses/{id}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
+Endpoints: `GET /me`, `GET /stats`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `POST /licenses/{id}/renew`, `POST /licenses/{id}/regenerate-key`, `GET /licenses/{id}/activity`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
 
 ## Run and deploy
 
@@ -130,7 +129,7 @@ app/server/download.server.ts  gated file downloads
 app/server/files.server.ts  file storage in R2
 app/server/api.server.ts    API: keys, routes, validation
 app/server/licenses.server.ts   licence logic shared by dashboard and API
-app/lib/license.ts          statuses, key format, domain rules, the answer
+app/lib/license.ts          statuses, key format, domain rules, the response
 migrations/                 D1 schema
 tests/                      node:test, runs the real SQL on a SQLite stand-in for D1
 ```

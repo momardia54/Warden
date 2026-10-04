@@ -92,8 +92,8 @@ test("overview counts and pruning", async () => {
   assert.equal((await overviewStats(env, now + 4 * 86_400_000)).silent, 2)
 
   const lic = await createLicense(env, input)
-  await env.DB.prepare("INSERT INTO activity (license_id, at, kind, status, detail) VALUES (?, ?, 'check', 'active', '')").bind(lic.id, now - 100 * 86_400_000).run()
+  await env.DB.prepare("INSERT INTO activity (license_id, at, event, status, detail) VALUES (?, ?, 'check', 'active', '')").bind(lic.id, now - 100 * 86_400_000).run()
   await pruneActivity(env, now)
-  const left = await env.DB.prepare("SELECT COUNT(*) AS c FROM activity WHERE kind = 'check'").first<{ c: number }>()
+  const left = await env.DB.prepare("SELECT COUNT(*) AS c FROM activity WHERE event = 'check'").first<{ c: number }>()
   assert.equal(left!.c, 0)
 })

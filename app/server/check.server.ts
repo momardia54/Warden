@@ -1,4 +1,4 @@
-import { buildAnswer, KEY_PATTERN, normalizeDomain } from "../lib/license"
+import { buildCheckResponse, KEY_PATTERN, normalizeDomain } from "../lib/license"
 import { hmacHex, json } from "./util.server"
 import type { License } from "./licenses.server"
 
@@ -29,7 +29,7 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
   const license = KEY_PATTERN.test(key)
     ? await env.DB.prepare("SELECT * FROM licenses WHERE license_key = ?").bind(key).first<License>()
     : null
-  const answer = buildAnswer(license, domain, now)
+  const answer = buildCheckResponse(license, domain, now)
   const body = JSON.stringify(answer)
 
   if (license) {
@@ -43,6 +43,6 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
 async function recordCheck(env: Env, license: License, status: string, domain: string | null, now: number) {
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET last_check_at = ?, last_check_domain = ?, check_count = check_count + 1 WHERE id = ?").bind(now, domain, license.id),
-    env.DB.prepare("INSERT INTO activity (license_id, at, kind, status, domain, detail) VALUES (?, ?, 'check', ?, ?, '')").bind(license.id, now, status, domain),
+    env.DB.prepare("INSERT INTO activity (license_id, at, event, status, domain, detail) VALUES (?, ?, 'check', ?, ?, '')").bind(license.id, now, status, domain),
   ])
 }

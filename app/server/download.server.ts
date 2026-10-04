@@ -1,6 +1,6 @@
-import { fileAccess, KIND_LABEL } from "../lib/files"
-import { buildAnswer, KEY_PATTERN, normalizeDomain } from "../lib/license"
-import { getFile, listFiles, type LicenseFile } from "./files.server"
+import { describeStatuses, evaluateFileAccess } from "../lib/files"
+import { buildCheckResponse, KEY_PATTERN, normalizeDomain } from "../lib/license"
+import { getFile, listFiles, releaseRule, type LicenseFile } from "./files.server"
 import type { License } from "./licenses.server"
 import { json } from "./util.server"
 
@@ -8,15 +8,17 @@ const CORS = { "access-control-allow-origin": "*", "cache-control": "no-store" }
 const reply = (body: unknown, status: number) => json(body, { status, headers: CORS })
 
 /**
- * Public downloads, authenticated by the licence key in the address:
- *   GET /download/<key>[?domain=site.org]            lists the files and whether each can be downloaded now
- *   GET /download/<key>/<file id>[?domain=site.org]  the file itself, or a JSON refusal (HTTP 403)
- * `update` files need a licence in force (active or completed) and, when the licence lists domains, a matching
- * domain. `final` files need status completed (paid in full) and ignore domains.
+ * Public file endpoint. The licence key in the path is the credential.
+ *
+ *   GET /download/<key>[?domain=example.com]            lists the files and whether each one is available now
+ *   GET /download/<key>/<file id>[?domain=example.com]  returns the file, or a JSON refusal with HTTP 403
+ *
+ * A file is released when the licence's effective status is one of the file's release statuses and,
+ * if the file requires it, the requesting domain matches the licence's allowed domains.
  */
 export async function handleDownload(request: Request, env: Env, ctx: ExecutionContext, key: string, fileId: string | null): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...CORS, "access-control-allow-methods": "GET" } })
-  if (request.method !== "GET" && request.method !== "HEAD") return reply({ error: "Use GET" }, 405)
+  if (request.method !== "GET" && request.method !== "HEAD") return reply({ error: "Method not allowed. Use GET." }, 405)
 
   const url = new URL(request.url)
   const domainParam = url.searchParams.get("domain")
@@ -27,27 +29,39 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
   if (!license) return reply({ valid: false, status: "unknown", message: "Unknown licence." }, 404)
 
   if (!fileId) {
-    const answer = buildAnswer(license, domain, now)
+    const check = buildCheckResponse(license, domain, now)
     const files = (await listFiles(env, license.id)).map((f) => {
-      const access = fileAccess(license, f.kind, domain, now)
-      return { id: f.id, name: f.name, kind: f.kind, version: f.version, notes: f.notes, size: f.size, uploaded_at: new Date(f.uploaded_at).toISOString(), available: access.allowed, download_url: `${url.origin}/download/${license.license_key}/${f.id}` }
+      const rule = releaseRule(f)
+      return {
+        id: f.id,
+        name: f.name,
+        version: f.version,
+        notes: f.notes,
+        size: f.size,
+        uploaded_at: new Date(f.uploaded_at).toISOString(),
+        statuses: rule.statuses,
+        check_domain: rule.check_domain,
+        available: evaluateFileAccess(license, rule, domain, now).allowed,
+        download_url: `${url.origin}/download/${license.license_key}/${f.id}`,
+      }
     })
-    return reply({ valid: answer.valid, status: answer.status, message: answer.message, files }, 200)
+    return reply({ valid: check.valid, status: check.status, message: check.message, files }, 200)
   }
 
   const file = /^fil_[a-z0-9]+$/.test(fileId) ? await getFile(env, license.id, fileId) : null
-  if (!file) return reply({ error: "No such file on this licence." }, 404)
+  if (!file) return reply({ error: "File not found for this licence." }, 404)
 
-  const access = fileAccess(license, file.kind, domain, now)
+  const rule = releaseRule(file)
+  const access = evaluateFileAccess(license, rule, domain, now)
   if (!access.allowed) {
-    ctx.waitUntil(record(env, license, file, access.status, domain, now, false).catch((e) => console.error("Warden: could not log download:", e)))
-    return reply({ valid: false, status: access.status, message: access.message, file: { id: file.id, name: file.name, kind: file.kind } }, 403)
+    ctx.waitUntil(logDownload(env, license, file, access.status, domain, now, false).catch((e) => console.error("Failed to log download:", e)))
+    return reply({ valid: false, status: access.status, message: access.message, file: { id: file.id, name: file.name, statuses: rule.statuses } }, 403)
   }
-  if (!env.FILES) return reply({ error: "File storage is not set up." }, 501)
+  if (!env.FILES) return reply({ error: "File storage is not configured." }, 501)
   const object = await env.FILES.get(file.r2_key)
   if (!object) return reply({ error: "The file is missing from storage." }, 404)
 
-  ctx.waitUntil(record(env, license, file, access.status, domain, now, true).catch((e) => console.error("Warden: could not log download:", e)))
+  ctx.waitUntil(logDownload(env, license, file, access.status, domain, now, true).catch((e) => console.error("Failed to log download:", e)))
   return new Response(object.body, {
     status: 200,
     headers: {
@@ -60,12 +74,9 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
   })
 }
 
-async function record(env: Env, license: License, file: LicenseFile, status: string, domain: string | null, now: number, ok: boolean) {
-  const statements = [
-    env.DB.prepare("INSERT INTO activity (license_id, at, kind, status, domain, detail) VALUES (?, ?, 'download', ?, ?, ?)").bind(
-      license.id, now, status, domain, `${ok ? "Downloaded" : "Download refused"}: ${file.name} (${KIND_LABEL[file.kind].toLowerCase()})`
-    ),
-  ]
-  if (ok) statements.push(env.DB.prepare("UPDATE files SET download_count = download_count + 1, last_download_at = ? WHERE id = ?").bind(now, file.id))
+async function logDownload(env: Env, license: License, file: LicenseFile, status: string, domain: string | null, now: number, granted: boolean) {
+  const detail = granted ? `Downloaded: ${file.name}` : `Download refused: ${file.name} (available when ${describeStatuses(releaseRule(file).statuses)})`
+  const statements = [env.DB.prepare("INSERT INTO activity (license_id, at, event, status, domain, detail) VALUES (?, ?, 'download', ?, ?, ?)").bind(license.id, now, status, domain, detail)]
+  if (granted) statements.push(env.DB.prepare("UPDATE files SET download_count = download_count + 1, last_download_at = ? WHERE id = ?").bind(now, file.id))
   await env.DB.batch(statements)
 }

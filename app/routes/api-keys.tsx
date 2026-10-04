@@ -10,7 +10,7 @@ import { Badge } from "#/components/ui/badge"
 import { Button } from "#/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "#/components/ui/dialog"
 import { Input } from "#/components/ui/input"
-import { Label } from "#/components/ui/label"
+import { FieldLabel } from "#/components/help-tip"
 import { NativeSelect } from "#/components/ui/native-select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "#/components/ui/table"
 import { requireAuth } from "~/server/auth.server"
@@ -20,9 +20,9 @@ import { createApiKey, listApiKeys, revokeApiKey, type ApiKeyRow } from "~/serve
 export const meta: Route.MetaFunction = () => [{ title: "API | Warden" }]
 
 const SCOPE_TEXT: Record<Scope, string> = {
-  read: "Read only: list and read licences",
-  manage: "Manage: also create, edit, set status, renew",
-  full: "Full: also delete licences and regenerate keys",
+  read: "Read only: list and view licences",
+  manage: "Manage: also create, edit, change status, renew, manage files",
+  full: "Full access: also delete licences and regenerate keys",
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -85,7 +85,7 @@ curl -X POST ${origin}/api/v1/licenses/<id>/status -H "Authorization: Bearer $WA
           <div>
             <h1 className="text-2xl font-bold">API</h1>
             <p className="text-sm text-muted-foreground">
-              Keys act as your account. Send <InlineCode>Authorization: Bearer wk_...</InlineCode>. Reference: <a className="underline" href="/api/v1/openapi.json">/api/v1/openapi.json</a>.
+              API keys authenticate as your account. Send <InlineCode>Authorization: Bearer wk_...</InlineCode>. Reference: <a className="underline" href="/api/v1/openapi.json">/api/v1/openapi.json</a>.
             </p>
           </div>
           <Button onClick={() => setOpen(true)}>
@@ -109,14 +109,14 @@ curl -X POST ${origin}/api/v1/licenses/<id>/status -H "Authorization: Bearer $WA
 
         <div className="rounded-lg border">
           {keys.length === 0 ? (
-            <p className="p-8 text-center text-sm text-muted-foreground">No API keys yet. Create one to manage licences from your own code.</p>
+            <p className="p-8 text-center text-sm text-muted-foreground">No API keys yet. Create one to manage licences programmatically.</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Key</TableHead>
-                  <TableHead>Access</TableHead>
+                  <TableHead>Permissions</TableHead>
                   <TableHead className="hidden sm:table-cell">Last used</TableHead>
                   <TableHead />
                 </TableRow>
@@ -171,17 +171,17 @@ curl -X POST ${origin}/api/v1/licenses/<id>/status -H "Authorization: Bearer $WA
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create API key</DialogTitle>
-            <DialogDescription>Give each app its own key, with the least access it needs.</DialogDescription>
+            <DialogDescription>Create a separate key for each integration, with the lowest permission it needs.</DialogDescription>
           </DialogHeader>
           <create.Form method="post">
             <input type="hidden" name="intent" value="create" />
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="key-name">Name</Label>
+                <FieldLabel htmlFor="key-name" help="A label to recognise where the key is used, for example the integration or service.">Name</FieldLabel>
                 <Input id="key-name" name="name" placeholder="Checkout webhook" required autoFocus />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="key-scope">Access</Label>
+                <FieldLabel htmlFor="key-scope" help="What the key may do. Give each integration the lowest level it needs.">Permissions</FieldLabel>
                 <NativeSelect id="key-scope" name="scope" defaultValue="manage">
                   {SCOPES.map((s) => (
                     <option key={s} value={s}>

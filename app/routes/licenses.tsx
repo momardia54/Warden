@@ -86,7 +86,7 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
                   <TableRow>
                     <TableHead>Licence</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="hidden md:table-cell">Ends</TableHead>
+                    <TableHead className="hidden md:table-cell">Expires</TableHead>
                     <TableHead className="hidden sm:table-cell">Last check</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -102,7 +102,7 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
                       <TableCell>
                         <LicenseStatusBadge license={l} />
                       </TableCell>
-                      <TableCell className="hidden md:table-cell">{l.expires_at ? new Date(l.expires_at).toISOString().slice(0, 10) : <span className="text-muted-foreground">no end date</span>}</TableCell>
+                      <TableCell className="hidden md:table-cell">{l.expires_at ? new Date(l.expires_at).toISOString().slice(0, 10) : <span className="text-muted-foreground">Never</span>}</TableCell>
                       <TableCell className="hidden sm:table-cell">
                         <Ago ts={l.last_check_at} />
                       </TableCell>

@@ -20,7 +20,7 @@ export type License = {
   external_ref: string | null
 }
 
-export type Activity = { id: number; at: number; kind: "check" | "change" | "download"; status: string | null; domain: string | null; detail: string }
+export type Activity = { id: number; at: number; event: "check" | "change" | "download"; status: string | null; domain: string | null; detail: string }
 
 export type LicenseInput = {
   name: string
@@ -94,7 +94,7 @@ export async function listLicenses(env: Env): Promise<License[]> {
 }
 
 function logChange(env: Env, id: string, at: number, status: string | null, detail: string) {
-  return env.DB.prepare("INSERT INTO activity (license_id, at, kind, status, detail) VALUES (?, ?, 'change', ?, ?)").bind(id, at, status, detail)
+  return env.DB.prepare("INSERT INTO activity (license_id, at, event, status, detail) VALUES (?, ?, 'change', ?, ?)").bind(id, at, status, detail)
 }
 
 export async function updateLicense(env: Env, before: License, input: LicenseInput): Promise<void> {
@@ -167,7 +167,7 @@ export async function deleteLicense(env: Env, id: string): Promise<void> {
 }
 
 export async function recentActivity(env: Env, id: string, limit = 50): Promise<Activity[]> {
-  const res = await env.DB.prepare("SELECT id, at, kind, status, domain, detail FROM activity WHERE license_id = ? ORDER BY at DESC, id DESC LIMIT ?").bind(id, limit).all<Activity>()
+  const res = await env.DB.prepare("SELECT id, at, event, status, domain, detail FROM activity WHERE license_id = ? ORDER BY at DESC, id DESC LIMIT ?").bind(id, limit).all<Activity>()
   return res.results
 }
 
@@ -189,7 +189,7 @@ export async function overviewStats(env: Env, now = Date.now()) {
 
 export async function recentChecks(env: Env, limit = 10) {
   const res = await env.DB.prepare(
-    "SELECT a.at, a.status, a.domain, l.id AS license_id, l.name FROM activity a JOIN licenses l ON l.id = a.license_id WHERE a.kind = 'check' ORDER BY a.at DESC, a.id DESC LIMIT ?"
+    "SELECT a.at, a.status, a.domain, l.id AS license_id, l.name FROM activity a JOIN licenses l ON l.id = a.license_id WHERE a.event = 'check' ORDER BY a.at DESC, a.id DESC LIMIT ?"
   ).bind(limit).all<{ at: number; status: string; domain: string | null; license_id: string; name: string }>()
   return res.results
 }
@@ -197,7 +197,7 @@ export async function recentChecks(env: Env, limit = 10) {
 export const CHECK_RETENTION_DAYS = 90
 
 export async function pruneActivity(env: Env, now = Date.now()): Promise<void> {
-  await env.DB.prepare("DELETE FROM activity WHERE kind = 'check' AND at < ?").bind(now - CHECK_RETENTION_DAYS * 86_400_000).run()
+  await env.DB.prepare("DELETE FROM activity WHERE event = 'check' AND at < ?").bind(now - CHECK_RETENTION_DAYS * 86_400_000).run()
   await env.DB.prepare("DELETE FROM login_attempts WHERE created_at < ?").bind(now - 86_400_000).run()
   await env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now).run()
 }
