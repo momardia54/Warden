@@ -1,0 +1,3 @@
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD="change-me-please"
+# Optional: SESSION_SECRET="openssl rand -hex 32"

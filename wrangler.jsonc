@@ -1,0 +1,19 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "warden",
+	"compatibility_date": "2025-04-04",
+	"compatibility_flags": ["nodejs_compat"],
+	"main": "./workers/app.ts",
+	"observability": { "enabled": true },
+	// No database_name / database_id on purpose. On deploy Wrangler creates a database named
+	// "<worker-name>-db" and keeps reusing it. Worker names are unique per account, so two installs never
+	// share a database. The tables are created and upgraded by the Worker itself on first request.
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"migrations_dir": "migrations"
+		}
+	],
+	// Daily housekeeping: deletes old check history.
+	"triggers": { "crons": ["17 3 * * *"] }
+}
