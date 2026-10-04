@@ -11,6 +11,7 @@ This is a plan, not a promise. Order can change.
 - Dashboard: overview, licence list, licence page, extend, regenerate key
 - API with keys and scopes: create (idempotent with `external_ref`), read, edit, status, renew, regenerate key, delete, activity, stats, OpenAPI description
 - Daily clean-up of old check history
+- Status **completed** (paid in full) and **files per licence** in R2: update and final files, gated downloads, download log, upload by dashboard or API
 
 ## Next (towards 1.0.0)
 
@@ -21,6 +22,9 @@ This is a plan, not a promise. Order can change.
 - [ ] **Import and export** of all licences as JSON/CSV
 - [ ] **Renewal reminders** in the dashboard: a list of licences ending soon with a one-click extend
 - [ ] **Tests against a real Worker** in CI (today: unit tests plus a local D1 stand-in and manual runs)
+- [ ] **SHA-256 checksum** for each file, shown in the listing, so an updater can verify what it downloaded
+- [ ] **Larger files**: direct-to-R2 uploads for files over 100 MB, and range (resumable) downloads
+- [ ] **Download limits** and time-limited, signed download links
 - [ ] **Docs site** and a one-click deploy button once the repository is public
 - [ ] Review of the whole API surface and the answer format, then freeze for 1.0.0
 

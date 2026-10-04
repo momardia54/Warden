@@ -19,6 +19,7 @@ Supported versions: only the latest release (there is no 1.0 yet, so none is lon
 | API keys | `wk_` plus 40 random characters. Only a SHA-256 hash is stored; the key is shown once. Three scopes (`read`, `manage`, `full`), revocable at any time. Keys act as the admin account, so give each app its own key with the least access it needs. |
 | Licence keys | `WRD-` plus 20 random characters from a 30-symbol alphabet (about 98 bits), generated with the platform's secure random source. Unknown keys get a generic 404. |
 | Check answers | Signed: `X-Warden-Signature` is the HMAC-SHA256 of the body, keyed with the licence key. A site can verify an answer is genuine and unmodified. |
+| File downloads | Files live in a private R2 bucket with no public URL; the Worker streams them only after checking the licence (status, end date, domain for update files, `completed` for final files). Every download and refusal is logged. Names are sanitised and sent as attachments with `X-Content-Type-Options: nosniff`. |
 | Database | Cloudflare D1, queries use bound parameters throughout. Check history older than 90 days is deleted daily. No visitor IPs are stored for checks; only the domain a site reports. |
 
 ## Limits you should know about
@@ -29,6 +30,8 @@ Supported versions: only the latest release (there is no 1.0 yet, so none is lon
 - **No rate limiting on the API or the check URL** yet. Keys are long and random, so guessing is not practical, but a leaked key can be used without limit until you revoke it. Cloudflare's own WAF rate limiting rules can be put in front of `/api/*` and `/check/*` meanwhile.
 - **Single admin.** There are no separate users or roles. API key scopes are the only separation.
 - **CORS is open (`*`) on `/check/*` and `/api/*`.** Those endpoints do not use cookies, so a web page cannot use your dashboard session against them; they authenticate with the key in the address or the `Authorization` header.
+- **Downloaded files stay downloaded.** Cutting a licence off stops future downloads and updates, not copies already on a client's server. The final file, once released, cannot be taken back. Anyone who holds a valid licence key can download the files that licence allows, from anywhere, as often as they like (no download limits yet).
+- **No malware scanning or checksums** on uploaded files; you are the only uploader, so scan your own builds. SHA-256 checksums are on the roadmap.
 - Not a general-purpose secret store. Do not put passwords or personal data in licence notes.
 
 ## Hardening checklist

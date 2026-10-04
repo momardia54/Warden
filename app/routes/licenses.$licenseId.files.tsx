@@ -1,0 +1,19 @@
+import type { Route } from "./+types/licenses.$licenseId.files"
+import { requireAuth } from "~/server/auth.server"
+import { storeFile } from "~/server/files.server"
+import { getLicense } from "~/server/licenses.server"
+
+/** PUT /licenses/<id>/files?name=&kind=&version= with the raw file as the body. Used by the upload button. */
+export async function action({ request, context, params }: Route.ActionArgs) {
+  const env = context.cloudflare.env
+  await requireAuth(request, env)
+  if (request.method !== "PUT") return Response.json({ error: "Use PUT" }, { status: 405 })
+  const license = await getLicense(env, params.licenseId)
+  if (!license) return Response.json({ error: "Licence not found" }, { status: 404 })
+  const q = new URL(request.url).searchParams
+  const stored = await storeFile(env, license, {
+    name: q.get("name") ?? "", kind: q.get("kind") ?? "update", version: q.get("version") ?? "", notes: q.get("notes") ?? "",
+    contentType: request.headers.get("content-type"), size: Number(request.headers.get("content-length")), body: request.body,
+  })
+  return "error" in stored ? Response.json({ error: stored.error }, { status: stored.status }) : Response.json({ file: { id: stored.file.id } }, { status: 201 })
+}

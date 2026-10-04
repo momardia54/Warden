@@ -1,9 +1,10 @@
-export const STATUSES = ["pending", "active", "suspended", "disabled", "expired"] as const
+export const STATUSES = ["pending", "active", "completed", "suspended", "disabled", "expired"] as const
 export type Status = (typeof STATUSES)[number]
 
 export const STATUS_LABEL: Record<Status, string> = {
   pending: "Pending",
   active: "Active",
+  completed: "Completed",
   suspended: "Suspended",
   disabled: "Disabled",
   expired: "Expired",
@@ -19,6 +20,7 @@ export function answerLabel(status: string | null): string {
 export const STATUS_HINT: Record<Status, string> = {
   pending: "Created but not yet in force, for example waiting for the first payment.",
   active: "In force. The site should run normally.",
+  completed: "Paid in full: permanent, no end date applies. Unlocks the final files.",
   suspended: "Temporarily stopped, for example a late payment. Set it back to active to resume.",
   disabled: "Switched off for good.",
   expired: "Past its end date.",
@@ -52,6 +54,11 @@ export function effectiveStatus(license: { status: string; expires_at: number | 
   const status = isStatus(license.status) ? license.status : "disabled"
   if (status === "active" && license.expires_at !== null && license.expires_at <= now) return "expired"
   return status
+}
+
+/** Statuses a site may run under: in force (active) or paid in full (completed). */
+export function isInForce(status: string): boolean {
+  return status === "active" || status === "completed"
 }
 
 export function parseDomains(raw: string): string[] {
@@ -91,6 +98,7 @@ type Row = { name: string; status: string; expires_at: number | null; domains: s
 
 const DEFAULT_MESSAGE: Record<string, string> = {
   active: "",
+  completed: "",
   pending: "This licence is not active yet.",
   suspended: "This licence is suspended.",
   disabled: "This licence has been disabled.",
@@ -105,10 +113,10 @@ export function buildAnswer(license: Row | null, domain: string | null, now = Da
   if (!license) return { valid: false, status: "unknown", message: DEFAULT_MESSAGE.unknown, checked_at }
   const status = effectiveStatus(license, now)
   const base = { name: license.name, expires_at: license.expires_at ? new Date(license.expires_at).toISOString() : null, checked_at }
-  if (status === "active" && !domainAllowed(parseDomains(license.domains), domain)) {
+  if (isInForce(status) && !domainAllowed(parseDomains(license.domains), domain)) {
     return { ...base, valid: false, status: "domain_mismatch", message: DEFAULT_MESSAGE.domain_mismatch }
   }
-  return { ...base, valid: status === "active", status, message: license.message.trim() || DEFAULT_MESSAGE[status] }
+  return { ...base, valid: isInForce(status), status, message: license.message.trim() || DEFAULT_MESSAGE[status] }
 }
 
 /** API key access levels, lowest first: read (GET), manage (create, edit, status, renew), full (also delete, regenerate key). */

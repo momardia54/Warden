@@ -24,7 +24,7 @@ export function openApiSpec(origin: string) {
           summary: "List licences",
           description: "Newest first. Pass `before` = the `next` value of the previous page to continue.",
           parameters: [
-            { name: "status", in: "query", schema: { enum: ["pending", "active", "suspended", "disabled", "expired"] } },
+            { name: "status", in: "query", schema: { enum: ["pending", "active", "completed", "suspended", "disabled", "expired"] } },
             { name: "q", in: "query", description: "Search name, client, key, domains, external_ref", schema: { type: "string" } },
             { name: "external_ref", in: "query", schema: { type: "string" } },
             { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 25 } },
@@ -47,7 +47,7 @@ export function openApiSpec(origin: string) {
       },
       "/licenses/{id}/status": {
         parameters: [idParam],
-        post: { summary: "Set the status", requestBody: body({ type: "object", required: ["status"], properties: { status: { enum: ["pending", "active", "suspended", "disabled"] } } }), responses: { 200: ok("Updated"), 403: err, 404: err, 422: err } },
+        post: { summary: "Set the status", requestBody: body({ type: "object", required: ["status"], properties: { status: { enum: ["pending", "active", "completed", "suspended", "disabled"] } } }), responses: { 200: ok("Updated"), 403: err, 404: err, 422: err } },
       },
       "/licenses/{id}/renew": {
         parameters: [idParam],
@@ -59,6 +59,23 @@ export function openApiSpec(origin: string) {
         },
       },
       "/licenses/{id}/regenerate-key": { parameters: [idParam], post: { summary: "Replace the key (scope full). The old key and check URL stop working.", responses: { 200: ok("Updated, with the new key"), 403: err, 404: err } } },
+      "/licenses/{id}/files": {
+        parameters: [idParam],
+        get: { summary: "List the files attached to a licence", responses: { 200: { description: "{ data: File[] }" }, 404: err } },
+        put: {
+          summary: "Upload a file (scope manage)",
+          description: "The request body is the raw file (not multipart); send Content-Length. Up to 100 MB. Query: `name` (required), `kind` (`update` or `final`), `version`, `notes`. `update` files download while the licence is active or completed; `final` files only once it is completed (paid in full).",
+          parameters: [
+            { name: "name", in: "query", required: true, schema: { type: "string" } },
+            { name: "kind", in: "query", schema: { enum: ["update", "final"], default: "update" } },
+            { name: "version", in: "query", schema: { type: "string" } },
+            { name: "notes", in: "query", schema: { type: "string" } },
+          ],
+          requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
+          responses: { 201: { description: "The file" }, 403: err, 413: err, 422: err, 501: err },
+        },
+      },
+      "/licenses/{id}/files/{fileId}": { parameters: [idParam, { name: "fileId", in: "path", required: true, schema: { type: "string" } }], delete: { summary: "Delete a file (scope manage)", responses: { 200: { description: "{ deleted: true, id }" }, 404: err } } },
       "/licenses/{id}/activity": { parameters: [idParam], get: { summary: "Recent checks and changes", parameters: [{ name: "limit", in: "query", schema: { type: "integer", maximum: 200, default: 50 } }], responses: { 200: { description: "{ data: Activity[] }" }, 404: err } } },
     },
     components: {
@@ -70,7 +87,7 @@ export function openApiSpec(origin: string) {
           properties: {
             name: { type: "string", maxLength: 120 },
             client: { type: "string", maxLength: 120 },
-            status: { enum: ["pending", "active", "suspended", "disabled"], default: "active" },
+            status: { enum: ["pending", "active", "completed", "suspended", "disabled"], default: "active" },
             expires_at: { type: ["string", "null"], description: "YYYY-MM-DD (end of that day, UTC), an ISO date-time, or null for no end date" },
             duration_days: { type: "integer", description: "On create or edit: end date = today + this many days (ignored when expires_at is sent)" },
             domains: { type: "array", items: { type: "string" } },
@@ -84,7 +101,7 @@ export function openApiSpec(origin: string) {
           properties: {
             id: { type: "string" }, name: { type: "string" }, client: { type: "string" }, key: { type: "string" }, check_url: { type: "string" },
             status: { type: "string", description: "Effective status: an active licence past its end date reads expired" },
-            stored_status: { type: "string" }, valid: { type: "boolean" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
+            stored_status: { type: "string" }, valid: { type: "boolean", description: "true for active and completed" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
             message: { type: "string" }, notes: { type: "string" }, external_ref: { type: ["string", "null"] },
             created_at: { type: "string" }, updated_at: { type: "string" }, last_check_at: { type: ["string", "null"] }, last_check_domain: { type: ["string", "null"] }, check_count: { type: "integer" },
           },

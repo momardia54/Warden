@@ -13,6 +13,7 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 | `status` | `valid` | Meaning |
 |---|---|---|
 | `active` | true | In force, in date, and the domain matches (when the licence lists domains) |
+| `completed` | true | Paid in full: permanent, the end date no longer applies. The site can switch to the final, licence-free build |
 | `pending` | false | Not started yet (for example waiting for the first payment) |
 | `suspended` | false | Temporarily stopped |
 | `disabled` | false | Switched off |

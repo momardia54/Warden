@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Form, Link, redirect, useNavigation, useSearchParams } from "react-router"
 import { CalendarPlus, Pencil, RefreshCw, Trash2 } from "lucide-react"
 import type { Route } from "./+types/licenses.$licenseId"
+import { FilesSection } from "#/components/files-section"
 import { PageHeader } from "#/components/page-header"
 import { LicenseStatusBadge } from "#/components/status-badge"
 import { CodeBlock, CopyField } from "#/components/code-block"
@@ -12,6 +13,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "#/components/ui/dropdown-menu"
 import { answerLabel, effectiveStatus, isStatus, STATUSES, STATUS_HINT, STATUS_LABEL } from "#/lib/license"
 import { requireAuth } from "~/server/auth.server"
+import { deleteFile, getFile, listFiles, storageConfigured } from "~/server/files.server"
 import { deleteLicense, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Licence | Warden" }]
@@ -22,7 +24,8 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   const license = await getLicense(env, params.licenseId)
   if (!license) throw new Response("Licence not found", { status: 404 })
   const origin = new URL(request.url).origin
-  return { license, activity: await recentActivity(env, license.id), checkUrl: `${origin}/check/${license.license_key}` }
+  const [activity, files] = await Promise.all([recentActivity(env, license.id), listFiles(env, license.id)])
+  return { license, activity, files, filesConfigured: storageConfigured(env), origin, checkUrl: `${origin}/check/${license.license_key}` }
 }
 
 export async function action({ request, context, params }: Route.ActionArgs) {
@@ -41,6 +44,9 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     if (Number.isInteger(days) && days > 0 && days <= 3650) await extendLicense(env, license, days)
   } else if (intent === "regenerate") {
     await regenerateKey(env, license)
+  } else if (intent === "delete-file") {
+    const file = await getFile(env, license.id, String(form.get("fileId")))
+    if (file) await deleteFile(env, license, file)
   } else if (intent === "delete") {
     await deleteLicense(env, license.id)
     return redirect("/licenses")
@@ -87,7 +93,7 @@ function ConfirmAction({ intent, trigger, title, description, confirm }: { inten
 }
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, checkUrl } = loaderData
+  const { license, activity, files, filesConfigured, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
   const effective = effectiveStatus(license)
   const curl = `curl "${checkUrl}?domain=example.com"`
@@ -208,6 +214,8 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           </dl>
         </section>
 
+        <FilesSection licenseId={license.id} licenseKey={license.license_key} origin={origin} license={license} files={files} configured={filesConfigured} />
+
         <section className="space-y-2">
           <h2 className="font-semibold">Activity</h2>
           <div className="rounded-lg border">
@@ -221,6 +229,11 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                       {a.kind === "check" ? (
                         <>
                           Check from <span className="font-medium">{a.domain ?? "unknown domain"}</span>, answered {answerLabel(a.status).toLowerCase()}
+                        </>
+                      ) : a.kind === "download" ? (
+                        <>
+                          {a.detail}
+                          {a.domain ? <> from <span className="font-medium">{a.domain}</span></> : null}
                         </>
                       ) : (
                         a.detail

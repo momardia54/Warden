@@ -1,4 +1,5 @@
 import { generateLicenseKey, isStatus, normalizeDomain, parseDomains, type Status } from "../lib/license"
+import { deleteLicenseFiles } from "./files.server"
 import { newId } from "./util.server"
 
 export type License = {
@@ -19,7 +20,7 @@ export type License = {
   external_ref: string | null
 }
 
-export type Activity = { id: number; at: number; kind: "check" | "change"; status: string | null; domain: string | null; detail: string }
+export type Activity = { id: number; at: number; kind: "check" | "change" | "download"; status: string | null; domain: string | null; detail: string }
 
 export type LicenseInput = {
   name: string
@@ -157,7 +158,12 @@ export async function regenerateKey(env: Env, license: License): Promise<void> {
 }
 
 export async function deleteLicense(env: Env, id: string): Promise<void> {
-  await env.DB.batch([env.DB.prepare("DELETE FROM activity WHERE license_id = ?").bind(id), env.DB.prepare("DELETE FROM licenses WHERE id = ?").bind(id)])
+  await deleteLicenseFiles(env, id)
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM files WHERE license_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM activity WHERE license_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM licenses WHERE id = ?").bind(id),
+  ])
 }
 
 export async function recentActivity(env: Env, id: string, limit = 50): Promise<Activity[]> {
@@ -168,7 +174,7 @@ export async function recentActivity(env: Env, id: string, limit = 50): Promise<
 export async function overviewStats(env: Env, now = Date.now()) {
   const soon = now + 14 * 86_400_000
   const rows = await env.DB.prepare("SELECT status, expires_at, last_check_at, created_at FROM licenses").all<Pick<License, "status" | "expires_at" | "last_check_at" | "created_at">>()
-  const counts = { pending: 0, active: 0, suspended: 0, disabled: 0, expired: 0 }
+  const counts = { pending: 0, active: 0, completed: 0, suspended: 0, disabled: 0, expired: 0 }
   let endingSoon = 0
   let silent = 0
   for (const r of rows.results) {

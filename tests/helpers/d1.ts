@@ -85,3 +85,22 @@ export function mockFetch(answer: (sent: Sent) => Response | Promise<Response> =
   }) as typeof fetch
   return { sent, restore: () => void (globalThis.fetch = real) }
 }
+
+/** A stand-in for an R2 bucket: enough of put/get/delete for the file tests. */
+export function makeBucket() {
+  const objects = new Map<string, { bytes: Uint8Array; contentType?: string }>()
+  const bucket = {
+    async put(key: string, body: ReadableStream | ArrayBuffer | string, options?: { httpMetadata?: { contentType?: string } }) {
+      const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body instanceof ArrayBuffer ? new Uint8Array(body) : new Uint8Array(await new Response(body).arrayBuffer())
+      objects.set(key, { bytes, contentType: options?.httpMetadata?.contentType })
+    },
+    async get(key: string) {
+      const o = objects.get(key)
+      return o ? { body: new Response(o.bytes).body, size: o.bytes.length } : null
+    },
+    async delete(keys: string | string[]) {
+      for (const k of Array.isArray(keys) ? keys : [keys]) objects.delete(k)
+    },
+  } as unknown as R2Bucket
+  return { bucket, objects }
+}

@@ -45,7 +45,7 @@ Errors: HTTP status plus `{ "error": { "code": "...", "message": "..." } }`. `40
 }
 ```
 
-`status` is what a site is told: an active licence past its end date reads `expired`. `stored_status` is what is saved. `valid` is `true` only for `active`.
+`status` is what a site is told: an active licence past its end date reads `expired`. `stored_status` is what is saved. `valid` is `true` for `active` and `completed`.
 
 In every path below, `{id}` can be the licence id (`lic_...`) or the licence key (`WRD-...`).
 
@@ -63,7 +63,10 @@ In every path below, `{id}` can be the licence id (`lic_...`) or the licence key
 | `POST /licenses/{id}/status` | manage | Set the status |
 | `POST /licenses/{id}/renew` | manage | Renew |
 | `POST /licenses/{id}/regenerate-key` | full | New key; the old key and check URL stop working |
-| `GET /licenses/{id}/activity` | read | Recent checks and changes |
+| `GET /licenses/{id}/activity` | read | Recent checks, downloads and changes |
+| `GET /licenses/{id}/files` | read | The files attached to the licence |
+| `PUT /licenses/{id}/files` | manage | Upload a file (raw body) |
+| `DELETE /licenses/{id}/files/{fileId}` | manage | Delete a file |
 
 ### List
 
@@ -79,7 +82,7 @@ Returns `{ "data": [licence, ...], "next": "lic_..." | null }`. `status` is one 
 |---|---|---|
 | `name` | string | Required, up to 120 characters |
 | `client` | string | Optional |
-| `status` | string | `pending`, `active` (default), `suspended`, `disabled` |
+| `status` | string | `pending`, `active` (default), `completed`, `suspended`, `disabled` |
 | `expires_at` | string or null | `YYYY-MM-DD` (end of that day, UTC) or an ISO date-time. `null` or omitted: no end date |
 | `duration_days` | integer | Alternative to `expires_at`: ends this many days from now (1 to 3650) |
 | `domains` | array of strings | Allowed domains; subdomains match. Empty: any |
@@ -101,7 +104,7 @@ curl -X POST https://<worker>/api/v1/licenses \
 
 ### Status
 
-`POST /licenses/{id}/status` with `{"status": "suspended"}`. Allowed: `pending`, `active`, `suspended`, `disabled`. (`expired` is never set by hand; it follows from the end date.)
+`POST /licenses/{id}/status` with `{"status": "suspended"}`. Allowed: `pending`, `active`, `completed`, `suspended`, `disabled`. `completed` means paid in full: valid, permanent (the end date is ignored) and it unlocks the licence's *final* files. (`expired` is never set by hand; it follows from the end date.)
 
 ### Renew
 
@@ -111,6 +114,23 @@ curl -X POST https://<worker>/api/v1/licenses \
 - `{"until": "2027-06-30"}`: sets the end date (must be in the future)
 
 A licence that had expired becomes active again. A `suspended` or `disabled` licence keeps its status; renewing does not lift a suspension, call the status endpoint for that.
+
+### Files
+
+`PUT /licenses/{id}/files?name=theme.zip&kind=final&version=2.0.0` uploads a file. The **body is the raw file** (not multipart), up to 100 MB, with a `Content-Length` header (curl and fetch send one for a file body).
+
+| Query | Notes |
+|---|---|
+| `name` | Required. The download name (folders and odd characters are stripped) |
+| `kind` | `update` (default) or `final` |
+| `version`, `notes` | Optional text |
+
+```bash
+curl -X PUT "https://<worker>/api/v1/licenses/<id or key>/files?name=harbor-theme.zip&kind=final&version=2.0.0" \
+  -H "Authorization: Bearer $WARDEN_KEY" -H "Content-Type: application/zip" --data-binary @harbor-theme.zip
+```
+
+Returns `201` and `{ id, name, kind, version, notes, size, content_type, uploaded_at, download_count, last_download_at, download_url }`. `GET /licenses/{id}/files` returns `{ "data": [...] }`; `DELETE /licenses/{id}/files/{fileId}` removes the file from storage. Returns `501` when the install has no R2 bucket. Who can download what, and how, is described in [files.md](files.md).
 
 ### Activity
 

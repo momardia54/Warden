@@ -1,6 +1,7 @@
 import { createRequestHandler } from "react-router"
 import { handleApi } from "../app/server/api.server"
 import { handleCheck } from "../app/server/check.server"
+import { handleDownload } from "../app/server/download.server"
 import { pruneActivity } from "../app/server/licenses.server"
 import { withDashboardHeaders } from "../app/server/headers.server"
 import { initRequestCache } from "../app/server/request-cache.server"
@@ -42,6 +43,9 @@ export default {
     // Public endpoint that authenticates with the licence key in the address.
     const check = url.pathname.match(/^\/check\/([A-Za-z0-9-]{10,40})\/?$/)
     if (check) return handleCheck(request, env, ctx, check[1].toUpperCase())
+
+    const download = url.pathname.match(/^\/download\/([A-Za-z0-9-]{10,40})(?:\/(fil_[a-z0-9]+))?\/?$/)
+    if (download) return handleDownload(request, env, ctx, download[1].toUpperCase(), download[2] ?? null)
 
     const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))))
     // A per-request copy of env: it is the key of the request-scoped cache (see request-cache.server.ts).

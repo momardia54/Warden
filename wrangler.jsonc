@@ -14,6 +14,9 @@
 			"migrations_dir": "migrations"
 		}
 	],
+	// Files attached to licences (updates, final releases). No bucket_name on purpose: like the database,
+	// Wrangler creates "<worker-name>-files" on deploy. R2 must be activated once in the Cloudflare dashboard.
+	"r2_buckets": [{ "binding": "FILES" }],
 	// Daily housekeeping: deletes old check history.
 	"triggers": { "crons": ["17 3 * * *"] }
 }

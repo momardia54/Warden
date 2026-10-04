@@ -17,11 +17,12 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 ## Features
 
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence
-- Statuses: **pending, active, suspended, disabled, expired**. An active licence past its end date reports `expired` by itself
+- Statuses: **pending, active, completed, suspended, disabled, expired**. An active licence past its end date reports `expired` by itself. **Completed** means paid in full: permanent, valid, and it releases the final files
 - Optional end date, optional allowed domains (subdomains match), a message for the site, private notes
 - **Signed answers** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
 - Activity log per licence: every check (which domain, what answer) and every change
 - Overview: active count, ending soon, active licences that stopped checking in
+- **Files per licence** (stored in R2): *update* files download while the licence is active or completed; *final* files only once it is completed. Use them to ship theme updates, or to hand over the final licence-free build when the client has paid in full ([docs/files.md](docs/files.md))
 - One-click **extend** (30 days, 90 days, 1 year) and **regenerate key**
 - **API** with scoped keys, idempotent create, renew, status, search and paging, plus an OpenAPI description
 - Single admin login from Worker secrets, no third-party services, runs on the Workers and D1 free plans
@@ -32,8 +33,10 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | Licence list with search and status filter | Key, check URL, details, extend |
 | ![Change status](docs/screenshots/change-status.jpg) | ![New licence](docs/screenshots/new-licence.jpg) |
 | Change status | Create a licence |
-| ![Activity](docs/screenshots/activity.jpg) | ![API](docs/screenshots/api.jpg) |
-| Every check and change is logged | API keys and examples |
+| ![Files](docs/screenshots/files.jpg) | ![API](docs/screenshots/api.jpg) |
+| Files: update and final, locked or available | API keys and examples |
+| ![Activity](docs/screenshots/activity.jpg) | |
+| Every check, download and change is logged | |
 
 ## The check URL
 
@@ -48,6 +51,22 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 `valid` is `true` only when the status is `active`, the end date has not passed, and the domain matches (if the licence lists domains). Other `status` values: `pending`, `suspended`, `disabled`, `expired`, `domain_mismatch`, `unknown` (HTTP 404). Full details and verification code: [docs/checking.md](docs/checking.md).
 
 Recommended in the site: check about every 12 hours, act only on an answer you could read and verify, and **keep the last known state on network errors or 5xx**, so a Warden outage never locks a client out.
+
+## Files: updates and the final hand-over
+
+Attach files to a licence in the dashboard (or by API) and mark each one:
+
+| Kind | Downloadable when |
+|---|---|
+| **Update** | the licence is `active` or `completed` (and the domain matches, if the licence lists domains) |
+| **Final** | the licence is `completed`, meaning paid in full. Domains are not checked |
+
+```
+GET https://<your-worker>/download/<licence key>                         # files, and which are available now
+GET https://<your-worker>/download/<licence key>/<file id>?domain=site   # the file, or a JSON refusal (HTTP 403)
+```
+
+Typical use: ship theme updates while the client is on a payment plan; when the last payment arrives, set the licence to **completed**, and the final build (the theme without the licence check) unlocks. After installing it, the site never calls Warden again. Every download and refusal is logged. Details: [docs/files.md](docs/files.md).
 
 ## The API
 
@@ -71,7 +90,7 @@ curl           "https://<worker>/api/v1/licenses?status=expired"   -H "Authoriza
 | `manage` | also create, edit, set status, renew |
 | `full` | also delete and regenerate keys |
 
-Endpoints: `GET /me`, `GET /stats`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `POST /licenses/{id}/renew`, `POST /licenses/{id}/regenerate-key`, `GET /licenses/{id}/activity`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
+Endpoints: `GET /me`, `GET /stats`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `POST /licenses/{id}/renew`, `POST /licenses/{id}/regenerate-key`, `GET /licenses/{id}/activity`, `GET|PUT /licenses/{id}/files`, `DELETE /licenses/{id}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
 
 ## Run and deploy
 
@@ -88,7 +107,7 @@ npm test             # unit and API tests
 Deploy to your own account:
 
 ```bash
-npm run deploy       # builds, creates the D1 database "<worker-name>-db" and a daily Cron Trigger, deploys the Worker
+npm run deploy       # builds, creates the D1 database "<worker-name>-db", the R2 bucket for files and a daily Cron Trigger, deploys the Worker
 npx wrangler secret put ADMIN_USERNAME
 npx wrangler secret put ADMIN_PASSWORD
 npx wrangler secret put SESSION_SECRET     # optional but recommended: openssl rand -hex 32
@@ -96,15 +115,19 @@ npx wrangler secret put SESSION_SECRET     # optional but recommended: openssl r
 
 The database tables are created and upgraded by the Worker itself on the first request, so there is no migration step. Until the two admin secrets exist, the login page tells you what to add.
 
+R2 has to be activated once in the Cloudflare dashboard (it asks for a payment method, even for the free tier). Without it, everything works except the Files section, which says so.
+
 Use a custom domain (Workers > your Worker > Settings > Domains) so check URLs do not depend on `workers.dev`.
 
 ## Under the hood
 
-React Router 7 (SSR) on Cloudflare Workers, Cloudflare D1, Tailwind and shadcn/ui, TypeScript. One daily Cron Trigger deletes check history older than 90 days. The public check endpoint and the API are served by the Worker before the dashboard, and do not use cookies.
+React Router 7 (SSR) on Cloudflare Workers, Cloudflare D1 (data) and R2 (files), Tailwind and shadcn/ui, TypeScript. One daily Cron Trigger deletes check history older than 90 days. The public check endpoint and the API are served by the Worker before the dashboard, and do not use cookies.
 
 ```
 workers/app.ts              entry: migrations, /api/v1, /check/<key>, dashboard
 app/server/check.server.ts  the check endpoint and its signature
+app/server/download.server.ts  gated file downloads
+app/server/files.server.ts  file storage in R2
 app/server/api.server.ts    API: keys, routes, validation
 app/server/licenses.server.ts   licence logic shared by dashboard and API
 app/lib/license.ts          statuses, key format, domain rules, the answer
