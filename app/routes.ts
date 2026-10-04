@@ -10,5 +10,6 @@ export default [
     route("licenses/new", "routes/licenses.new.tsx"),
     route("licenses/:licenseId", "routes/licenses.$licenseId.tsx"),
     route("licenses/:licenseId/edit", "routes/licenses.$licenseId.edit.tsx"),
+    route("api-keys", "routes/api-keys.tsx"),
   ]),
 ] satisfies RouteConfig

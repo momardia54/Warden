@@ -1,4 +1,4 @@
-import { KeyRound, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, ShieldCheck, Sun } from "lucide-react"
+import { KeyRound, Braces, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, ShieldCheck, Sun } from "lucide-react"
 import { NavLink, useFetcher, useLocation } from "react-router"
 import { useTheme } from "next-themes"
 import {
@@ -28,6 +28,7 @@ import {
 const NAV = [
   { title: "Overview", to: "/overview", icon: LayoutDashboard },
   { title: "Licences", to: "/licenses", icon: KeyRound },
+  { title: "API", to: "/api-keys", icon: Braces },
 ]
 
 function NavGroup({ label, items }: { label: string; items: typeof NAV }) {

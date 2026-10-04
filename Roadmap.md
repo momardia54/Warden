@@ -1,0 +1,40 @@
+# Roadmap
+
+Warden is **pre-1.0**. The data model, the check answer and the `/api/v1` endpoints can still change between 0.x versions; changes are listed in [CHANGELOG.md](CHANGELOG.md). Version 1.0.0 means the check answer and API are stable and only change in backward compatible ways.
+
+This is a plan, not a promise. Order can change.
+
+## Done (0.1.x)
+
+- Licences with key, check URL, five statuses, end dates, allowed domains, message for the site, private notes
+- Signed check answers (`X-Warden-Signature`), activity log
+- Dashboard: overview, licence list, licence page, extend, regenerate key
+- API with keys and scopes: create (idempotent with `external_ref`), read, edit, status, renew, regenerate key, delete, activity, stats, OpenAPI description
+- Daily clean-up of old check history
+
+## Next (towards 1.0.0)
+
+- [ ] **Webhooks out**: call a URL when a licence changes status, expires, or when a site has not checked for N days (replaces email, same approach as the other tools in this folder)
+- [ ] **Rate limiting** for the API and the check URL
+- [ ] **Public-key signatures** (Ed25519) so a site holds only a public key and cannot forge answers
+- [ ] **Grace period** per licence: report `valid: true` with a warning for N days after the end date
+- [ ] **Import and export** of all licences as JSON/CSV
+- [ ] **Renewal reminders** in the dashboard: a list of licences ending soon with a one-click extend
+- [ ] **Tests against a real Worker** in CI (today: unit tests plus a local D1 stand-in and manual runs)
+- [ ] **Docs site** and a one-click deploy button once the repository is public
+- [ ] Review of the whole API surface and the answer format, then freeze for 1.0.0
+
+## Later, if there is demand
+
+- Domain activations: limit how many distinct sites may use one licence
+- Several admins and per-licence API keys
+- Licence groups (a client with several sites) and plans (templates for duration, domains and message)
+- Check statistics per licence over time
+- Official client snippets (PHP/WordPress, JavaScript) kept in this repository
+- Audit log for dashboard and API changes
+
+## Not planned
+
+- Taking payments. Warden records licence state; use your payment tool and call the API from its webhook.
+- Email sending (no SMTP in this tool, by design).
+- Making a licence impossible to bypass on a server you do not control (see [Security.md](Security.md)).

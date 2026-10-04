@@ -16,6 +16,7 @@ export type License = {
   last_check_at: number | null
   last_check_domain: string | null
   check_count: number
+  external_ref: string | null
 }
 
 export type Activity = { id: number; at: number; kind: "check" | "change"; status: string | null; domain: string | null; detail: string }
@@ -28,6 +29,7 @@ export type LicenseInput = {
   domains: string
   message: string
   notes: string
+  external_ref?: string | null
 }
 
 /** Validates form fields. Returns the cleaned input or an error message. */
@@ -70,8 +72,8 @@ export async function createLicense(env: Env, input: LicenseInput): Promise<Lice
   const key = generateLicenseKey()
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO licenses (id, name, client, license_key, status, expires_at, domains, message, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(id, input.name, input.client, key, input.status, input.expires_at, input.domains, input.message, input.notes, now, now),
+      "INSERT INTO licenses (id, name, client, license_key, status, expires_at, domains, message, notes, external_ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(id, input.name, input.client, key, input.status, input.expires_at, input.domains, input.message, input.notes, input.external_ref ?? null, now, now),
     logChange(env, id, now, input.status, "Licence created"),
   ])
   return (await getLicense(env, id))!
@@ -79,6 +81,10 @@ export async function createLicense(env: Env, input: LicenseInput): Promise<Lice
 
 export function getLicense(env: Env, id: string): Promise<License | null> {
   return env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(id).first<License>()
+}
+
+export function getLicenseByRef(env: Env, ref: string): Promise<License | null> {
+  return env.DB.prepare("SELECT * FROM licenses WHERE external_ref = ?").bind(ref).first<License>()
 }
 
 export async function listLicenses(env: Env): Promise<License[]> {
@@ -129,6 +135,16 @@ export async function extendLicense(env: Env, license: License, days: number): P
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET expires_at = ?, status = ?, updated_at = ? WHERE id = ?").bind(to, status, now, license.id),
     logChange(env, license.id, now, status, `Extended ${days} days, now ends ${fmt(to)}`),
+  ])
+}
+
+/** Sets the end date to `until` and brings an expired licence back to active. Other statuses stay as they are. */
+export async function renewUntil(env: Env, license: License, until: number): Promise<void> {
+  const now = Date.now()
+  const status: Status = license.status === "expired" ? "active" : license.status
+  await env.DB.batch([
+    env.DB.prepare("UPDATE licenses SET expires_at = ?, status = ?, updated_at = ? WHERE id = ?").bind(until, status, now, license.id),
+    logChange(env, license.id, now, status, `Renewed, now ends ${fmt(until)}`),
   ])
 }
 

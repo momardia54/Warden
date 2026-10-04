@@ -1,4 +1,5 @@
 import { createRequestHandler } from "react-router"
+import { handleApi } from "../app/server/api.server"
 import { handleCheck } from "../app/server/check.server"
 import { pruneActivity } from "../app/server/licenses.server"
 import { withDashboardHeaders } from "../app/server/headers.server"
@@ -35,6 +36,8 @@ export default {
     } catch (error) {
       return migrationFailureResponse(request, error)
     }
+
+    if (url.pathname.startsWith("/api/v1")) return handleApi(request, env, ctx)
 
     // Public endpoint that authenticates with the licence key in the address.
     const check = url.pathname.match(/^\/check\/([A-Za-z0-9-]{10,40})\/?$/)

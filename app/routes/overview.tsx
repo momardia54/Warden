@@ -4,7 +4,7 @@ import { PageHeader } from "#/components/page-header"
 import { StatCard } from "#/components/stat-card"
 import { Ago } from "#/components/time"
 import { Button } from "#/components/ui/button"
-import { STATUS_LABEL } from "#/lib/license"
+import { answerLabel } from "#/lib/license"
 import { requireAuth } from "~/server/auth.server"
 import { overviewStats, recentChecks } from "~/server/licenses.server"
 
@@ -43,7 +43,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                       {c.name}
                     </Link>
                     <span className="text-muted-foreground">
-                      {c.domain ?? "no domain"} · {STATUS_LABEL[c.status as keyof typeof STATUS_LABEL] ?? c.status} · <Ago ts={c.at} />
+                      {c.domain ?? "no domain"} · {answerLabel(c.status)} · <Ago ts={c.at} />
                     </span>
                   </li>
                 ))}

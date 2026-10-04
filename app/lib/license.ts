@@ -9,6 +9,13 @@ export const STATUS_LABEL: Record<Status, string> = {
   expired: "Expired",
 }
 
+/** Label for any status the check endpoint can answer, including the non-stored ones. */
+export function answerLabel(status: string | null): string {
+  if (status === "domain_mismatch") return "Wrong domain"
+  if (status === "unknown") return "Unknown key"
+  return status && isStatus(status) ? STATUS_LABEL[status] : (status ?? "")
+}
+
 export const STATUS_HINT: Record<Status, string> = {
   pending: "Created but not yet in force, for example waiting for the first payment.",
   active: "In force. The site should run normally.",

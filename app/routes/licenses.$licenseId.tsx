@@ -10,7 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert"
 import { Button } from "#/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "#/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "#/components/ui/dropdown-menu"
-import { effectiveStatus, isStatus, STATUSES, STATUS_HINT, STATUS_LABEL } from "#/lib/license"
+import { answerLabel, effectiveStatus, isStatus, STATUSES, STATUS_HINT, STATUS_LABEL } from "#/lib/license"
 import { requireAuth } from "~/server/auth.server"
 import { deleteLicense, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
 
@@ -126,7 +126,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                     <input type="hidden" name="intent" value="status" />
                     <input type="hidden" name="status" value={s} />
                     <DropdownMenuItem asChild disabled={license.status === s}>
-                      <button type="submit" className="w-full flex-col items-start gap-0.5">
+                      <button type="submit" className="w-full flex-col items-start gap-0.5 text-left">
                         <span className="font-medium">{STATUS_LABEL[s]}</span>
                         <span className="text-xs text-muted-foreground">{STATUS_HINT[s]}</span>
                       </button>
@@ -193,7 +193,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           <h2 className="mb-3 font-semibold">Details</h2>
           <dl className="grid gap-4 sm:grid-cols-3">
             <Fact label="Reported status">{STATUS_LABEL[effective]}</Fact>
-            <Fact label="Ends">{license.expires_at ? <When ts={license.expires_at} /> : "No end date"}</Fact>
+            <Fact label="Ends">{license.expires_at ? `${new Date(license.expires_at).toISOString().slice(0, 10)} (end of day, UTC)` : "No end date"}</Fact>
             <Fact label="Allowed domains">{license.domains || "Any"}</Fact>
             <Fact label="Last check">
               <Ago ts={license.last_check_at} />
@@ -220,7 +220,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                     <span>
                       {a.kind === "check" ? (
                         <>
-                          Check from <span className="font-medium">{a.domain ?? "unknown domain"}</span>, answered {a.status}
+                          Check from <span className="font-medium">{a.domain ?? "unknown domain"}</span>, answered {answerLabel(a.status).toLowerCase()}
                         </>
                       ) : (
                         a.detail
