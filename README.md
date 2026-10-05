@@ -1,10 +1,34 @@
-# Warden
+<p align="center"><img src="assets/logo.svg" alt="Warden logo" width="96" height="96"></p>
 
-**A self-hosted licence manager for Cloudflare Workers.** License a product to many customers (an **app**) or a single project (a **standalone licence**). Every licence has a licence key and a check URL, and its status can be changed from a dashboard or from your own code through an API.
+<h1 align="center">Warden</h1>
+
+<p align="center">
+A self-hosted licence manager that runs on Cloudflare Workers, D1 and R2.<br>
+License a product to many customers or a single project, give every licence a key and a check URL,<br>
+and control its status, its sites and its downloads from a dashboard or an API.
+</p>
+
+<p align="center">
+<a href="https://deploy.workers.cloudflare.com/?url=https://github.com/momardia54/warden"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
+</p>
 
 > **Status: pre-1.0 (0.1.x).** It works and is tested, but the API and data model may still change before 1.0.0. See [Roadmap.md](Roadmap.md) and [Security.md](Security.md).
 
 ![Warden overview](docs/screenshots/overview.jpg)
+
+## Quick start
+
+1. **Deploy:** click **Deploy to Cloudflare** above. It creates the Worker, a D1 database named `<worker-name>-db`, an R2 bucket for files named `<worker-name>-files` and a daily Cron Trigger. If you install more than one copy in an account, give each Worker a different name. R2 has to be activated once in your Cloudflare account (it asks for a payment method, even for the free tier); without it everything works except the Files sections.
+2. **Sign in:** open your Worker's address. Until you add the admin login as runtime secrets, the login page shows what is missing and how to add it.
+
+   | Name | Type | Required |
+   |---|---|---|
+   | `ADMIN_USERNAME` | secret | yes |
+   | `ADMIN_PASSWORD` | secret (12+ characters) | yes |
+   | `SESSION_SECRET` | secret | recommended |
+   | `DB_SUFFIX` | *build* variable | optional (custom database name) |
+
+3. **Issue a licence:** create an app (or skip it for a standalone licence), then a licence. Put the check URL in the customer's site. [docs/checking.md](docs/checking.md) has the code to do it.
 
 ## How it works
 
@@ -109,7 +133,7 @@ npm run dev          # http://localhost:5173 (local D1 database, migrations appl
 npm test             # unit and API tests
 ```
 
-Deploy to your own account:
+Deploy to your own account from the command line instead of the button:
 
 ```bash
 npm run deploy       # builds, creates the D1 database "<worker-name>-db", the R2 bucket for files and a daily Cron Trigger, deploys the Worker
