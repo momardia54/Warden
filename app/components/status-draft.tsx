@@ -6,9 +6,9 @@ import type { StatusSet } from "#/lib/statuses"
 type Props = {
   /** What is being created: "app" or "licence". */
   owner: "app" | "licence"
-  /** The statuses it uses unless customised: the app's or the defaults for a licence, the defaults for an app. */
+  /** The statuses it uses unless customised: the built-in defaults. */
   inherited: StatusSet
-  /** Where those come from, for the text, for example "the default statuses" or "the statuses of the app Harbor Theme". */
+  /** Where those come from, for the text, for example "the default statuses". */
   inheritedFrom: string
   /** The customised statuses being drafted, or null when the inherited ones are used. */
   value: StatusSet | null
@@ -28,7 +28,7 @@ export function StatusDraft({ owner, inherited, inheritedFrom, value, onChange }
           <HelpTip>
             {owner === "app"
               ? "The statuses licences of this app can have. By default an app uses the default statuses. Customise them to give this app its own, for example a Trial status."
-              : "The statuses of this licence. By default it uses its app's statuses, or the default statuses. Customise them to give this licence its own."}
+              : "The statuses of this standalone licence. By default it uses the default statuses. Customise them to give this licence its own. A licence in an app uses its app's statuses."}
           </HelpTip>
         </h2>
         <p className="text-xs text-muted-foreground">

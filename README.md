@@ -43,7 +43,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 - **Apps**: a product sold to many customers, with defaults for new licences (status, duration, maximum sites, message), its own licence list and releases shared by all of its licences ([docs/apps.md](docs/apps.md))
 - **Site limit**: a licence can be limited to N sites; sites register on their first check and you can release them
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence, with a customer name and email
-- **Configurable statuses** at app level and licence level: everything starts with a built-in set (pending, active, completed, suspended, disabled, expired), and an app or a single licence can customise its own. Each status says whether sites can run, what it becomes when the expiry date passes, its colour (any colour, with presets) and its message to sites ([docs/statuses.md](docs/statuses.md))
+- **Configurable statuses** at app level and licence level: everything starts with a built-in set (pending, active, completed, suspended, disabled, expired). An app can customise its own, shared by all of its licences, and a standalone licence can customise its own. Each status says whether sites can run, what it becomes when the expiry date passes, its colour (any colour, with presets) and its message to sites ([docs/statuses.md](docs/statuses.md))
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
 - **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
 - Activity log per licence: every check (which domain, which result) and every change
@@ -66,7 +66,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | ![Creating an app](docs/screenshots/new-app.jpg) | |
 | Statuses can be customised while creating an app or a licence | |
 | ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
-| A licence that uses its app's statuses and can customise its own | Issuing a licence with the app's defaults |
+| A standalone licence: default statuses, customisable (a licence in an app uses its app's) | Issuing a licence with the app's defaults |
 
 ## The check URL
 

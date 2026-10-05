@@ -18,15 +18,14 @@ export function useStatusSetForApp(appId: string | null): StatusSet {
   return (appId && sets.byApp[appId]) || DEFAULT_STATUSES
 }
 
-/** The statuses that apply to a licence: its own, else its app's, else the built-in defaults. */
+/** The statuses that apply to a licence: its app's if it belongs to an app, otherwise its own, otherwise the built-in defaults. */
 export function useStatusSetForLicense(license: { id: string; app_id: string | null }): StatusSet {
-  const sets = useStatusSets()
-  return sets.byLicense[license.id] ?? (license.app_id && sets.byApp[license.app_id]) ?? DEFAULT_STATUSES
+  return statusSetForLicense(useStatusSets(), license)
 }
 
 /** The same lookup as a plain function, for use inside loops and callbacks. */
 export function statusSetForLicense(sets: StatusSets, license: { id: string; app_id: string | null }): StatusSet {
-  return sets.byLicense[license.id] ?? (license.app_id && sets.byApp[license.app_id]) ?? DEFAULT_STATUSES
+  return license.app_id ? (sets.byApp[license.app_id] ?? DEFAULT_STATUSES) : (sets.byLicense[license.id] ?? DEFAULT_STATUSES)
 }
 
 /** Every distinct status across all sets, by key, for filters that span apps and licences. The defaults win on duplicate keys. */

@@ -16,7 +16,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "#/components/ui/dropdown-menu"
 import { useStatusSetForLicense } from "#/components/status-context"
 import { StatusSection } from "#/components/status-section"
-import { effectiveStatusKey, findStatus, statusLabel } from "#/lib/statuses"
+import { DEFAULT_STATUSES, effectiveStatusKey, findStatus, statusLabel } from "#/lib/statuses"
 import { requireAuth } from "~/server/auth.server"
 import { deleteFile, getFile, listFiles, storageConfigured, updateFile } from "~/server/files.server"
 import { formatSites } from "#/components/licenses-table"
@@ -38,8 +38,8 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     listActivations(env, license.id),
   ])
   const customStatuses = await hasCustomSet(env, { license: license.id })
-  const [fallbackStatuses, usage] = await Promise.all([getStatusSetForApp(env, license.app_id), statusCounts(env, { license: license.id })])
-  return { license, activity, files, sharedFiles, sites, customStatuses, fallbackStatuses, statusUsage: usage, filesConfigured: storageConfigured(env), origin, checkUrl: `${origin}/check/${license.license_key}` }
+  const [appStatuses, usage] = await Promise.all([getStatusSetForApp(env, license.app_id), statusCounts(env, { license: license.id })])
+  return { license, activity, files, sharedFiles, sites, customStatuses, appStatuses, statusUsage: usage, filesConfigured: storageConfigured(env), origin, checkUrl: `${origin}/check/${license.license_key}` }
 }
 
 export async function action({ request, context, params }: Route.ActionArgs) {
@@ -96,7 +96,7 @@ function SiteRelease({ domain }: { domain: string }) {
 }
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, files, sharedFiles, sites, customStatuses, fallbackStatuses, statusUsage, filesConfigured, origin, checkUrl } = loaderData
+  const { license, activity, files, sharedFiles, sites, customStatuses, appStatuses, statusUsage, filesConfigured, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
   const statuses = useStatusSetForLicense(license)
   const effective = effectiveStatusKey(license, statuses)
@@ -257,15 +257,22 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           )}
         </section>
 
-        <StatusSection
-          owner="licence"
-          statuses={statuses}
-          fallback={fallbackStatuses}
-          custom={customStatuses}
-          usage={statusUsage}
-          actionPath={`/licenses/${license.id}`}
-          inheritedFrom={license.app_id ? `the statuses of the app ${license.app_name}` : "the default statuses"}
-        />
+        {license.app_id ? (
+          <section className="space-y-1">
+            <h2 className="flex items-center gap-1.5 font-semibold">
+              Statuses <HelpTip>A licence that belongs to an app uses the statuses of that app, so they are the same for all of its licences. To change them, edit the app&apos;s statuses. Only a standalone licence can have statuses of its own.</HelpTip>
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              This licence uses the statuses of the app{" "}
+              <Link className="text-foreground underline underline-offset-2" to={`/apps/${license.app_id}`}>
+                {license.app_name}
+              </Link>
+              . Change them on the app page.
+            </p>
+          </section>
+        ) : (
+          <StatusSection owner="licence" statuses={statuses} fallback={DEFAULT_STATUSES} custom={customStatuses} usage={statusUsage} actionPath={`/licenses/${license.id}`} inheritedFrom="the default statuses" />
+        )}
 
         <FilesSection
           description="Downloads released by licence status. Each file lists the statuses in which it can be downloaded."
@@ -274,7 +281,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           license={license}
           statuses={statuses}
           files={files}
-          shared={license.app_id && sharedFiles.length > 0 ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles, statuses: fallbackStatuses } : null}
+          shared={license.app_id && sharedFiles.length > 0 ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles, statuses: appStatuses } : null}
           configured={filesConfigured}
         />
 

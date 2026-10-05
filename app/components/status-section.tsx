@@ -12,7 +12,7 @@ type Props = {
   owner: "app" | "licence"
   /** The statuses in effect for the owner. */
   statuses: StatusSet
-  /** The statuses the owner falls back to when it has none of its own: the app's or the defaults for a licence, the defaults for an app. */
+  /** The statuses the owner falls back to when it has none of its own: the built-in defaults. */
   fallback: StatusSet
   /** Whether the owner has statuses of its own. */
   custom: boolean
@@ -20,7 +20,7 @@ type Props = {
   usage: Record<string, number>
   /** Route that handles the status forms. */
   actionPath: string
-  /** Where the statuses come from when the owner has none of its own, for example "the app Harbor Theme". */
+  /** Where the statuses come from when the owner has none of its own, for example "the default statuses". */
   inheritedFrom: string
 }
 
@@ -30,7 +30,7 @@ export function StatusSection({ owner, statuses, fallback, custom, usage, action
   const help =
     owner === "app"
       ? "The statuses licences of this app can have. By default an app uses the default statuses. Customising gives the app its own copy, which you can change freely without affecting other apps."
-      : "The statuses of this licence. A licence uses its own statuses if you customise them, otherwise the statuses of its app, otherwise the default statuses. Customising gives this licence its own copy to change freely."
+      : "The statuses of this standalone licence. By default it uses the default statuses. Customising gives this licence its own copy to change freely. A licence that belongs to an app uses its app's statuses instead."
 
   return (
     <section className="space-y-3">
@@ -65,7 +65,7 @@ export function StatusSection({ owner, statuses, fallback, custom, usage, action
   )
 }
 
-/** Removes the owner's own statuses. Statuses the inherited set lacks, and that licences use, need a replacement. */
+/** Removes the owner's own statuses. Statuses the default set lacks, and that licences use, need a replacement. */
 function ResetStatuses({ owner, custom, fallback, usage, actionPath }: { owner: "app" | "licence"; custom: StatusSet; fallback: StatusSet; usage: Record<string, number>; actionPath: string }) {
   const fetcher = useFetcher<{ ok?: true; error?: string } | null>()
   const [open, setOpen] = useState(false)
@@ -85,14 +85,14 @@ function ResetStatuses({ owner, custom, fallback, usage, actionPath }: { owner: 
           setOpen(true)
         }}
       >
-        Use the inherited statuses again
+        Use the default statuses again
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
           <DialogHeader>
-            <DialogTitle>Use the inherited statuses again?</DialogTitle>
+            <DialogTitle>Use the default statuses again?</DialogTitle>
             <DialogDescription>
-              This {owner}&apos;s own statuses are removed and it goes back to the statuses it inherits. Licences keep the status with the same identifier; the ones below have no match.
+              This {owner}&apos;s own statuses are removed and it goes back to the default statuses. Licences keep the status with the same identifier; the ones below have no match.
             </DialogDescription>
           </DialogHeader>
           {needed.length > 0 ? (
@@ -114,7 +114,7 @@ function ResetStatuses({ owner, custom, fallback, usage, actionPath }: { owner: 
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No licence uses a status that the inherited statuses lack.</p>
+            <p className="text-sm text-muted-foreground">No licence uses a status that the default statuses lack.</p>
           )}
           {fetcher.data && "error" in fetcher.data && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{fetcher.data.error}</div>}
           <DialogFooter>

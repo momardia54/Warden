@@ -152,7 +152,14 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
   }
 
   if (sub === "files") return filesRoute(ctx, { license }, extra)
-  if (sub === "statuses") return statusRoute(ctx, { license: license.id }, set, rest)
+  if (sub === "statuses") {
+    // A licence in an app uses the app's statuses: they can be read here but are changed on the app.
+    if (license.app_id) {
+      if (method !== "GET" || rest.length > 0) return fail(409, "license_in_app", "This licence belongs to an app and uses the app's statuses. Change them with /apps/{app}/statuses.")
+      return reply({ custom: false, source: await statusSource(env, license), data: set.map(serializeStatus) })
+    }
+    return statusRoute(ctx, { license: license.id }, set, rest)
+  }
 
   if (sub === "activity") {
     if (method !== "GET") return fail(405, "method_not_allowed", "Use GET.")
@@ -252,8 +259,9 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
 // ---- statuses ---------------------------------------------------------------------
 
 /**
- * The statuses of an app or of a licence. A licence uses its own statuses if it has customised them, otherwise its
- * app's, otherwise the built-in defaults. `current` is the set in effect for the scope. Paths relative to .../statuses:
+ * The statuses of an app or of a standalone licence. An app or standalone licence uses its own statuses if it has
+ * customised them, otherwise the built-in defaults; a licence in an app uses the app's. `current` is the set in effect
+ * for the scope. Paths relative to .../statuses:
  *   GET /  POST /  DELETE /  POST /customize  POST /order  PATCH /{key}  DELETE /{key}?move_to=
  */
 async function statusRoute(ctx: Context, scope: StatusScope, current: StatusSet, segments: string[]): Promise<Response> {

@@ -17,14 +17,15 @@ const toDef = (r: Row): StatusDef => ({
 })
 
 /**
- * The scope of a set of statuses: an app, or a single licence. A licence uses its own statuses if it has any, otherwise
- * its app's statuses if the app has any, otherwise the built-in defaults.
+ * The scope of a set of statuses: an app, or a single standalone licence. A licence that belongs to an app uses its
+ * app's statuses, or the built-in defaults if the app has none. A standalone licence uses its own statuses, or the
+ * built-in defaults.
  */
 export type StatusScope = { app: string } | { license: string }
 
 type LicenseRef = { id: string; app_id: string | null }
 
-/** Every customised set of statuses in the installation. Anything without a set uses the next level up. */
+/** Every customised set of statuses in the installation. Anything without a set uses the built-in defaults. */
 export type StatusSets = { byApp: Record<string, StatusSet>; byLicense: Record<string, StatusSet> }
 
 export async function loadStatusSets(env: Env): Promise<StatusSets> {
@@ -41,9 +42,9 @@ export function setForApp(sets: StatusSets, appId: string | null): StatusSet {
   return (appId && sets.byApp[appId]) || DEFAULT_STATUSES
 }
 
-/** The statuses that apply to a licence: its own, else its app's, else the defaults. */
+/** The statuses that apply to a licence: its app's if it belongs to an app, otherwise its own, otherwise the defaults. */
 export function setForLicense(sets: StatusSets, license: LicenseRef): StatusSet {
-  return sets.byLicense[license.id] ?? setForApp(sets, license.app_id)
+  return license.app_id ? setForApp(sets, license.app_id) : (sets.byLicense[license.id] ?? DEFAULT_STATUSES)
 }
 
 const scopeColumn = (scope: StatusScope) => ("app" in scope ? "app_id" : "license_id")
@@ -61,17 +62,11 @@ export async function getStatusSetForApp(env: Env, appId: string | null): Promis
   return own.length > 0 ? own : DEFAULT_STATUSES
 }
 
-/** The statuses that apply to a licence: its own, else its app's, else the defaults. */
+/** The statuses that apply to a licence: its app's if it belongs to an app, otherwise its own, otherwise the defaults. */
 export async function getStatusSetForLicense(env: Env, license: LicenseRef): Promise<StatusSet> {
+  if (license.app_id) return getStatusSetForApp(env, license.app_id)
   const own = await loadScope(env, { license: license.id })
-  return own.length > 0 ? own : getStatusSetForApp(env, license.app_id)
-}
-
-/** The set a scope falls back to when it has no statuses of its own: the app's (or the defaults) for a licence, the defaults for an app. */
-async function parentSet(env: Env, scope: StatusScope): Promise<StatusSet> {
-  if ("app" in scope) return DEFAULT_STATUSES
-  const row = await env.DB.prepare("SELECT app_id FROM licenses WHERE id = ?").bind(scope.license).first<{ app_id: string | null }>()
-  return getStatusSetForApp(env, row?.app_id ?? null)
+  return own.length > 0 ? own : DEFAULT_STATUSES
 }
 
 export async function hasCustomSet(env: Env, scope: StatusScope): Promise<boolean> {
@@ -80,8 +75,13 @@ export async function hasCustomSet(env: Env, scope: StatusScope): Promise<boolea
 
 /** Where the statuses of a licence come from, for display. */
 export async function statusSource(env: Env, license: LicenseRef): Promise<"licence" | "app" | "default"> {
-  if (await hasCustomSet(env, { license: license.id })) return "licence"
-  return license.app_id && (await hasCustomSet(env, { app: license.app_id })) ? "app" : "default"
+  if (license.app_id) return (await hasCustomSet(env, { app: license.app_id })) ? "app" : "default"
+  return (await hasCustomSet(env, { license: license.id })) ? "licence" : "default"
+}
+
+/** Removes a licence's own statuses. Used when the licence joins an app, whose statuses it uses from then on. */
+export async function discardLicenseStatuses(env: Env, licenseId: string): Promise<void> {
+  await env.DB.prepare("DELETE FROM statuses WHERE license_id = ?").bind(licenseId).run()
 }
 
 export type StatusInput = StatusFields
@@ -139,20 +139,15 @@ export async function setStatusOrder(env: Env, scope: StatusScope, keys: string[
 
 // ---- which licences and files a set governs -----------------------------------------
 
-/**
- * SQL condition (table alias l) for the licences whose statuses come from the scope: for an app, its licences that
- * have no statuses of their own; for a licence, that licence.
- */
+/** SQL condition (table alias l) for the licences whose statuses come from the scope: the licences of an app, or one standalone licence. */
 function licenseFilter(scope: StatusScope): { sql: string; args: string[] } {
-  return "app" in scope
-    ? { sql: "(l.app_id = ? AND NOT EXISTS (SELECT 1 FROM statuses s WHERE s.license_id = l.id))", args: [scope.app] }
-    : { sql: "l.id = ?", args: [scope.license] }
+  return "app" in scope ? { sql: "l.app_id = ?", args: [scope.app] } : { sql: "l.id = ?", args: [scope.license] }
 }
 
 /** SQL condition (aliases f for files, l for the licence a file belongs to) for the files whose release rules use the scope's statuses. */
 function fileFilter(scope: StatusScope): { sql: string; args: string[] } {
   return "app" in scope
-    ? { sql: "(f.app_id = ? OR (l.app_id = ? AND NOT EXISTS (SELECT 1 FROM statuses s WHERE s.license_id = l.id)))", args: [scope.app, scope.app] }
+    ? { sql: "(f.app_id = ? OR l.app_id = ?)", args: [scope.app, scope.app] }
     : { sql: "f.license_id = ?", args: [scope.license] }
 }
 
@@ -217,22 +212,26 @@ export async function saveStatusSet(env: Env, scope: StatusScope, set: StatusSet
   return { ok: true }
 }
 
-/** Gives a scope its own statuses, starting as a copy of the ones it uses now: the app's or the defaults for a licence, the defaults for an app. */
+/** Gives an app or a standalone licence its own statuses, starting as a copy of the built-in defaults. */
 export async function customizeStatuses(env: Env, scope: StatusScope): Promise<{ set: StatusSet } | Failure> {
+  if ("license" in scope) {
+    const row = await env.DB.prepare("SELECT app_id FROM licenses WHERE id = ?").bind(scope.license).first<{ app_id: string | null }>()
+    if (row?.app_id) return { error: "This licence belongs to an app and uses the app's statuses. Customise the app's statuses instead." }
+  }
   if (await hasCustomSet(env, scope)) return { error: "These statuses are already customised." }
-  const copy = (await parentSet(env, scope)).map((s) => ({ ...s }))
+  const copy = DEFAULT_STATUSES.map((s) => ({ ...s }))
   await writeScope(env, scope, copy)
   return { set: copy }
 }
 
 /**
- * Removes a scope's own statuses so it uses the next level up again. Licences that use a status the next level lacks
+ * Removes a scope's own statuses so it uses the built-in defaults again. Licences that use a status the defaults lack
  * need a replacement: `mapping` says which status each such key becomes.
  */
 export async function resetStatuses(env: Env, scope: StatusScope, mapping: Record<string, string> = {}): Promise<{ ok: true } | Failure> {
   const own = await loadScope(env, scope)
   if (own.length === 0) return { ok: true }
-  const parent = await parentSet(env, scope)
+  const parent = DEFAULT_STATUSES
   const target = (key: string): string => (findStatus(parent, key) ? key : (findStatus(parent, mapping[key] ?? "") ? mapping[key] : defaultStatusKey(parent)))
 
   for (const s of own) {
