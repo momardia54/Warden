@@ -9,14 +9,16 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
 import { ColorPicker } from "#/components/color-picker"
-import { DEFAULT_COLOR, findStatus, isColor, keyFromLabel, type StatusDef, type StatusSet } from "#/lib/statuses"
+import { addToSet, DEFAULT_COLOR, findStatus, isColor, keyFromLabel, moveInSet, removeFromSet, updateInSet, type StatusDef, type StatusSet } from "#/lib/statuses"
 
 type Props = {
   statuses: StatusSet
-  /** Number of licences per status key, to show usage and to require a replacement when deleting. */
-  usage: Record<string, number>
-  /** Route that handles the status intents. */
-  actionPath: string
+  /** Number of licences per status key, to show usage and to require a replacement when deleting. Not needed for a draft. */
+  usage?: Record<string, number>
+  /** Route that handles the status intents. The editor saves each change there. */
+  actionPath?: string
+  /** Edits a set in memory instead of saving it, for a set that does not exist yet (a create form). Receives the changed set. */
+  onChange?: (set: StatusSet) => void
 }
 
 type Draft = {
@@ -36,8 +38,9 @@ const EMPTY: Draft = { mode: "create", key: "", label: "", description: "", colo
 const toDraft = (s: StatusDef): Draft => ({ mode: "edit", key: s.key, label: s.label, description: s.description, color: s.color, grants_access: s.grants_access, on_expiry: s.on_expiry ?? "", check_message: s.check_message, is_default: s.is_default })
 
 /** Lists the statuses of a set and lets you add, change, reorder and delete them. */
-export function StatusEditor({ statuses, usage, actionPath }: Props) {
+export function StatusEditor({ statuses, usage = {}, actionPath, onChange }: Props) {
   const fetcher = useFetcher<{ ok?: true; error?: string } | null>()
+  const [localError, setLocalError] = useState("")
   // The dialogs keep their content while they close, so the text does not change during the exit animation.
   const [draft, setDraft] = useState<Draft>(EMPTY)
   const [editorOpen, setEditorOpen] = useState(false)
@@ -45,8 +48,8 @@ export function StatusEditor({ statuses, usage, actionPath }: Props) {
   const [removing, setRemoving] = useState<StatusDef | null>(null)
   const [removeOpen, setRemoveOpen] = useState(false)
   const [moveTo, setMoveTo] = useState("")
-  const busy = fetcher.state !== "idle"
-  const error = fetcher.data?.error
+  const busy = !onChange && fetcher.state !== "idle"
+  const error = onChange ? localError : fetcher.data?.error
 
   // Close the dialogs once a change has been saved without an error.
   useEffect(() => {
@@ -56,7 +59,34 @@ export function StatusEditor({ statuses, usage, actionPath }: Props) {
     }
   }, [fetcher.state, fetcher.data])
 
-  const submit = (fields: Record<string, string>) => fetcher.submit(fields, { method: "post", action: actionPath })
+  /** Clears the message of the previous attempt. */
+  const clearError = () => {
+    fetcher.reset()
+    setLocalError("")
+  }
+
+  /** Applies a change: saved on the server, or applied to the draft set. */
+  function submit(fields: Record<string, string>) {
+    if (!onChange) return void fetcher.submit(fields, { method: "post", action: actionPath })
+    if (fields.intent === "move-status") return onChange(moveInSet(statuses, fields.key, fields.direction === "up" ? "up" : "down"))
+    const change = {
+      key: fields.key,
+      label: fields.label,
+      description: fields.description,
+      color: fields.color,
+      grants_access: fields.grants_access === "true",
+      on_expiry: fields.on_expiry || null,
+      check_message: fields.check_message,
+      is_default: fields.is_default === "true",
+    }
+    const result =
+      fields.intent === "delete-status" ? removeFromSet(statuses, fields.key) : fields.intent === "create-status" ? addToSet(statuses, change) : updateInSet(statuses, fields.key, change)
+    if ("error" in result) return setLocalError(result.error)
+    setLocalError("")
+    onChange(result.set)
+    setEditorOpen(false)
+    setRemoveOpen(false)
+  }
 
   function save() {
     submit({
@@ -95,27 +125,27 @@ export function StatusEditor({ statuses, usage, actionPath }: Props) {
               </p>
             </div>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" className="size-8" aria-label={`Move ${s.label} up`} disabled={busy || index === 0} onClick={() => submit({ intent: "move-status", key: s.key, direction: "up" })}>
+              <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`Move ${s.label} up`} disabled={busy || index === 0} onClick={() => submit({ intent: "move-status", key: s.key, direction: "up" })}>
                 <ArrowUp className="size-4" />
               </Button>
-              <Button variant="ghost" size="icon" className="size-8" aria-label={`Move ${s.label} down`} disabled={busy || index === statuses.length - 1} onClick={() => submit({ intent: "move-status", key: s.key, direction: "down" })}>
+              <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`Move ${s.label} down`} disabled={busy || index === statuses.length - 1} onClick={() => submit({ intent: "move-status", key: s.key, direction: "down" })}>
                 <ArrowDown className="size-4" />
               </Button>
-              <Button variant="ghost" size="icon" className="size-8" aria-label={`Edit ${s.label}`} onClick={() => {
-                  fetcher.reset()
+              <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`Edit ${s.label}`} onClick={() => {
+                  clearError()
                   setDraft(toDraft(s))
                   setEditorOpen(true)
                 }}>
                 <Pencil className="size-4" />
               </Button>
-              <Button
+              <Button type="button"
                 variant="ghost"
                 size="icon"
                 className="size-8 text-muted-foreground hover:text-destructive"
                 aria-label={`Delete ${s.label}`}
                 disabled={statuses.length <= 1}
                 onClick={() => {
-                  fetcher.reset()
+                  clearError()
                   setRemoving(s)
                   setMoveTo("")
                   setRemoveOpen(true)
@@ -128,10 +158,10 @@ export function StatusEditor({ statuses, usage, actionPath }: Props) {
         ))}
       </ul>
 
-      <Button
+      <Button type="button"
         variant="outline"
         onClick={() => {
-          fetcher.reset()
+          clearError()
           setDraft(EMPTY)
           setKeyEdited(false)
           setEditorOpen(true)
@@ -223,10 +253,10 @@ export function StatusEditor({ statuses, usage, actionPath }: Props) {
             {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditorOpen(false)} disabled={busy}>
+            <Button type="button" variant="outline" onClick={() => setEditorOpen(false)} disabled={busy}>
               Cancel
             </Button>
-            <Button onClick={save} disabled={busy || !draft.label.trim() || !isColor(draft.color)}>
+            <Button type="button" onClick={save} disabled={busy || !draft.label.trim() || !isColor(draft.color)}>
               {busy ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>
@@ -260,10 +290,10 @@ export function StatusEditor({ statuses, usage, actionPath }: Props) {
               )}
               {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
               <DialogFooter>
-                <Button variant="outline" onClick={() => setRemoveOpen(false)} disabled={busy}>
+                <Button type="button" variant="outline" onClick={() => setRemoveOpen(false)} disabled={busy}>
                   Cancel
                 </Button>
-                <Button variant="destructive" disabled={busy || ((usage[removing.key] ?? 0) > 0 && !moveTo)} onClick={() => submit({ intent: "delete-status", key: removing.key, move_to: moveTo })}>
+                <Button type="button" variant="destructive" disabled={busy || ((usage[removing.key] ?? 0) > 0 && !moveTo)} onClick={() => submit({ intent: "delete-status", key: removing.key, move_to: moveTo })}>
                   Delete status
                 </Button>
               </DialogFooter>

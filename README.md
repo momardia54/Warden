@@ -63,6 +63,8 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | Registered sites, and the files a licence can download | Changing the statuses a file is available in |
 | ![App statuses](docs/screenshots/app-statuses.jpg) | ![Edit a status](docs/screenshots/edit-status.jpg) |
 | An app with its own statuses | Editing a status: colour picker, sites, expiry rule, message |
+| ![Creating an app](docs/screenshots/new-app.jpg) | |
+| Statuses can be customised while creating an app or a licence | |
 | ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
 | A licence that uses its app's statuses and can customise its own | Issuing a licence with the app's defaults |
 

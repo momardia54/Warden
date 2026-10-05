@@ -1,18 +1,18 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { makeBucket, makeCtx, makeDb } from "./helpers/d1.ts"
-import { COLOR_PRESETS, DEFAULT_STATUSES, defaultStatusKey, effectiveStatusKey, grantsAccess, isColor, isValidKey, keyFromLabel, validateStatusSet } from "../app/lib/statuses.ts"
+import { addToSet, COLOR_PRESETS, DEFAULT_STATUSES, defaultStatusKey, effectiveStatusKey, grantsAccess, isColor, isValidKey, keyFromLabel, moveInSet, parseStatusDraft, removeFromSet, updateInSet, validateStatusSet } from "../app/lib/statuses.ts"
 import { buildCheckResponse } from "../app/lib/license.ts"
-import { createApp } from "../app/server/apps.server.ts"
+import { createApp, readAppForm } from "../app/server/apps.server.ts"
 import { handleApi } from "../app/server/api.server.ts"
 import { createApiKey } from "../app/server/api-keys.server.ts"
 import { handleCheck } from "../app/server/check.server.ts"
 import { handleDownload } from "../app/server/download.server.ts"
 import { getFile, storeFile } from "../app/server/files.server.ts"
-import { createLicense, deleteLicense, getLicense, queryLicenses, setStatus, updateLicense, type LicenseInput } from "../app/server/licenses.server.ts"
+import { createLicense, deleteLicense, getLicense, queryLicenses, readLicenseForm, setStatus, updateLicense, type LicenseInput } from "../app/server/licenses.server.ts"
 import {
   createStatus, customizeStatuses, deleteStatus, getStatusSetForApp, getStatusSetForLicense, hasCustomSet, loadStatusSets, moveStatus, resetStatuses, setForLicense,
-  setStatusOrder, statusCounts, statusSource, statusUsage, updateStatus,
+  saveStatusSet, setStatusOrder, statusCounts, statusSource, statusUsage, updateStatus,
 } from "../app/server/statuses.server.ts"
 
 const DAY = 86_400_000
@@ -344,4 +344,67 @@ test("API: statuses of apps and licences", async () => {
   assert.equal((await call("GET", `/licenses/${lic.id}`, read)).json.status, "active")
   void app
   assert.equal((await call("GET", "/stats", read)).json.by_status.active >= 1, true)
+})
+
+test("a set can be edited in memory without changing the original", () => {
+  const original = DEFAULT_STATUSES
+  const snapshot = JSON.stringify(original)
+  const added = addToSet(original, { label: "Trial", description: "", color: "#0284c7", grants_access: true, on_expiry: "expired", check_message: "" })
+  assert.ok("set" in added)
+  const withTrial = (added as { set: typeof original }).set
+  assert.deepEqual([withTrial.length, withTrial[withTrial.length - 1].key, withTrial[withTrial.length - 1].position], [7, "trial", 7])
+  assert.ok("error" in addToSet(withTrial, { label: "Trial", description: "", color: "#0284c7", grants_access: true, on_expiry: null, check_message: "" }))
+  assert.ok("error" in addToSet(original, { label: "x", description: "", color: "red", grants_access: true, on_expiry: null, check_message: "" }))
+
+  const renamed = updateInSet(withTrial, "trial", { label: "Free trial", is_default: true }) as { set: typeof original }
+  assert.deepEqual([renamed.set.find((st) => st.key === "trial")!.label, renamed.set.filter((st) => st.is_default).map((st) => st.key)], ["Free trial", ["trial"]])
+  assert.ok("error" in updateInSet(withTrial, "missing", { label: "x" }))
+
+  const removed = removeFromSet(withTrial, "expired") as { set: typeof original }
+  assert.equal(removed.set.find((st) => st.key === "active")!.on_expiry, null) // the rule that pointed to Expired is cleared
+  assert.ok("error" in removeFromSet([withTrial[0]], withTrial[0].key))
+  assert.deepEqual(moveInSet(original, "pending", "down").slice(0, 2).map((st) => st.key), ["active", "pending"])
+  assert.equal(moveInSet(original, "pending", "up"), original) // already first
+
+  assert.equal(JSON.stringify(original), snapshot) // the originals were not modified
+})
+
+test("a set drafted in a create form is validated and stored with the new item", async () => {
+  const draft = (changes: object[] = []) => JSON.stringify([...DEFAULT_STATUSES, ...changes])
+  const extra = { key: "trial", label: "Trial", description: "", color: "#0284c7", grants_access: true, on_expiry: "expired", check_message: "", is_default: false }
+  assert.ok("set" in parseStatusDraft(draft([extra])))
+  assert.ok("error" in parseStatusDraft("not json"))
+  assert.ok("error" in parseStatusDraft(JSON.stringify({ not: "an array" })))
+  assert.ok("error" in parseStatusDraft(draft([{ ...extra, color: "blue" }])))
+  assert.ok("error" in parseStatusDraft(draft([{ ...extra, is_default: true }]))) // two defaults
+  assert.ok("error" in parseStatusDraft(draft([{ ...extra, on_expiry: "nowhere" }])))
+  assert.ok("error" in parseStatusDraft(draft([{ ...extra, key: "unknown" }])))
+  assert.ok("error" in parseStatusDraft("[]"))
+
+  const { env } = setup()
+  const parsed = parseStatusDraft(draft([extra])) as { set: typeof DEFAULT_STATUSES }
+  const form = (entries: Record<string, string>) => {
+    const f = new FormData()
+    for (const [k, v] of Object.entries(entries)) f.set(k, v)
+    return f
+  }
+
+  // the licence form accepts a status that only exists in the draft
+  assert.ok("error" in readLicenseForm(form({ name: "L", status: "trial" }), { byApp: {}, byLicense: {} }))
+  const ok = readLicenseForm(form({ name: "L", status: "trial" }), { byApp: {}, byLicense: {} }, "", parsed.set)
+  assert.ok("input" in ok)
+  const lic = await createLicense(env, (ok as { input: LicenseInput }).input)
+  assert.deepEqual(await saveStatusSet(env, { license: lic.id }, parsed.set), { ok: true })
+  assert.equal(await statusSource(env, lic), "licence")
+  assert.equal((await getStatusSetForLicense(env, lic)).some((st) => st.key === "trial"), true)
+  assert.equal((await getLicense(env, lic.id))!.status, "trial")
+
+  // the app form validates its default status against the draft
+  assert.ok("error" in readAppForm(form({ name: "App", default_status: "trial" }), DEFAULT_STATUSES))
+  const app = readAppForm(form({ name: "App", default_status: "trial" }), parsed.set)
+  assert.ok("input" in app)
+  const created = (await createApp(env, (app as { input: Parameters<typeof createApp>[1] }).input)) as { app: { id: string } }
+  assert.deepEqual(await saveStatusSet(env, { app: created.app.id }, parsed.set), { ok: true })
+  assert.equal((await getStatusSetForApp(env, created.app.id)).some((st) => st.key === "trial"), true)
+  assert.ok("error" in (await saveStatusSet(env, { app: created.app.id }, [])))
 })

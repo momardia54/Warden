@@ -18,7 +18,9 @@ Nothing is shared globally: customising an app affects only that app's licences,
 | App | The app page, **Statuses** | Every licence of the app that has no statuses of its own, the app's default status and its files |
 | Default | Built in, not editable | Everything that is not customised |
 
-**Customise statuses** on an app or licence page gives it a copy of the statuses it uses now (the app's for a licence, the defaults for an app), which you then edit freely. **Use the inherited statuses again** removes the customisation and goes back to the next level up.
+You can customise statuses **when you create** an app or a licence: the form has a Statuses section with **Customise statuses for this app (or licence)**. You edit the copy in the form, nothing is saved until you submit, and the statuses are stored together with the new app or licence. The default status of the app, or the status of the licence, can already be one of the new statuses.
+
+**Customise statuses** on an existing app or licence page gives it a copy of the statuses it uses now (the app's for a licence, the defaults for an app), which you then edit freely. **Use the inherited statuses again** removes the customisation and goes back to the next level up.
 
 ## The default statuses
 

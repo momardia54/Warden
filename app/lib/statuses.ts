@@ -144,3 +144,106 @@ export function splitStatusKeys(stored: string, set: StatusSet): string[] {
 export function describeStatusKeys(keys: string[], set: StatusSet): string {
   return keys.map((k) => statusLabel(set, k)).join(", ")
 }
+
+// ---- editing a set in memory ----------------------------------------------------------
+// These functions do not touch the database. The server uses them for stored sets, and the create forms use them for a
+// set that is still a draft.
+
+export type StatusFields = {
+  key?: string
+  label: string
+  description: string
+  color: string
+  grants_access: boolean
+  on_expiry: string | null
+  check_message: string
+  is_default?: boolean
+}
+
+type Result = { set: StatusSet } | { error: string }
+
+/** Re-numbers the positions of a set after it changed. */
+const renumber = (set: StatusSet): StatusSet => set.map((s, index) => ({ ...s, position: index + 1 }))
+
+export function addToSet(set: StatusSet, input: StatusFields): Result {
+  const key = input.key?.trim() || keyFromLabel(input.label)
+  if (!isValidKey(key)) return { error: "The identifier must start with a letter and use lowercase letters, digits and underscores (up to 32). \"unknown\", \"domain_mismatch\" and \"site_limit_reached\" are reserved." }
+  if (findStatus(set, key)) return { error: `A status with the identifier "${key}" already exists.` }
+  const added: StatusDef = {
+    key, label: input.label.trim(), description: input.description, color: input.color, grants_access: input.grants_access, on_expiry: input.on_expiry,
+    check_message: input.check_message, is_default: input.is_default === true, position: set.length + 1,
+  }
+  const next = renumber([...set.map((s) => (added.is_default ? { ...s, is_default: false } : s)), added])
+  const problem = validateStatusSet(next)
+  return problem ? { error: problem } : { set: next }
+}
+
+export function updateInSet(set: StatusSet, key: string, changes: Partial<StatusFields>): Result {
+  if (!findStatus(set, key)) return { error: "Status not found." }
+  const next = set.map((s) => {
+    if (s.key !== key) return changes.is_default ? { ...s, is_default: false } : s
+    return {
+      ...s,
+      label: changes.label !== undefined ? changes.label.trim() : s.label,
+      description: changes.description ?? s.description,
+      color: changes.color ?? s.color,
+      grants_access: changes.grants_access ?? s.grants_access,
+      on_expiry: changes.on_expiry === undefined ? s.on_expiry : changes.on_expiry,
+      check_message: changes.check_message ?? s.check_message,
+      is_default: changes.is_default === undefined ? s.is_default : changes.is_default,
+    }
+  })
+  // Clearing the default flag of the only default would leave the set without one: keep it.
+  if (!next.some((s) => s.is_default)) next.find((s) => s.key === key)!.is_default = true
+  const problem = validateStatusSet(next)
+  return problem ? { error: problem } : { set: renumber(next) }
+}
+
+/** Removes a status and clears the expiry rules that pointed to it. The default moves to `newDefault` (or the first status) if it was removed. */
+export function removeFromSet(set: StatusSet, key: string, newDefault?: string | null): Result {
+  if (!findStatus(set, key)) return { error: "Status not found." }
+  if (set.length === 1) return { error: "A set needs at least one status." }
+  const remaining = set.filter((s) => s.key !== key).map((s) => ({ ...s, on_expiry: s.on_expiry === key ? null : s.on_expiry }))
+  if (!remaining.some((s) => s.is_default)) remaining.find((s) => s.key === (newDefault ?? remaining[0].key))!.is_default = true
+  const problem = validateStatusSet(remaining)
+  return problem ? { error: problem } : { set: renumber(remaining) }
+}
+
+export function moveInSet(set: StatusSet, key: string, direction: "up" | "down"): StatusSet {
+  const index = set.findIndex((s) => s.key === key)
+  const target = direction === "up" ? index - 1 : index + 1
+  if (index < 0 || target < 0 || target >= set.length) return set
+  const next = [...set]
+  ;[next[index], next[target]] = [next[target], next[index]]
+  return renumber(next)
+}
+
+/** Reads a set sent by a create form (JSON). Returns the validated set, or an error message. */
+export function parseStatusDraft(raw: string): { set: StatusSet } | { error: string } {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return { error: "The statuses could not be read." }
+  }
+  if (!Array.isArray(value)) return { error: "The statuses could not be read." }
+  const set: StatusSet = []
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) return { error: "The statuses could not be read." }
+    const s = item as Record<string, unknown>
+    if (typeof s.key !== "string" || typeof s.label !== "string" || !isColor(s.color)) return { error: "A status is missing its identifier, label or colour." }
+    set.push({
+      key: s.key,
+      label: s.label.trim().slice(0, 40),
+      description: typeof s.description === "string" ? s.description.trim().slice(0, 200) : "",
+      color: s.color.toLowerCase(),
+      grants_access: s.grants_access === true,
+      on_expiry: typeof s.on_expiry === "string" && s.on_expiry ? s.on_expiry : null,
+      check_message: typeof s.check_message === "string" ? s.check_message.trim().slice(0, 300) : "",
+      is_default: s.is_default === true,
+      position: set.length + 1,
+    })
+  }
+  const problem = validateStatusSet(set)
+  return problem ? { error: problem } : { set }
+}
