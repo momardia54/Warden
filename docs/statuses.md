@@ -1,26 +1,27 @@
 # Statuses
 
-Every licence has a **status**. The status decides what a site is told when it checks the licence, and which files it can download. Warden starts with a built-in set of statuses, and you can customise them **for an app** and **for a single licence**: rename them, change what they mean, remove the ones you do not need and add your own.
+Every licence has a **status**. The status decides what a site is told when it checks the licence, and which files it can download. Warden starts with a built-in set of statuses, and you can customise them **for an app** or **for a standalone licence**: rename them, change what they mean, remove the ones you do not need and add your own.
 
 ## Where statuses come from
 
-A licence uses, in this order:
+| The licence is | It uses |
+|---|---|
+| in an app | the app's statuses, or the built-in defaults if the app has not customised them |
+| standalone (no app) | its own statuses if you customised them, otherwise the built-in defaults |
 
-1. **its own statuses**, if you customised them on the licence
-2. **its app's statuses**, if the licence belongs to an app and you customised the app's statuses
-3. **the default statuses**, the built-in set below
-
-Nothing is shared globally: customising an app affects only that app's licences, and customising a licence affects only that licence. A new app or licence needs no setup; it uses the default statuses until you customise them.
+A licence that belongs to an app **cannot have statuses of its own**: all licences of an app share the app's statuses, so they are the same everywhere in that product. Change them on the app page.
 
 | Level | Where to edit | Applies to |
 |---|---|---|
-| Licence | The licence page, **Statuses** | That licence only. Takes priority over its app |
-| App | The app page, **Statuses** | Every licence of the app that has no statuses of its own, the app's default status and its files |
+| App | The app page, **Statuses** | Every licence of the app, the app's default status and its files |
+| Standalone licence | The licence page, **Statuses** | That licence only |
 | Default | Built in, not editable | Everything that is not customised |
 
-You can customise statuses **when you create** an app or a licence: the form has a Statuses section with **Customise statuses for this app (or licence)**. You edit the copy in the form, nothing is saved until you submit, and the statuses are stored together with the new app or licence. The default status of the app, or the status of the licence, can already be one of the new statuses.
+Nothing is shared globally. A new app or licence needs no setup: it uses the default statuses until you customise them.
 
-**Customise statuses** on an existing app or licence page gives it a copy of the statuses it uses now (the app's for a licence, the defaults for an app), which you then edit freely. **Use the inherited statuses again** removes the customisation and goes back to the next level up.
+You can customise statuses **when you create** an app or a standalone licence: the form has a Statuses section with **Customise statuses for this app (or licence)**. You edit a copy of the defaults in the form, nothing is saved until you submit, and the statuses are stored together with the new app or licence. In the licence form the section disappears once you choose an app.
+
+**Customise statuses** on an existing app or standalone licence page gives it a copy of the default statuses, which you then edit freely. **Use the default statuses again** removes the customisation.
 
 ## The default statuses
 
@@ -56,13 +57,12 @@ In the editor you can reorder statuses (the order is the order of menus), edit, 
 
 **Deleting a status that licences use** requires choosing the status they move to. File release rules that name the deleted status are updated to the replacement (or removed), an app whose default status was the deleted one switches to the replacement, and expiry rules that pointed to it are cleared. A set cannot be emptied, and one status is always the default.
 
-**Using the inherited statuses again** moves licences to the status with the same identifier in the inherited set. Licences on a status the inherited set lacks need a replacement, which you choose before removing the customisation.
+**Using the default statuses again** moves licences to the status with the same identifier in the default set. Licences on a status the default set lacks need a replacement, which you choose before removing the customisation.
 
-Things that follow from the order of precedence:
+Things that follow:
 
-- An app's customisation does not touch licences that have statuses of their own.
-- Moving a licence to another app changes the app it inherits from. If its status does not exist in the new app's statuses, it takes that set's default status (or the status you send). A licence with its own statuses keeps them.
-- A file shared by an app is released using the app's statuses, by identifier. For a licence with its own statuses, it is available when the licence's current status has an identifier the file's rule lists.
+- Moving a licence into an app discards the licence's own statuses and uses the app's. If its status does not exist in the app's statuses, it takes the app's default status (or the status you send). Moving it out of an app makes it standalone, using the default statuses.
+- A file shared by an app is released using the app's statuses, by identifier.
 
 ## In the check response
 
@@ -78,15 +78,15 @@ Things that follow from the order of precedence:
 |---|---|---|
 | `GET /statuses` | read | The built-in default statuses (read only) |
 | `GET /apps/{app}/statuses` | read | The statuses that apply to the app. `custom` is true when it has its own |
-| `GET /licenses/{id}/statuses` | read | The statuses that apply to the licence. `source` is `licence`, `app` or `default` |
-| `POST .../statuses/customize` | manage | Give the app or licence its own copy of the statuses it uses now |
+| `GET /licenses/{id}/statuses` | read | The statuses that apply to the licence. `source` is `licence`, `app` or `default`. For a licence in an app this is read only |
+| `POST .../statuses/customize` | manage | Give the app or standalone licence its own copy of the default statuses |
 | `POST .../statuses` | manage | Add a status (after customising) |
 | `PATCH .../statuses/{key}` | manage | Change a status (not its key) |
 | `DELETE .../statuses/{key}?move_to=` | full | Delete a status. `move_to` is required when licences use it |
 | `POST .../statuses/order` | manage | Reorder: `{ "keys": ["pending", "active", ...] }` listing every status |
-| `DELETE .../statuses` | full | Use the inherited statuses again. Body `{ "mapping": { "trial": "active" } }` for statuses the inherited set lacks |
+| `DELETE .../statuses` | full | Use the default statuses again. Body `{ "mapping": { "trial": "active" } }` for statuses the default set lacks |
 
-`...` is `/apps/{app}` or `/licenses/{id}`. A status as JSON:
+`...` is `/apps/{app}` or `/licenses/{id}`. Changing the statuses of a licence that belongs to an app returns `409` (`license_in_app`): change the app's statuses instead. A status as JSON:
 
 ```json
 { "key": "free_trial", "label": "Free trial", "description": "14-day trial before purchase.", "color": "#0284c7", "grants_access": true, "on_expiry": "expired", "check_message": "Your trial has ended.", "is_default": false }

@@ -43,7 +43,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 - **Apps**: a product sold to many customers, with defaults for new licences (status, duration, maximum sites, message), its own licence list and releases shared by all of its licences ([docs/apps.md](docs/apps.md))
 - **Site limit**: a licence can be limited to N sites; sites register on their first check and you can release them
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence, with a customer name and email
-- **Configurable statuses** at app level and licence level: everything starts with a built-in set (pending, active, completed, suspended, disabled, expired), and an app or a single licence can customise its own. Each status says whether sites can run, what it becomes when the expiry date passes, its colour (any colour, with presets) and its message to sites ([docs/statuses.md](docs/statuses.md))
+- **Configurable statuses** at app level and licence level: everything starts with a built-in set (pending, active, completed, suspended, disabled, expired). An app can customise its own, shared by all of its licences, and a standalone licence can customise its own. Each status says whether sites can run, what it becomes when the expiry date passes, its colour (any colour, with presets) and its message to sites ([docs/statuses.md](docs/statuses.md))
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
 - **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
 - Activity log per licence: every check (which domain, which result) and every change
