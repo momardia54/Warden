@@ -74,10 +74,16 @@ export async function createApp(env: Env, input: AppInput): Promise<{ app: App }
   if (await env.DB.prepare("SELECT 1 AS taken FROM apps WHERE slug = ?").bind(input.slug).first()) return { error: "Another app already uses this identifier." }
   const id = newId("app")
   const now = Date.now()
-  await env.DB.prepare(
-    `INSERT INTO apps (id, name, slug, description, default_duration_days, default_status, default_max_sites, default_message, notes, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, input.name, input.slug, input.description, input.default_duration_days, input.default_status, input.default_max_sites, input.default_message, input.notes, now, now).run()
+  try {
+    await env.DB.prepare(
+      `INSERT INTO apps (id, name, slug, description, default_duration_days, default_status, default_max_sites, default_message, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, input.name, input.slug, input.description, input.default_duration_days, input.default_status, input.default_max_sites, input.default_message, input.notes, now, now).run()
+  } catch (error) {
+    // Another request created an app with the same identifier between the check above and this insert.
+    if (/UNIQUE/i.test(String(error instanceof Error ? error.message : error))) return { error: "Another app already uses this identifier." }
+    throw error
+  }
   return { app: (await getApp(env, id))! }
 }
 

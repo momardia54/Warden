@@ -47,6 +47,10 @@ export async function action({ request, context }: Route.ActionArgs) {
   const form = await request.formData()
   const username = String(form.get("username") ?? "").trim()
   const password = String(form.get("password") ?? "")
+  if (username.length > 200 || password.length > 1024) {
+    await recordLoginFailure(request, env)
+    return { error: "Invalid username or password" }
+  }
 
   await globalFailureDelay(env)
   if (!(await checkCredentials(env, username, password))) {

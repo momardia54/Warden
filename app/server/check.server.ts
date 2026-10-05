@@ -2,9 +2,12 @@ import { buildCheckResponse, KEY_PATTERN, normalizeDomain } from "../lib/license
 import { DEFAULT_STATUSES } from "../lib/statuses"
 import { getLicenseByKey, listActivations, recordActivation, type License } from "./licenses.server"
 import { getStatusSetForLicense } from "./statuses.server"
+import { readTextUpTo } from "./api-http.server"
 import { hmacHex, json } from "./util.server"
 
 const CORS = { "access-control-allow-origin": "*", "cache-control": "no-store" }
+
+export const MAX_CHECK_BODY_BYTES = 4096
 
 /**
  * Public endpoint: GET or POST /check/<licence key>[?domain=example.com]
@@ -23,10 +26,14 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
   const fromQuery = new URL(request.url).searchParams.get("domain")
   if (fromQuery) domain = normalizeDomain(fromQuery)
   if (!domain && request.method === "POST") {
-    try {
-      const body = (await request.json()) as { domain?: unknown }
-      if (typeof body.domain === "string") domain = normalizeDomain(body.domain)
-    } catch {}
+    // Only a small JSON body with a domain is expected. A larger body is ignored and is not read beyond the limit.
+    const text = await readTextUpTo(request, MAX_CHECK_BODY_BYTES)
+    if (text) {
+      try {
+        const body = JSON.parse(text) as { domain?: unknown }
+        if (typeof body.domain === "string") domain = normalizeDomain(body.domain)
+      } catch {}
+    }
   }
 
   const license = KEY_PATTERN.test(key) ? await getLicenseByKey(env, key) : null

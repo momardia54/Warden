@@ -11,6 +11,16 @@ const CORS = { "access-control-allow-origin": "*", "cache-control": "no-store" }
 const reply = (body: unknown, status: number) => json(body, { status, headers: CORS })
 
 /**
+ * Content-Disposition for a download. Header values must be Latin-1, so the plain `filename` gets an ASCII version of
+ * the name and `filename*` carries the exact name, percent-encoded as UTF-8 (RFC 6266 / RFC 5987).
+ */
+export function contentDisposition(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "") || "download"
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`
+}
+
+/**
  * Whether a file can be downloaded by this licence now. Combines the file's release rule with the licence's
  * site rules: when the file requires a matching domain, the domain must also be allowed and within the site limit.
  */
@@ -88,17 +98,23 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
   const object = await env.FILES.get(file.r2_key)
   if (!object) return reply({ error: "The file is missing from storage." }, 404)
 
+  const headers = {
+    ...CORS,
+    "content-type": file.content_type,
+    "content-length": String(object.size),
+    "content-disposition": contentDisposition(file.name),
+    "x-content-type-options": "nosniff",
+    // The file is served from the dashboard's origin. If a browser ever rendered it instead of downloading it, this
+    // keeps it from running scripts or reaching anything.
+    "content-security-policy": "default-src 'none'; sandbox",
+  }
+  // A HEAD request only asks for the headers: it is not a download and is not counted.
+  if (request.method === "HEAD") {
+    object.body.cancel().catch(() => {})
+    return new Response(null, { status: 200, headers })
+  }
   ctx.waitUntil(logDownload(env, license, file, access.status, domain, now, true, ownerSet).catch((e) => console.error("Failed to log download:", e)))
-  return new Response(object.body, {
-    status: 200,
-    headers: {
-      ...CORS,
-      "content-type": file.content_type,
-      "content-length": String(object.size),
-      "content-disposition": `attachment; filename="${file.name.replace(/"/g, "")}"; filename*=UTF-8''${encodeURIComponent(file.name)}`,
-      "x-content-type-options": "nosniff",
-    },
-  })
+  return new Response(object.body, { status: 200, headers })
 }
 
 async function logDownload(env: Env, license: License, file: LicenseFile, status: string, domain: string | null, now: number, granted: boolean, set: StatusSet) {

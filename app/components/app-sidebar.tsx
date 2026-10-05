@@ -41,8 +41,10 @@ function NavGroup({ label, items }: { label: string; items: typeof NAV }) {
         <SidebarMenu>
           {items.map((item) => (
             <SidebarMenuItem key={item.to}>
-              <SidebarMenuButton asChild isActive={location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)} tooltip={item.title}>
-                <NavLink to={item.to} prefetch="intent" className={({ isPending }) => (isPending ? "opacity-60" : undefined)}>
+              {/* NavLink adds a "pending" class while its page loads. A className function cannot be used here: the
+                  Slot of SidebarMenuButton merges class names as strings. */}
+              <SidebarMenuButton asChild isActive={location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)} tooltip={item.title} className="[&.pending]:opacity-60">
+                <NavLink to={item.to} prefetch="intent">
                   <item.icon />
                   <span>{item.title}</span>
                 </NavLink>

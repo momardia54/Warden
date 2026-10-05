@@ -4,6 +4,25 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 
 ## 0.1.0 (unreleased)
 
+### Fixed (review)
+
+- Downloads of files whose names are not plain ASCII (for example `主题.zip`) failed with an error: the header now carries an ASCII name and the exact UTF-8 name (`filename*`)
+- HEAD requests on a download were counted and logged as downloads
+- Deleting a status could change the release rule of a file that used a similar status key (`_` was treated as a wildcard); keys are now matched exactly
+- The API status filter (`GET /licenses?status=`) built one SQL condition per customised app or licence and would exceed D1's limit of 100 bound values; it now filters in batches
+- A malformed percent-encoded domain in `DELETE /licenses/{id}/activations/{domain}` returned an error page instead of `400`
+- Two apps created at the same moment with the same identifier returned an error page instead of the duplicate-identifier message
+- The sidebar links carried the source text of a function as a CSS class (and caused a hydration warning)
+- "Extend expiry" is no longer offered for a licence without an expiry date, which it would have given one
+
+### Security hardening (review)
+
+- Downloads are sent with `Content-Security-Policy: default-src 'none'; sandbox`
+- API and check request bodies are read only up to their limit, even without a Content-Length header
+- API keys use an unbiased random generator; API responses carry `X-Content-Type-Options: nosniff`
+- Oversized login fields are rejected before hashing and count as a failed attempt
+- Removed the unused chart component and the `recharts` dependency
+
 - Licences with key and check URL, five statuses, expiry dates, allowed domains, message for the site, private notes
 - Signed check responses (`X-Warden-Signature`), activity log, overview
 - Extend (30, 90, 365 days) and regenerate key

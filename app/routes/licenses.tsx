@@ -14,17 +14,20 @@ import { requireAuth } from "~/server/auth.server"
 import { listApps } from "~/server/apps.server"
 import { queryLicenses } from "~/server/licenses.server"
 
+/** The dashboard list shows the newest licences up to this number. The API pages through all of them. */
+const LIST_LIMIT = 1000
+
 export const meta: Route.MetaFunction = () => [{ title: "Licences | Warden" }]
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env
   await requireAuth(request, env)
-  const [licenses, apps] = await Promise.all([queryLicenses(env, { limit: 1000 }), listApps(env)])
-  return { licenses, apps: apps.map((a) => ({ id: a.id, name: a.name })) }
+  const [licenses, apps] = await Promise.all([queryLicenses(env, { limit: LIST_LIMIT + 1 }), listApps(env)])
+  return { licenses: licenses.slice(0, LIST_LIMIT), truncated: licenses.length > LIST_LIMIT, apps: apps.map((a) => ({ id: a.id, name: a.name })) }
 }
 
 export default function Licenses({ loaderData }: Route.ComponentProps) {
-  const { licenses, apps } = loaderData
+  const { licenses, apps, truncated } = loaderData
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState("all")
   const [appFilter, setAppFilter] = useState("all")
@@ -97,6 +100,7 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
             </div>
 
             <LicensesTable licenses={shown} />
+            {truncated && <p className="text-xs text-muted-foreground">Showing the newest {LIST_LIMIT} licences. Use the API to list all of them.</p>}
           </>
         )}
       </div>
