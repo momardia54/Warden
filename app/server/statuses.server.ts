@@ -1,5 +1,5 @@
 import {
-  DEFAULT_COLOR, DEFAULT_STATUSES, defaultStatusKey, findStatus, isColor, isValidKey, keyFromLabel, validateStatusSet, type StatusDef, type StatusSet,
+  addToSet, DEFAULT_COLOR, DEFAULT_STATUSES, defaultStatusKey, findStatus, isColor, moveInSet, removeFromSet, updateInSet, validateStatusSet, type StatusDef, type StatusFields, type StatusSet,
 } from "../lib/statuses"
 
 type Row = { app_id: string | null; license_id: string | null; key: string; label: string; description: string; color: string; grants_access: number; on_expiry: string | null; check_message: string; is_default: number; position: number }
@@ -84,17 +84,7 @@ export async function statusSource(env: Env, license: LicenseRef): Promise<"lice
   return license.app_id && (await hasCustomSet(env, { app: license.app_id })) ? "app" : "default"
 }
 
-export type StatusInput = {
-  key?: string
-  label: string
-  description: string
-  /** Badge colour as #rrggbb. */
-  color: string
-  grants_access: boolean
-  on_expiry: string | null
-  check_message: string
-  is_default?: boolean
-}
+export type StatusInput = StatusFields
 
 type Failure = { error: string }
 
@@ -120,48 +110,20 @@ async function writeScope(env: Env, scope: StatusScope, set: StatusSet): Promise
 export async function createStatus(env: Env, scope: StatusScope, input: StatusInput): Promise<{ set: StatusSet } | Failure> {
   const set = await loadScope(env, scope)
   if (set.length === 0) return { error: "Customise the statuses first." }
-  const key = input.key?.trim() || keyFromLabel(input.label)
-  if (!isValidKey(key)) return { error: "The identifier must start with a letter and use lowercase letters, digits and underscores (up to 32). \"unknown\", \"domain_mismatch\" and \"site_limit_reached\" are reserved." }
-  if (findStatus(set, key)) return { error: `A status with the identifier "${key}" already exists.` }
-  const next = [...set.map((s) => (input.is_default ? { ...s, is_default: false } : s)), { ...input, key, label: input.label.trim(), is_default: input.is_default === true, position: set.length + 1 }]
-  const problem = check(next)
-  if (problem) return problem
-  await writeScope(env, scope, next)
-  return { set: next }
+  const result = addToSet(set, input)
+  if ("set" in result) await writeScope(env, scope, result.set)
+  return result
 }
 
 export async function updateStatus(env: Env, scope: StatusScope, key: string, changes: Partial<StatusInput>): Promise<{ set: StatusSet } | Failure> {
-  const set = await loadScope(env, scope)
-  if (!findStatus(set, key)) return { error: "Status not found." }
-  const next = set.map((s) => {
-    if (s.key !== key) return changes.is_default ? { ...s, is_default: false } : s
-    return {
-      ...s,
-      label: changes.label !== undefined ? changes.label.trim() : s.label,
-      description: changes.description ?? s.description,
-      color: changes.color ?? s.color,
-      grants_access: changes.grants_access ?? s.grants_access,
-      on_expiry: changes.on_expiry === undefined ? s.on_expiry : changes.on_expiry,
-      check_message: changes.check_message ?? s.check_message,
-      is_default: changes.is_default === undefined ? s.is_default : changes.is_default,
-    }
-  })
-  // Clearing the default flag of the only default would leave the set without one: keep it.
-  if (!next.some((s) => s.is_default)) next.find((s) => s.key === key)!.is_default = true
-  const problem = check(next)
-  if (problem) return problem
-  await writeScope(env, scope, next)
-  return { set: next }
+  const result = updateInSet(await loadScope(env, scope), key, changes)
+  if ("set" in result) await writeScope(env, scope, result.set)
+  return result
 }
 
 /** Moves a status one place up or down. */
 export async function moveStatus(env: Env, scope: StatusScope, key: string, direction: "up" | "down"): Promise<void> {
-  const set = await loadScope(env, scope)
-  const index = set.findIndex((s) => s.key === key)
-  const target = direction === "up" ? index - 1 : index + 1
-  if (index < 0 || target < 0 || target >= set.length) return
-  ;[set[index], set[target]] = [set[target], set[index]]
-  await writeScope(env, scope, set)
+  await writeScope(env, scope, moveInSet(await loadScope(env, scope), key, direction))
 }
 
 /** Applies a new order. `keys` must list every status of the set exactly once. */
@@ -234,11 +196,9 @@ export async function deleteStatus(env: Env, scope: StatusScope, key: string, mo
   if (usage.licenses > 0 && !moveTo) return { error: `${usage.licenses} licence${usage.licenses === 1 ? "" : "s"} use this status. Choose a status to move them to.` }
   if (moveTo !== null && (moveTo === key || !findStatus(set, moveTo))) return { error: "Choose a different status of the same set to move licences to." }
 
-  const remaining = set.filter((s) => s.key !== key).map((s) => ({ ...s, on_expiry: s.on_expiry === key ? null : s.on_expiry }))
-  if (!remaining.some((s) => s.is_default)) remaining.find((s) => s.key === (moveTo ?? remaining[0].key))!.is_default = true
-  const problem = check(remaining)
-  if (problem) return problem
-
+  const removed = removeFromSet(set, key, moveTo)
+  if ("error" in removed) return removed
+  const remaining = removed.set
   const target = moveTo ?? defaultStatusKey(remaining)
   const lf = licenseFilter(scope)
   const statements = [env.DB.prepare(`UPDATE licenses SET status = ? WHERE status = ? AND id IN (SELECT l.id FROM licenses l WHERE ${lf.sql})`).bind(target, key, ...lf.args)]
@@ -247,6 +207,14 @@ export async function deleteStatus(env: Env, scope: StatusScope, key: string, mo
   await rewriteFileRules(env, scope, key, moveTo, target)
   await writeScope(env, scope, remaining)
   return { set: remaining }
+}
+
+/** Stores a complete set of statuses for a scope, for example one drafted in a create form. Validates it first. */
+export async function saveStatusSet(env: Env, scope: StatusScope, set: StatusSet): Promise<{ ok: true } | Failure> {
+  const problem = validateStatusSet(set)
+  if (problem) return { error: problem }
+  await writeScope(env, scope, set)
+  return { ok: true }
 }
 
 /** Gives a scope its own statuses, starting as a copy of the ones it uses now: the app's or the defaults for a licence, the defaults for an app. */

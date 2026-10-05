@@ -6,7 +6,8 @@ import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
 import { Textarea } from "#/components/ui/textarea"
 import { slugify } from "#/lib/apps"
-import type { StatusSet } from "#/lib/statuses"
+import { StatusDraft } from "#/components/status-draft"
+import { defaultStatusKey, findStatus, type StatusSet } from "#/lib/statuses"
 
 export type AppFormValues = {
   name: string
@@ -21,12 +22,16 @@ export type AppFormValues = {
 
 export const EMPTY_APP_FORM: AppFormValues = { name: "", slug: "", description: "", default_status: "active", default_duration_days: "", default_max_sites: "", default_message: "", notes: "" }
 
-export function AppForm({ values, statuses, error, submitLabel, cancelTo }: { values: AppFormValues; statuses: StatusSet; error?: string; submitLabel: string; cancelTo: string }) {
+export function AppForm({ values, statuses: inherited, error, submitLabel, cancelTo, allowStatusCustomisation = false }: { values: AppFormValues; statuses: StatusSet; error?: string; submitLabel: string; cancelTo: string; allowStatusCustomisation?: boolean }) {
   const busy = useNavigation().state === "submitting"
   const [name, setName] = useState(values.name)
   const [slug, setSlug] = useState(values.slug)
   // The identifier follows the name until it is edited by hand.
   const [slugEdited, setSlugEdited] = useState(values.slug !== "")
+  // Statuses being drafted for an app that does not exist yet. They replace the default statuses for this form.
+  const [draft, setDraft] = useState<StatusSet | null>(null)
+  const statuses = draft ?? inherited
+  const [defaultStatus, setDefaultStatus] = useState(values.default_status)
 
   return (
     <Form method="post" className="max-w-2xl space-y-6">
@@ -82,7 +87,7 @@ export function AppForm({ values, statuses, error, submitLabel, cancelTo }: { va
             <FieldLabel htmlFor="default_status" help="The status a new licence starts with. Use Pending to hold a licence until payment is confirmed.">
               Status
             </FieldLabel>
-            <NativeSelect id="default_status" name="default_status" defaultValue={values.default_status}>
+            <NativeSelect id="default_status" name="default_status" value={findStatus(statuses, defaultStatus) ? defaultStatus : defaultStatusKey(statuses)} onChange={(e) => setDefaultStatus(e.target.value)}>
               {statuses.map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.label}
@@ -110,6 +115,19 @@ export function AppForm({ values, statuses, error, submitLabel, cancelTo }: { va
           <Input id="default_message" name="default_message" defaultValue={values.default_message} placeholder="Optional" maxLength={300} />
         </div>
       </div>
+
+      {allowStatusCustomisation && (
+        <StatusDraft
+          owner="app"
+          inherited={inherited}
+          inheritedFrom="the default statuses"
+          value={draft}
+          onChange={(set) => {
+            setDraft(set)
+            if (!findStatus(set ?? inherited, defaultStatus)) setDefaultStatus(defaultStatusKey(set ?? inherited))
+          }}
+        />
+      )}
 
       <div className="space-y-2">
         <FieldLabel htmlFor="notes" help="For your own reference. Never returned by the check or download endpoints.">

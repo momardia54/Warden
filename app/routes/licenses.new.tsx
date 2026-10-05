@@ -2,10 +2,10 @@ import { redirect } from "react-router"
 import type { Route } from "./+types/licenses.new"
 import { PageHeader } from "#/components/page-header"
 import { EMPTY_FORM, LicenseForm, type FormValues } from "#/components/license-form"
-import { DEFAULT_STATUSES, defaultStatusKey, statusLabel } from "#/lib/statuses"
+import { DEFAULT_STATUSES, defaultStatusKey, parseStatusDraft, statusLabel } from "#/lib/statuses"
 import { requireAuth } from "~/server/auth.server"
 import { appDefaults, getApp, listApps } from "~/server/apps.server"
-import { getStatusSetForApp, loadStatusSets } from "~/server/statuses.server"
+import { getStatusSetForApp, loadStatusSets, saveStatusSet } from "~/server/statuses.server"
 import { createLicense, readLicenseForm } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "New licence | Warden" }]
@@ -38,10 +38,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env
   await requireAuth(request, env)
-  const parsed = readLicenseForm(await request.formData(), await loadStatusSets(env))
+  const form = await request.formData()
+  // Statuses customised in the form arrive as JSON and are stored together with the new licence.
+  const rawStatuses = String(form.get("statuses_json") ?? "")
+  const drafted = rawStatuses ? parseStatusDraft(rawStatuses) : null
+  if (drafted && "error" in drafted) return { error: drafted.error }
+  const ownStatuses = drafted?.set
+  const parsed = readLicenseForm(form, await loadStatusSets(env), "", ownStatuses)
   if ("error" in parsed) return { error: parsed.error }
   if (parsed.input.app_id && !(await getApp(env, parsed.input.app_id))) return { error: "The selected app no longer exists." }
   const license = await createLicense(env, parsed.input)
+  if (ownStatuses) await saveStatusSet(env, { license: license.id }, ownStatuses)
   return redirect(`/licenses/${license.id}?created=1`)
 }
 
@@ -52,7 +59,7 @@ export default function NewLicense({ loaderData, actionData }: Route.ComponentPr
       <div className="p-4 pt-0">
         <h1 className="mb-1 text-2xl font-bold">New licence</h1>
         <p className="mb-6 text-sm text-muted-foreground">The key and check URL are generated when you save.</p>
-        <LicenseForm values={loaderData.values} apps={loaderData.apps} appHint={loaderData.appHint} error={actionData?.error} submitLabel="Create licence" cancelTo="/licenses" reloadOnAppChange />
+        <LicenseForm values={loaderData.values} apps={loaderData.apps} appHint={loaderData.appHint} error={actionData?.error} submitLabel="Create licence" cancelTo="/licenses" reloadOnAppChange allowStatusCustomisation />
       </div>
     </>
   )

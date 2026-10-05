@@ -6,7 +6,8 @@ import { FieldLabel } from "#/components/help-tip"
 import { Textarea } from "#/components/ui/textarea"
 import { NativeSelect } from "#/components/ui/native-select"
 import { useStatusSetForLicense } from "#/components/status-context"
-import { defaultStatusKey, findStatus } from "#/lib/statuses"
+import { StatusDraft } from "#/components/status-draft"
+import { defaultStatusKey, findStatus, type StatusSet } from "#/lib/statuses"
 
 export type FormValues = {
   name: string
@@ -37,15 +38,20 @@ type Props = {
   appHint?: string
   /** The licence being edited, which may have statuses of its own. */
   licenseId?: string
+  /** Offer to customise the statuses of the licence being created. */
+  allowStatusCustomisation?: boolean
 }
 
-export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reloadOnAppChange, appHint, licenseId = "" }: Props) {
+export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reloadOnAppChange, appHint, licenseId = "", allowStatusCustomisation = false }: Props) {
   const busy = useNavigation().state === "submitting"
   const navigate = useNavigate()
   const [status, setStatus] = useState(values.status)
   const [appId, setAppId] = useState(values.app_id)
   // The statuses available depend on the licence and its app: either can have its own set.
-  const statuses = useStatusSetForLicense({ id: licenseId, app_id: appId || null })
+  const inherited = useStatusSetForLicense({ id: licenseId, app_id: appId || null })
+  // Statuses being drafted for a licence that does not exist yet. They replace the inherited ones for this form.
+  const [draft, setDraft] = useState<StatusSet | null>(null)
+  const statuses = draft ?? inherited
 
   return (
     <Form method="post" className="max-w-2xl space-y-6">
@@ -142,6 +148,21 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
         <Input id="message" name="message" key={values.message} defaultValue={values.message} placeholder="Payment overdue. Please contact support." maxLength={300} />
         <p className="text-xs text-muted-foreground">Optional. Returned to the site in the check response.</p>
       </div>
+
+      {allowStatusCustomisation && (
+        <StatusDraft
+          owner="licence"
+          inherited={inherited}
+          inheritedFrom={appId ? `the statuses of ${apps.find((a) => a.id === appId)?.name ?? "its app"}` : "the default statuses"}
+          value={draft}
+          onChange={(set) => {
+            setDraft(set)
+            // The chosen status must exist in the statuses the licence will have.
+            const next = set ?? inherited
+            if (!findStatus(next, status)) setStatus(defaultStatusKey(next))
+          }}
+        />
+      )}
 
       <div className="space-y-2">
         <FieldLabel htmlFor="notes" help="For your own reference. Never returned by the check endpoint or the download endpoint.">

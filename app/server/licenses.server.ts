@@ -64,13 +64,13 @@ export function validEmail(value: string): boolean {
 }
 
 /** Validates the dashboard form and returns the cleaned input, or an error message. */
-/** `licenseId` is given when editing an existing licence, which may have statuses of its own. */
-export function readLicenseForm(form: FormData, sets: StatusSets, licenseId = ""): { input: LicenseInput } | { error: string } {
+/** `licenseId` is given when editing an existing licence, which may have statuses of its own. `ownStatuses` are the statuses drafted in the create form, if any. */
+export function readLicenseForm(form: FormData, sets: StatusSets, licenseId = "", ownStatuses?: StatusSet): { input: LicenseInput } | { error: string } {
   const name = String(form.get("name") ?? "").trim()
   if (!name) return { error: "Enter a name for the licence." }
   if (name.length > 120) return { error: "The name must be 120 characters or fewer." }
   const appId = String(form.get("app_id") ?? "").trim() || null
-  const set = setForLicense(sets, { id: licenseId, app_id: appId })
+  const set = ownStatuses ?? setForLicense(sets, { id: licenseId, app_id: appId })
   const status = String(form.get("status") ?? defaultStatusKey(set))
   if (!findStatus(set, status)) return { error: "Choose a status that exists for this licence's app." }
 
