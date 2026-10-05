@@ -9,7 +9,7 @@ and control its status, its sites and its downloads from a dashboard or an API.
 </p>
 
 <p align="center">
-<a href="https://deploy.workers.cloudflare.com/?url=https://github.com/momardia54/warden"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
+<a href="https://deploy.workers.cloudflare.com/?url=https://github.com/momardia54/Warden"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
 </p>
 
 > **Status: pre-1.0 (0.1.x).** It works and is tested, but the API and data model may still change before 1.0.0. See [Roadmap.md](Roadmap.md) and [Security.md](Security.md).
