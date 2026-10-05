@@ -66,7 +66,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | ![Creating an app](docs/screenshots/new-app.jpg) | |
 | Statuses can be customised while creating an app or a licence | |
 | ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
-| A licence that uses its app's statuses and can customise its own | Issuing a licence with the app's defaults |
+| A standalone licence: default statuses, customisable (a licence in an app uses its app's) | Issuing a licence with the app's defaults |
 
 ## The check URL
 
