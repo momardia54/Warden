@@ -6,6 +6,7 @@ import { Ago } from "#/components/time"
 import { Button } from "#/components/ui/button"
 import { StatusBadge } from "#/components/status-badge"
 import { useAllStatuses, useStatusLabel } from "#/components/status-context"
+import { DEFAULT_COLOR } from "#/lib/statuses"
 import { requireAuth } from "~/server/auth.server"
 import { overviewStats, recentChecks } from "~/server/licenses.server"
 
@@ -42,7 +43,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                 const def = allStatuses.find((s) => s.key === key)
                 return (
                   <span key={key} className="flex items-center gap-1.5 text-sm">
-                    <StatusBadge status={def ?? { label: key, tone: "neutral" }} />
+                    <StatusBadge status={def ?? { label: key, color: DEFAULT_COLOR }} />
                     <span className="text-muted-foreground">{count}</span>
                   </span>
                 )

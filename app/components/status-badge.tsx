@@ -1,25 +1,27 @@
-import { AlertCircle, CheckCircle2, CircleDashed, Info, XCircle } from "lucide-react"
-import { Badge } from "#/components/ui/badge"
-import { useStatusSet } from "#/components/status-context"
-import { effectiveStatusKey, findStatus, type StatusDef, type Tone } from "#/lib/statuses"
+import { useStatusSetForLicense } from "#/components/status-context"
+import { DEFAULT_COLOR, effectiveStatusKey, findStatus, type StatusDef } from "#/lib/statuses"
 
-const ICON = { success: CheckCircle2, warning: AlertCircle, danger: XCircle, info: Info, neutral: CircleDashed }
-const VARIANT: Record<Tone, "success" | "warning" | "destructive" | "info" | "outline"> = { success: "success", warning: "warning", danger: "destructive", info: "info", neutral: "outline" }
-
-/** A badge for one status definition. */
-export function StatusBadge({ status }: { status: Pick<StatusDef, "label" | "tone"> }) {
-  const Icon = ICON[status.tone]
+/** A badge for one status, drawn in the status's own colour. */
+export function StatusBadge({ status }: { status: Pick<StatusDef, "label" | "color"> }) {
   return (
-    <Badge variant={VARIANT[status.tone]}>
-      <Icon /> {status.label}
-    </Badge>
+    <span
+      className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap"
+      style={{
+        backgroundColor: `color-mix(in srgb, ${status.color} 16%, transparent)`,
+        // Blend a little of the text colour in so any chosen colour stays readable in both themes.
+        color: `color-mix(in srgb, ${status.color} 78%, var(--foreground))`,
+      }}
+    >
+      <span className="size-1.5 rounded-full" style={{ backgroundColor: status.color }} />
+      {status.label}
+    </span>
   )
 }
 
 /** Shows the status sites see for a licence. An expiry rule that has triggered is applied, for example Active becoming Expired. */
-export function LicenseStatusBadge({ license }: { license: { status: string; expires_at: number | null; app_id: string | null } }) {
-  const set = useStatusSet(license.app_id)
+export function LicenseStatusBadge({ license }: { license: { id: string; status: string; expires_at: number | null; app_id: string | null } }) {
+  const set = useStatusSetForLicense(license)
   const key = effectiveStatusKey(license, set)
   const def = findStatus(set, key)
-  return <StatusBadge status={def ?? { label: key, tone: "neutral" }} />
+  return <StatusBadge status={def ?? { label: key, color: DEFAULT_COLOR }} />
 }

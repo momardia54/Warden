@@ -2,7 +2,7 @@ import { isValidSlug, latestVersioned, slugify } from "../lib/apps"
 import { defaultStatusKey, effectiveStatusKey, findStatus, type StatusSet } from "../lib/statuses"
 import { deleteAppFiles } from "./files.server"
 import { parseOptionalCount, type LicenseInput } from "./licenses.server"
-import { loadStatusSets, setFor } from "./statuses.server"
+import { loadStatusSets, setForApp } from "./statuses.server"
 import { newId } from "./util.server"
 
 export type App = {
@@ -96,7 +96,7 @@ export async function deleteApp(env: Env, app: App): Promise<{ ok: true } | { er
   const count = await env.DB.prepare("SELECT COUNT(*) AS c FROM licenses WHERE app_id = ?").bind(app.id).first<{ c: number }>()
   if ((count?.c ?? 0) > 0) return { error: `This app still has ${count!.c} licence${count!.c === 1 ? "" : "s"}. Delete them or move them to another app first.` }
   await deleteAppFiles(env, app.id)
-  await env.DB.batch([env.DB.prepare("DELETE FROM files WHERE app_id = ?").bind(app.id), env.DB.prepare("DELETE FROM apps WHERE id = ?").bind(app.id)])
+  await env.DB.batch([env.DB.prepare("DELETE FROM files WHERE app_id = ?").bind(app.id), env.DB.prepare("DELETE FROM statuses WHERE app_id = ?").bind(app.id), env.DB.prepare("DELETE FROM apps WHERE id = ?").bind(app.id)])
   return { ok: true }
 }
 
@@ -114,7 +114,7 @@ export async function listApps(env: Env, now = Date.now()): Promise<AppSummary[]
   const sets = await loadStatusSets(env)
   const licenses = (await env.DB.prepare("SELECT app_id, status, expires_at FROM licenses WHERE app_id IS NOT NULL").all<{ app_id: string; status: string; expires_at: number | null }>()).results
   return apps.map((app) => {
-    const set = setFor(sets, app.id)
+    const set = setForApp(sets, app.id)
     const inForce = licenses.filter((l) => l.app_id === app.id && findStatus(set, effectiveStatusKey(l, set, now))?.grants_access).length
     return { ...app, in_force: inForce, latest_version: latestVersioned(versions.filter((v) => v.app_id === app.id))?.version ?? null }
   })

@@ -1,7 +1,7 @@
 import { generateLicenseKey, normalizeDomain, parseDomains } from "../lib/license"
-import { defaultStatusKey, effectiveStatusKey, expirySources, findStatus, statusLabel, type StatusSet } from "../lib/statuses"
+import { DEFAULT_STATUSES, defaultStatusKey, effectiveStatusKey, expirySources, findStatus, statusLabel, type StatusSet } from "../lib/statuses"
 import { deleteLicenseFiles } from "./files.server"
-import { getStatusSet, loadStatusSets, setFor, type StatusSets } from "./statuses.server"
+import { getStatusSetForLicense, loadStatusSets, setForLicense, type StatusSets } from "./statuses.server"
 import { newId } from "./util.server"
 
 export type License = {
@@ -64,12 +64,13 @@ export function validEmail(value: string): boolean {
 }
 
 /** Validates the dashboard form and returns the cleaned input, or an error message. */
-export function readLicenseForm(form: FormData, sets: StatusSets): { input: LicenseInput } | { error: string } {
+/** `licenseId` is given when editing an existing licence, which may have statuses of its own. */
+export function readLicenseForm(form: FormData, sets: StatusSets, licenseId = ""): { input: LicenseInput } | { error: string } {
   const name = String(form.get("name") ?? "").trim()
   if (!name) return { error: "Enter a name for the licence." }
   if (name.length > 120) return { error: "The name must be 120 characters or fewer." }
   const appId = String(form.get("app_id") ?? "").trim() || null
-  const set = setFor(sets, appId)
+  const set = setForLicense(sets, { id: licenseId, app_id: appId })
   const status = String(form.get("status") ?? defaultStatusKey(set))
   if (!findStatus(set, status)) return { error: "Choose a status that exists for this licence's app." }
 
@@ -156,18 +157,23 @@ export type LicenseFilters = {
 async function effectiveStatusCondition(env: Env, key: string, now: number): Promise<{ sql: string; args: (string | number)[] }> {
   const sets = await loadStatusSets(env)
   const customApps = Object.keys(sets.byApp)
-  const scopes: { appFilter: string; appArgs: string[]; set: StatusSet }[] = [
-    { appFilter: customApps.length ? `(l.app_id IS NULL OR l.app_id NOT IN (${customApps.map(() => "?").join(",")}))` : "1 = 1", appArgs: customApps, set: sets.default },
-    ...customApps.map((appId) => ({ appFilter: "l.app_id = ?", appArgs: [appId], set: sets.byApp[appId] })),
+  const customLicenses = Object.keys(sets.byLicense)
+  const notIn = (column: string, ids: string[]) => (ids.length ? `${column} NOT IN (${ids.map(() => "?").join(",")})` : "1 = 1")
+  // One scope per set that applies to some licences: each licence with statuses of its own, each app with statuses of
+  // its own (for its licences that have none), and the built-in defaults for everything else.
+  const scopes: { filter: string; args: string[]; set: StatusSet }[] = [
+    ...customLicenses.map((id) => ({ filter: "l.id = ?", args: [id], set: sets.byLicense[id] })),
+    ...customApps.map((appId) => ({ filter: `(l.app_id = ? AND ${notIn("l.id", customLicenses)})`, args: [appId, ...customLicenses], set: sets.byApp[appId] })),
+    { filter: `(${customApps.length ? `(l.app_id IS NULL OR ${notIn("l.app_id", customApps)})` : "1 = 1"} AND ${notIn("l.id", customLicenses)})`, args: [...customApps, ...customLicenses], set: DEFAULT_STATUSES },
   ]
   const parts: string[] = []
   const args: (string | number)[] = []
-  for (const { appFilter, appArgs, set } of scopes) {
+  for (const { filter, args: filterArgs, set } of scopes) {
     const def = findStatus(set, key)
     if (!def) continue
     const sources = expirySources(set, key)
-    let sql = `(${appFilter} AND ((l.status = ?${def.on_expiry ? " AND (l.expires_at IS NULL OR l.expires_at > ?)" : ""})`
-    args.push(...appArgs, key)
+    let sql = `(${filter} AND ((l.status = ?${def.on_expiry ? " AND (l.expires_at IS NULL OR l.expires_at > ?)" : ""})`
+    args.push(...filterArgs, key)
     if (def.on_expiry) args.push(now)
     if (sources.length) {
       sql += ` OR (l.status IN (${sources.map(() => "?").join(",")}) AND l.expires_at IS NOT NULL AND l.expires_at <= ?)`
@@ -216,7 +222,7 @@ function logChange(env: Env, id: string, at: number, status: string | null, deta
 
 export async function updateLicense(env: Env, before: License, input: LicenseInput): Promise<void> {
   const now = Date.now()
-  const set = await getStatusSet(env, input.app_id)
+  const set = await getStatusSetForLicense(env, { id: before.id, app_id: input.app_id })
   const changes: string[] = []
   if (before.status !== input.status) changes.push(`Status ${statusLabel(set, before.status)} -> ${statusLabel(set, input.status)}`)
   if (before.expires_at !== input.expires_at) changes.push(`Expiry ${formatDate(before.expires_at)} -> ${formatDate(input.expires_at)}`)
@@ -241,7 +247,7 @@ function formatDate(ts: number | null): string {
 export async function setStatus(env: Env, license: License, status: string): Promise<void> {
   if (license.status === status) return
   const now = Date.now()
-  const set = await getStatusSet(env, license.app_id)
+  const set = await getStatusSetForLicense(env, license)
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET status = ?, updated_at = ? WHERE id = ?").bind(status, now, license.id),
     logChange(env, license.id, now, status, `Status ${statusLabel(set, license.status)} -> ${statusLabel(set, status)}`),
@@ -261,7 +267,7 @@ export async function extendLicense(env: Env, license: License, days: number): P
   const now = Date.now()
   const from = license.expires_at && license.expires_at > now ? license.expires_at : now
   const to = from + days * 86_400_000
-  const status = renewedStatus(await getStatusSet(env, license.app_id), license.status)
+  const status = renewedStatus(await getStatusSetForLicense(env, license), license.status)
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET expires_at = ?, status = ?, updated_at = ? WHERE id = ?").bind(to, status, now, license.id),
     logChange(env, license.id, now, status, `Extended by ${days} days, now expires ${formatDate(to)}`),
@@ -271,7 +277,7 @@ export async function extendLicense(env: Env, license: License, days: number): P
 /** Sets the expiry date. See `renewedStatus` for how the status is kept. */
 export async function renewUntil(env: Env, license: License, until: number): Promise<void> {
   const now = Date.now()
-  const status = renewedStatus(await getStatusSet(env, license.app_id), license.status)
+  const status = renewedStatus(await getStatusSetForLicense(env, license), license.status)
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET expires_at = ?, status = ?, updated_at = ? WHERE id = ?").bind(until, status, now, license.id),
     logChange(env, license.id, now, status, `Renewed, now expires ${formatDate(until)}`),
@@ -291,6 +297,7 @@ export async function deleteLicense(env: Env, id: string): Promise<void> {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM files WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM activations WHERE license_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM statuses WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM activity WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM licenses WHERE id = ?").bind(id),
   ])
@@ -350,11 +357,11 @@ export type OverviewStats = {
 
 export async function overviewStats(env: Env, now = Date.now()): Promise<OverviewStats> {
   const sets = await loadStatusSets(env)
-  const rows = (await env.DB.prepare("SELECT status, expires_at, last_check_at, created_at, app_id FROM licenses").all<Pick<License, "status" | "expires_at" | "last_check_at" | "created_at" | "app_id">>()).results
+  const rows = (await env.DB.prepare("SELECT id, status, expires_at, last_check_at, created_at, app_id FROM licenses").all<Pick<License, "id" | "status" | "expires_at" | "last_check_at" | "created_at" | "app_id">>()).results
   const stats: OverviewStats = { total: rows.length, inForce: 0, notInForce: 0, endingSoon: 0, silent: 0, byStatus: {} }
   const soon = now + 14 * 86_400_000
   for (const row of rows) {
-    const set = setFor(sets, row.app_id)
+    const set = setForLicense(sets, row)
     const effective = effectiveStatusKey(row, set, now)
     stats.byStatus[effective] = (stats.byStatus[effective] ?? 0) + 1
     if (!findStatus(set, effective)?.grants_access) {

@@ -1,8 +1,23 @@
-/** Visual style of a status badge. */
-export const TONES = ["success", "warning", "danger", "info", "neutral"] as const
-export type Tone = (typeof TONES)[number]
+/** Colours offered as presets in the colour picker. Any hex colour can be used. */
+export const COLOR_PRESETS = [
+  { label: "Green", value: "#16a34a" },
+  { label: "Teal", value: "#0d9488" },
+  { label: "Blue", value: "#0284c7" },
+  { label: "Purple", value: "#7c3aed" },
+  { label: "Pink", value: "#db2777" },
+  { label: "Amber", value: "#d97706" },
+  { label: "Red", value: "#dc2626" },
+  { label: "Grey", value: "#6b7280" },
+] as const
 
-export const TONE_LABEL: Record<Tone, string> = { success: "Green", warning: "Amber", danger: "Red", info: "Blue", neutral: "Grey" }
+export const DEFAULT_COLOR = "#6b7280"
+
+/** A colour as #rrggbb. */
+export const COLOR_FORMAT = /^#[0-9a-fA-F]{6}$/
+
+export function isColor(value: unknown): value is string {
+  return typeof value === "string" && COLOR_FORMAT.test(value)
+}
 
 /** One licence status. A set of these defines the statuses available to a licence. */
 export type StatusDef = {
@@ -10,7 +25,8 @@ export type StatusDef = {
   key: string
   label: string
   description: string
-  tone: Tone
+  /** Badge colour as #rrggbb. */
+  color: string
   /** Sites may run under this status: the check response has valid = true. */
   grants_access: boolean
   /** The status a licence takes on, as seen by sites, once its expiry date has passed. Null: the expiry date does not apply. */
@@ -28,10 +44,6 @@ export type StatusSet = StatusDef[]
 export const RESERVED_KEYS = ["unknown", "domain_mismatch", "site_limit_reached"]
 
 export const KEY_FORMAT = /^[a-z][a-z0-9_]{0,31}$/
-
-export function isTone(value: unknown): value is Tone {
-  return typeof value === "string" && (TONES as readonly string[]).includes(value)
-}
 
 /** Derives a status key from a label: lowercase letters, digits and underscores, starting with a letter. */
 export function keyFromLabel(label: string): string {
@@ -95,6 +107,7 @@ export function validateStatusSet(set: StatusSet): string | null {
     if (keys.has(s.key)) return `The identifier "${s.key}" is used twice.`
     keys.add(s.key)
     if (!s.label.trim()) return "Every status needs a label."
+    if (!isColor(s.color)) return `"${s.label}" has an invalid colour.`
   }
   if (set.filter((s) => s.is_default).length !== 1) return "Exactly one status must be the default for new licences."
   for (const s of set) {
@@ -105,12 +118,12 @@ export function validateStatusSet(set: StatusSet): string | null {
 
 /** The statuses a new set starts with. Mirrors the rows seeded by migration 0006. */
 export const DEFAULT_STATUSES: StatusSet = [
-  { key: "pending", label: "Pending", description: "Created but not in effect yet, for example before the first payment is received.", tone: "neutral", grants_access: false, on_expiry: null, check_message: "This licence is not active yet.", is_default: false, position: 1 },
-  { key: "active", label: "Active", description: "In effect. The site runs normally.", tone: "success", grants_access: true, on_expiry: "expired", check_message: "", is_default: true, position: 2 },
-  { key: "completed", label: "Completed", description: "Paid in full. Permanent: the expiry date no longer applies.", tone: "success", grants_access: true, on_expiry: null, check_message: "", is_default: false, position: 3 },
-  { key: "suspended", label: "Suspended", description: "Temporarily on hold, for example for a late payment. Set to Active to resume.", tone: "warning", grants_access: false, on_expiry: null, check_message: "This licence is suspended.", is_default: false, position: 4 },
-  { key: "disabled", label: "Disabled", description: "Permanently switched off.", tone: "danger", grants_access: false, on_expiry: null, check_message: "This licence has been disabled.", is_default: false, position: 5 },
-  { key: "expired", label: "Expired", description: "Past its expiry date. Applied automatically to licences whose expiry date has passed.", tone: "danger", grants_access: false, on_expiry: null, check_message: "This licence has expired.", is_default: false, position: 6 },
+  { key: "pending", label: "Pending", description: "Created but not in effect yet, for example before the first payment is received.", color: "#6b7280", grants_access: false, on_expiry: null, check_message: "This licence is not active yet.", is_default: false, position: 1 },
+  { key: "active", label: "Active", description: "In effect. The site runs normally.", color: "#16a34a", grants_access: true, on_expiry: "expired", check_message: "", is_default: true, position: 2 },
+  { key: "completed", label: "Completed", description: "Paid in full. Permanent: the expiry date no longer applies.", color: "#16a34a", grants_access: true, on_expiry: null, check_message: "", is_default: false, position: 3 },
+  { key: "suspended", label: "Suspended", description: "Temporarily on hold, for example for a late payment. Set to Active to resume.", color: "#d97706", grants_access: false, on_expiry: null, check_message: "This licence is suspended.", is_default: false, position: 4 },
+  { key: "disabled", label: "Disabled", description: "Permanently switched off.", color: "#dc2626", grants_access: false, on_expiry: null, check_message: "This licence has been disabled.", is_default: false, position: 5 },
+  { key: "expired", label: "Expired", description: "Past its expiry date. Applied automatically to licences whose expiry date has passed.", color: "#dc2626", grants_access: false, on_expiry: null, check_message: "This licence has expired.", is_default: false, position: 6 },
 ]
 
 /** Parses a comma separated string or an array of keys into a de-duplicated list in the set's order. Null if empty or if a key is not in the set. */

@@ -25,13 +25,14 @@ type ReleaseRule = { statuses: string[]; check_domain: boolean }
 /**
  * Decides whether a file can be downloaded now. The licence's effective status must be one of the file's
  * release statuses and, when `check_domain` is set and the licence lists domains, the domain must match.
- * `skipDomainCheck` is for the dashboard, where there is no requesting site.
+ * `skipDomainCheck` is for the dashboard, where there is no requesting site. `set` is the status set of the licence;
+ * `labels` is the set the file's release statuses belong to (its owner's), used to name them in the message.
  */
-export function evaluateFileAccess(license: LicenseLike, file: ReleaseRule, domain: string | null, now: number, skipDomainCheck: boolean, set: StatusSet): FileAccess {
+export function evaluateFileAccess(license: LicenseLike, file: ReleaseRule, domain: string | null, now: number, skipDomainCheck: boolean, set: StatusSet, labels: StatusSet = set): FileAccess {
   const status = effectiveStatusKey(license, set, now)
   if (!file.statuses.includes(status)) {
-    const labels = file.statuses.map((k) => set.find((s) => s.key === k)?.label ?? k).join(", ")
-    return { allowed: false, status, message: `This file is only available when the licence status is: ${labels}.` }
+    const labelled = file.statuses.map((k) => labels.find((s) => s.key === k)?.label ?? k).join(", ")
+    return { allowed: false, status, message: `This file is only available when the licence status is: ${labelled}.` }
   }
   if (file.check_domain && !skipDomainCheck && !domainAllowed(parseDomains(license.domains), domain)) {
     return { allowed: false, status: "domain_mismatch", message: "This licence is not valid for this domain." }

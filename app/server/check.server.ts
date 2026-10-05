@@ -1,6 +1,7 @@
 import { buildCheckResponse, KEY_PATTERN, normalizeDomain } from "../lib/license"
+import { DEFAULT_STATUSES } from "../lib/statuses"
 import { getLicenseByKey, listActivations, recordActivation, type License } from "./licenses.server"
-import { getStatusSet } from "./statuses.server"
+import { getStatusSetForLicense } from "./statuses.server"
 import { hmacHex, json } from "./util.server"
 
 const CORS = { "access-control-allow-origin": "*", "cache-control": "no-store" }
@@ -31,7 +32,7 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
   const license = KEY_PATTERN.test(key) ? await getLicenseByKey(env, key) : null
   // Activations only matter for the limit, so they are loaded only for licences that have one.
   const activated = license && license.max_sites !== null ? (await listActivations(env, license.id)).map((a) => a.domain) : []
-  const result = buildCheckResponse(license, domain, now, activated, await getStatusSet(env, license?.app_id ?? null))
+  const result = buildCheckResponse(license, domain, now, activated, license ? await getStatusSetForLicense(env, license) : DEFAULT_STATUSES)
   const body = JSON.stringify(result)
 
   if (license) {

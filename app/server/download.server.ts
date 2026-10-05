@@ -4,7 +4,7 @@ import { buildCheckResponse, KEY_PATTERN, normalizeDomain, type CheckResponse } 
 import { describeStatusKeys, type StatusSet } from "../lib/statuses"
 import { getFileForLicense, listFilesForLicense, releaseRule, type LicenseFile } from "./files.server"
 import { getLicenseByKey, listActivations, type License } from "./licenses.server"
-import { getStatusSet } from "./statuses.server"
+import { loadStatusSets, setForApp, setForLicense } from "./statuses.server"
 import { json } from "./util.server"
 
 const CORS = { "access-control-allow-origin": "*", "cache-control": "no-store" }
@@ -14,9 +14,9 @@ const reply = (body: unknown, status: number) => json(body, { status, headers: C
  * Whether a file can be downloaded by this licence now. Combines the file's release rule with the licence's
  * site rules: when the file requires a matching domain, the domain must also be allowed and within the site limit.
  */
-function accessFor(license: License, file: LicenseFile, domain: string | null, check: CheckResponse, now: number, set: StatusSet): FileAccess {
-  const rule = releaseRule(file, set)
-  const access = evaluateFileAccess(license, rule, domain, now, false, set)
+function accessFor(license: License, file: LicenseFile, domain: string | null, check: CheckResponse, now: number, set: StatusSet, ownerSet: StatusSet): FileAccess {
+  const rule = releaseRule(file, ownerSet)
+  const access = evaluateFileAccess(license, rule, domain, now, false, set, ownerSet)
   if (access.allowed && rule.check_domain && (check.status === "site_limit_reached" || check.status === "domain_mismatch")) {
     return { allowed: false, status: check.status, message: check.message }
   }
@@ -45,12 +45,15 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
   if (!license) return reply({ valid: false, status: "unknown", message: "Unknown licence." }, 404)
 
   const activated = license.max_sites !== null ? (await listActivations(env, license.id)).map((a) => a.domain) : []
-  const set = await getStatusSet(env, license.app_id)
+  const sets = await loadStatusSets(env)
+  const set = setForLicense(sets, license)
+  /** The statuses a file's release rule refers to: its app's for a shared file, the licence's for its own file. */
+  const ownerSetOf = (f: LicenseFile): StatusSet => (f.app_id ? setForApp(sets, f.app_id) : set)
   const check = buildCheckResponse(license, domain, now, activated, set)
 
   if (!fileId) {
     const entries = (await listFilesForLicense(env, license)).map((f) => {
-      const rule = releaseRule(f, set)
+      const rule = releaseRule(f, ownerSetOf(f))
       return {
         id: f.id,
         name: f.name,
@@ -61,7 +64,7 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
         uploaded_at: new Date(f.uploaded_at).toISOString(),
         statuses: rule.statuses,
         check_domain: rule.check_domain,
-        available: accessFor(license, f, domain, check, now, set).allowed,
+        available: accessFor(license, f, domain, check, now, set, ownerSetOf(f)).allowed,
         download_url: `${url.origin}/download/${license.license_key}/${f.id}`,
       }
     })
@@ -75,16 +78,17 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
   const file = /^fil_[a-z0-9]+$/.test(fileId) ? await getFileForLicense(env, license, fileId) : null
   if (!file) return reply({ error: "File not found for this licence." }, 404)
 
-  const access = accessFor(license, file, domain, check, now, set)
+  const ownerSet = ownerSetOf(file)
+  const access = accessFor(license, file, domain, check, now, set, ownerSet)
   if (!access.allowed) {
-    ctx.waitUntil(logDownload(env, license, file, access.status, domain, now, false, set).catch((e) => console.error("Failed to log download:", e)))
-    return reply({ valid: false, status: access.status, message: access.message, file: { id: file.id, name: file.name, statuses: releaseRule(file, set).statuses } }, 403)
+    ctx.waitUntil(logDownload(env, license, file, access.status, domain, now, false, ownerSet).catch((e) => console.error("Failed to log download:", e)))
+    return reply({ valid: false, status: access.status, message: access.message, file: { id: file.id, name: file.name, statuses: releaseRule(file, ownerSet).statuses } }, 403)
   }
   if (!env.FILES) return reply({ error: "File storage is not configured." }, 501)
   const object = await env.FILES.get(file.r2_key)
   if (!object) return reply({ error: "The file is missing from storage." }, 404)
 
-  ctx.waitUntil(logDownload(env, license, file, access.status, domain, now, true, set).catch((e) => console.error("Failed to log download:", e)))
+  ctx.waitUntil(logDownload(env, license, file, access.status, domain, now, true, ownerSet).catch((e) => console.error("Failed to log download:", e)))
   return new Response(object.body, {
     status: 200,
     headers: {

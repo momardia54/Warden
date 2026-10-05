@@ -22,7 +22,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   await requireAuth(request, env)
   const license = await getLicense(env, params.licenseId)
   if (!license) throw new Response("Not found", { status: 404 })
-  const parsed = readLicenseForm(await request.formData(), await loadStatusSets(env))
+  const parsed = readLicenseForm(await request.formData(), await loadStatusSets(env), license.id)
   if ("error" in parsed) return { error: parsed.error }
   if (parsed.input.app_id && !(await getApp(env, parsed.input.app_id))) return { error: "The selected app no longer exists." }
   await updateLicense(env, license, parsed.input)
@@ -48,7 +48,7 @@ export default function EditLicense({ loaderData, actionData }: Route.ComponentP
       <PageHeader crumbs={[{ label: "Licences", to: "/licenses" }, { label: license.name, to: `/licenses/${license.id}` }, { label: "Edit" }]} />
       <div className="p-4 pt-0">
         <h1 className="mb-6 text-2xl font-bold">Edit licence</h1>
-        <LicenseForm values={values} apps={apps} error={actionData?.error} submitLabel="Save changes" cancelTo={`/licenses/${license.id}`} />
+        <LicenseForm values={values} apps={apps} licenseId={license.id} error={actionData?.error} submitLabel="Save changes" cancelTo={`/licenses/${license.id}`} />
       </div>
     </>
   )

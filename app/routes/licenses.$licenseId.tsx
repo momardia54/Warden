@@ -14,12 +14,13 @@ import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert"
 import { Button } from "#/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "#/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "#/components/ui/dropdown-menu"
-import { useStatusSet } from "#/components/status-context"
+import { useStatusSetForLicense } from "#/components/status-context"
+import { StatusSection } from "#/components/status-section"
 import { effectiveStatusKey, findStatus, statusLabel } from "#/lib/statuses"
 import { requireAuth } from "~/server/auth.server"
 import { deleteFile, getFile, listFiles, storageConfigured, updateFile } from "~/server/files.server"
 import { formatSites } from "#/components/licenses-table"
-import { getStatusSet } from "~/server/statuses.server"
+import { applyStatusForm, getStatusSetForApp, getStatusSetForLicense, hasCustomSet, statusCounts } from "~/server/statuses.server"
 import { deleteLicense, listActivations, releaseActivation, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Licence | Warden" }]
@@ -36,7 +37,9 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     license.app_id ? listFiles(env, { app: { id: license.app_id } as App }) : Promise.resolve([]),
     listActivations(env, license.id),
   ])
-  return { license, activity, files, sharedFiles, sites, filesConfigured: storageConfigured(env), origin, checkUrl: `${origin}/check/${license.license_key}` }
+  const customStatuses = await hasCustomSet(env, { license: license.id })
+  const [fallbackStatuses, usage] = await Promise.all([getStatusSetForApp(env, license.app_id), statusCounts(env, { license: license.id })])
+  return { license, activity, files, sharedFiles, sites, customStatuses, fallbackStatuses, statusUsage: usage, filesConfigured: storageConfigured(env), origin, checkUrl: `${origin}/check/${license.license_key}` }
 }
 
 export async function action({ request, context, params }: Route.ActionArgs) {
@@ -47,9 +50,10 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const form = await request.formData()
   const intent = String(form.get("intent"))
 
+  if (intent.endsWith("-status") && intent !== "status" || intent.endsWith("-statuses")) return applyStatusForm(env, { license: license.id }, form)
   if (intent === "status") {
     const status = String(form.get("status"))
-    if (findStatus(await getStatusSet(env, license.app_id), status)) await setStatus(env, license, status)
+    if (findStatus(await getStatusSetForLicense(env, license), status)) await setStatus(env, license, status)
   } else if (intent === "extend") {
     const days = Number(form.get("days"))
     if (Number.isInteger(days) && days > 0 && days <= 3650) await extendLicense(env, license, days)
@@ -92,9 +96,9 @@ function SiteRelease({ domain }: { domain: string }) {
 }
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, files, sharedFiles, sites, filesConfigured, origin, checkUrl } = loaderData
+  const { license, activity, files, sharedFiles, sites, customStatuses, fallbackStatuses, statusUsage, filesConfigured, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
-  const statuses = useStatusSet(license.app_id)
+  const statuses = useStatusSetForLicense(license)
   const effective = effectiveStatusKey(license, statuses)
   const curl = `curl "${checkUrl}?domain=example.com"`
 
@@ -253,6 +257,16 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           )}
         </section>
 
+        <StatusSection
+          owner="licence"
+          statuses={statuses}
+          fallback={fallbackStatuses}
+          custom={customStatuses}
+          usage={statusUsage}
+          actionPath={`/licenses/${license.id}`}
+          inheritedFrom={license.app_id ? `the statuses of the app ${license.app_name}` : "the default statuses"}
+        />
+
         <FilesSection
           description="Downloads released by licence status. Each file lists the statuses in which it can be downloaded."
           uploadPath={`/licenses/${license.id}/files`}
@@ -260,7 +274,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           license={license}
           statuses={statuses}
           files={files}
-          shared={license.app_id && sharedFiles.length > 0 ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles } : null}
+          shared={license.app_id && sharedFiles.length > 0 ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles, statuses: fallbackStatuses } : null}
           configured={filesConfigured}
         />
 

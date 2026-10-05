@@ -20,7 +20,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
  * reloaded after a form that edits statuses.
  */
 export function shouldRevalidate({ formAction }: { formAction?: string }) {
-  return Boolean(formAction && (formAction.startsWith("/statuses") || formAction.startsWith("/apps/")))
+  return Boolean(formAction && (formAction.startsWith("/apps/") || formAction.startsWith("/licenses/")))
 }
 
 export default function AppLayout() {

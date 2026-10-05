@@ -25,7 +25,7 @@ The defaults are a starting point. Every value can be changed on each licence.
 
 ## Statuses
 
-An app uses the default statuses unless you give it its own set on the app page. See [statuses.md](statuses.md#statuses-per-app).
+An app uses the built-in default statuses unless you customise them on the app page, and a single licence can customise its own. See [statuses.md](statuses.md).
 
 ## Issuing licences
 
