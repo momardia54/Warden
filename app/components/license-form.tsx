@@ -5,7 +5,7 @@ import { Input } from "#/components/ui/input"
 import { FieldLabel } from "#/components/help-tip"
 import { Textarea } from "#/components/ui/textarea"
 import { NativeSelect } from "#/components/ui/native-select"
-import { useStatusSetForLicense } from "#/components/status-context"
+import { useStatusSetForLicense, useStatusSets } from "#/components/status-context"
 import { StatusDraft } from "#/components/status-draft"
 import { defaultStatusKey, findStatus, type StatusSet } from "#/lib/statuses"
 
@@ -49,6 +49,8 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
   const [appId, setAppId] = useState(values.app_id)
   // The statuses available depend on the licence and its app: either can have its own set.
   const inherited = useStatusSetForLicense({ id: licenseId, app_id: appId || null })
+  // Statuses the edited licence has of its own (only possible while it is standalone).
+  const ownStatuses = useStatusSets().byLicense[licenseId]
   // Statuses being drafted for a licence that does not exist yet. They replace the inherited ones for this form.
   const [draft, setDraft] = useState<StatusSet | null>(null)
   // Only a standalone licence can have statuses of its own; a licence in an app uses its app's.
@@ -80,6 +82,9 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
           ))}
         </NativeSelect>
         {appHint && <p className="text-xs text-muted-foreground">{appHint}</p>}
+        {appId && licenseId && ownStatuses && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">This licence has its own statuses. In an app it uses the app&apos;s statuses, so its own are removed when you save.</p>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

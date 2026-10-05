@@ -1,11 +1,13 @@
 import type { Scope } from "../lib/license"
-import { newId, randomString, sha256Hex } from "./util.server"
+import { generateSecret } from "../lib/random"
+import { newId, sha256Hex } from "./util.server"
 
 export type ApiKeyRow = { id: string; name: string; prefix: string; scope: Scope; created_at: number; last_used_at: number | null }
 
 /** Creates an API key. Only a SHA-256 hash is stored; the secret is returned once and cannot be recovered. */
 export async function createApiKey(env: Env, name: string, scope: Scope): Promise<{ id: string; secret: string }> {
-  const secret = `wk_${randomString(40)}`
+  // 40 uniformly random letters and digits (about 238 bits).
+  const secret = `wk_${generateSecret(40)}`
   const id = newId("key")
   await env.DB.prepare("INSERT INTO api_keys (id, name, prefix, key_hash, scope, created_at) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(id, name, secret.slice(0, 7), await sha256Hex(secret), scope, Date.now())

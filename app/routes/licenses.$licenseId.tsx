@@ -153,26 +153,29 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline">
-                  <CalendarPlus /> Extend expiry
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {[30, 90, 365].map((days) => (
-                  <Form method="post" key={days}>
-                    <input type="hidden" name="intent" value="extend" />
-                    <input type="hidden" name="days" value={days} />
-                    <DropdownMenuItem asChild>
-                      <button type="submit" className="w-full">
-                        {days === 365 ? "+ 1 year" : `+ ${days} days`}
-                      </button>
-                    </DropdownMenuItem>
-                  </Form>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {/* Only offered when the licence expires: extending a licence without an expiry date would give it one. */}
+            {license.expires_at !== null && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    <CalendarPlus /> Extend expiry
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {[30, 90, 365].map((days) => (
+                    <Form method="post" key={days}>
+                      <input type="hidden" name="intent" value="extend" />
+                      <input type="hidden" name="days" value={days} />
+                      <DropdownMenuItem asChild>
+                        <button type="submit" className="w-full">
+                          {days === 365 ? "+ 1 year" : `+ ${days} days`}
+                        </button>
+                      </DropdownMenuItem>
+                    </Form>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         </div>
 

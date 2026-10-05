@@ -1,5 +1,5 @@
 import { generateLicenseKey, normalizeDomain, parseDomains } from "../lib/license"
-import { DEFAULT_STATUSES, defaultStatusKey, effectiveStatusKey, expirySources, findStatus, statusLabel, type StatusSet } from "../lib/statuses"
+import { defaultStatusKey, effectiveStatusKey, expirySources, findStatus, statusLabel, type StatusSet } from "../lib/statuses"
 import { deleteLicenseFiles } from "./files.server"
 import { getStatusSetForLicense, loadStatusSets, setForLicense, type StatusSets } from "./statuses.server"
 import { newId } from "./util.server"
@@ -149,54 +149,17 @@ export type LicenseFilters = {
   limit: number
 }
 
-/**
- * SQL condition for "the licence's effective status is `key`", taking each status set's expiry rules into account.
- * A licence has the effective status when it is stored with that status and its expiry rule has not triggered, or
- * when it is stored with a status whose expiry rule points to it and the expiry date has passed.
- */
-async function effectiveStatusCondition(env: Env, key: string, now: number): Promise<{ sql: string; args: (string | number)[] }> {
-  const sets = await loadStatusSets(env)
-  const customApps = Object.keys(sets.byApp)
-  const customLicenses = Object.keys(sets.byLicense)
-  const notIn = (column: string, ids: string[]) => (ids.length ? `${column} NOT IN (${ids.map(() => "?").join(",")})` : "1 = 1")
-  // One scope per set that applies to some licences: each app with statuses of its own, each standalone licence with
-  // statuses of its own, and the built-in defaults for everything else.
-  const scopes: { filter: string; args: string[]; set: StatusSet }[] = [
-    ...customApps.map((appId) => ({ filter: "l.app_id = ?", args: [appId], set: sets.byApp[appId] })),
-    ...customLicenses.map((id) => ({ filter: "(l.app_id IS NULL AND l.id = ?)", args: [id], set: sets.byLicense[id] })),
-    {
-      filter: `((l.app_id IS NULL OR ${notIn("l.app_id", customApps)}) AND ${notIn("l.id", customLicenses)})`,
-      args: [...customApps, ...customLicenses],
-      set: DEFAULT_STATUSES,
-    },
-  ]
-  const parts: string[] = []
-  const args: (string | number)[] = []
-  for (const { filter, args: filterArgs, set } of scopes) {
-    const def = findStatus(set, key)
-    if (!def) continue
-    const sources = expirySources(set, key)
-    let sql = `(${filter} AND ((l.status = ?${def.on_expiry ? " AND (l.expires_at IS NULL OR l.expires_at > ?)" : ""})`
-    args.push(...filterArgs, key)
-    if (def.on_expiry) args.push(now)
-    if (sources.length) {
-      sql += ` OR (l.status IN (${sources.map(() => "?").join(",")}) AND l.expires_at IS NOT NULL AND l.expires_at <= ?)`
-      args.push(...sources, now)
-    }
-    parts.push(sql + "))")
-  }
-  return parts.length ? { sql: `(${parts.join(" OR ")})`, args } : { sql: "1 = 0", args: [] }
-}
+/** Licences read per query while filtering by status. */
+const STATUS_SCAN_BATCH = 200
 
-/** Lists licences, newest first. */
+/**
+ * Lists licences, newest first. The status filter uses the status reported to sites, which depends on each licence's
+ * statuses and expiry date, so it is applied in code: licences are read in batches until enough match. (Building it
+ * into SQL would need one bound value per customised app or licence, and D1 accepts at most 100 per query.)
+ */
 export async function queryLicenses(env: Env, filters: LicenseFilters, now = Date.now()): Promise<License[]> {
   const where: string[] = []
   const args: (string | number)[] = []
-  if (filters.status) {
-    const condition = await effectiveStatusCondition(env, filters.status, now)
-    where.push(condition.sql)
-    args.push(...condition.args)
-  }
   const search = filters.q?.trim()
   if (search) {
     const like = `%${search.replace(/[%_\\]/g, "\\$&")}%`
@@ -212,12 +175,28 @@ export async function queryLicenses(env: Env, filters: LicenseFilters, now = Dat
     where.push("l.app_id = ?")
     args.push(filters.appId)
   }
-  if (filters.before) {
-    where.push("l.id < ?")
-    args.push(filters.before)
+  const page = async (before: string | undefined, limit: number) => {
+    const conditions = before ? [...where, "l.id < ?"] : where
+    const sql = `${SELECT_LICENSES} ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""} ORDER BY l.id DESC LIMIT ?`
+    return (await env.DB.prepare(sql).bind(...args, ...(before ? [before] : []), limit).all<License>()).results
   }
-  const sql = `${SELECT_LICENSES} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY l.id DESC LIMIT ?`
-  return (await env.DB.prepare(sql).bind(...args, filters.limit).all<License>()).results
+
+  if (!filters.status) return page(filters.before, filters.limit)
+
+  const sets = await loadStatusSets(env)
+  const matches: License[] = []
+  let before = filters.before
+  while (matches.length < filters.limit) {
+    const batch = await page(before, STATUS_SCAN_BATCH)
+    for (const license of batch) {
+      if (effectiveStatusKey(license, setForLicense(sets, license), now) !== filters.status) continue
+      matches.push(license)
+      if (matches.length === filters.limit) break
+    }
+    if (batch.length < STATUS_SCAN_BATCH) break
+    before = batch[batch.length - 1].id
+  }
+  return matches
 }
 
 function logChange(env: Env, id: string, at: number, status: string | null, detail: string) {

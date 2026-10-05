@@ -136,7 +136,7 @@ With an `app`, the duration, status, site limit and public message come from the
 
 `POST /licenses/{id}/renew` with either
 
-- `{"days": 30}`: moves the expiry date forward by 30 days, counted from the current expiry date, or from today when that date has passed
+- `{"days": 30}`: moves the expiry date forward by 30 days, counted from the current expiry date, or from today when that date has passed or the licence has no expiry date (which then gives it one)
 - `{"until": "2027-06-30"}`: sets the expiry date (must be in the future)
 
 A licence that had expired becomes active again. A `suspended` or `disabled` licence keeps its status; renewing does not lift a suspension, call the status endpoint for that.

@@ -172,7 +172,13 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
     if (method === "DELETE" && extra) {
       const denied = need(ctx, "manage")
       if (denied) return denied
-      return (await releaseActivation(env, license, decodeURIComponent(extra).toLowerCase())) ? reply({ released: true, domain: extra }) : fail(404, "activation_not_found", "That domain is not registered for this licence.")
+      let domain: string
+      try {
+        domain = decodeURIComponent(extra).toLowerCase()
+      } catch {
+        return fail(400, "invalid_domain", "The domain in the path is not correctly encoded.")
+      }
+      return (await releaseActivation(env, license, domain)) ? reply({ released: true, domain }) : fail(404, "activation_not_found", "That domain is not registered for this licence.")
     }
     return fail(405, "method_not_allowed", "Use GET on /activations, and DELETE on /activations/{domain}.")
   }

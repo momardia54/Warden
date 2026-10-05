@@ -156,7 +156,7 @@ export async function statusUsage(env: Env, scope: StatusScope, key: string): Pr
   const lf = licenseFilter(scope)
   const ff = fileFilter(scope)
   const licenses = await env.DB.prepare(`SELECT COUNT(*) AS c FROM licenses l WHERE l.status = ? AND ${lf.sql}`).bind(key, ...lf.args).first<{ c: number }>()
-  const files = await env.DB.prepare(`SELECT COUNT(*) AS c FROM files f LEFT JOIN licenses l ON l.id = f.license_id WHERE (',' || f.statuses || ',') LIKE ? AND ${ff.sql}`).bind(`%,${key},%`, ...ff.args).first<{ c: number }>()
+  const files = await env.DB.prepare(`SELECT COUNT(*) AS c FROM files f LEFT JOIN licenses l ON l.id = f.license_id WHERE instr(',' || f.statuses || ',', ?) > 0 AND ${ff.sql}`).bind(`,${key},`, ...ff.args).first<{ c: number }>()
   return { licenses: licenses?.c ?? 0, files: files?.c ?? 0 }
 }
 
@@ -170,7 +170,7 @@ export async function statusCounts(env: Env, scope: StatusScope): Promise<Record
 /** Replaces a removed status key in the release rules of a scope's files. A rule left empty gets the set's default status. */
 async function rewriteFileRules(env: Env, scope: StatusScope, key: string, replacement: string | null, fallback: string): Promise<void> {
   const ff = fileFilter(scope)
-  const rows = (await env.DB.prepare(`SELECT f.id AS id, f.statuses AS statuses FROM files f LEFT JOIN licenses l ON l.id = f.license_id WHERE (',' || f.statuses || ',') LIKE ? AND ${ff.sql}`).bind(`%,${key},%`, ...ff.args).all<{ id: string; statuses: string }>()).results
+  const rows = (await env.DB.prepare(`SELECT f.id AS id, f.statuses AS statuses FROM files f LEFT JOIN licenses l ON l.id = f.license_id WHERE instr(',' || f.statuses || ',', ?) > 0 AND ${ff.sql}`).bind(`,${key},`, ...ff.args).all<{ id: string; statuses: string }>()).results
   for (const row of rows) {
     const keys = row.statuses.split(",").filter((k) => k !== key)
     if (replacement && !keys.includes(replacement)) keys.push(replacement)

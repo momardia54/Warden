@@ -16,10 +16,11 @@ Supported versions: only the latest release (there is no 1.0 yet, so none is lon
 | Brute force | 8 failed logins per IP per 15 minutes locks that IP out; a global delay slows distributed guessing. IPs are stored hashed. |
 | CSRF | Every dashboard action rejects cross-origin posts, on top of `SameSite=Lax`. |
 | Dashboard pages | Strict Content-Security-Policy with a per-request nonce, `X-Frame-Options: DENY`, `no-store` caching, HSTS on HTTPS. |
-| API keys | `wk_` plus 40 random characters. Only a SHA-256 hash is stored; the key is shown once. Three scopes (`read`, `manage`, `full`), revocable at any time. Keys act as the admin account, so give each app its own key with the least access it needs. |
+| Request size | API bodies are read up to 64 KB and check bodies up to 4 KB, stopping at the limit even without a Content-Length. Uploads are capped at 100 MB before anything is stored. |
+| API keys | `wk_` plus 40 uniformly random letters and digits. Only a SHA-256 hash is stored; the key is shown once. Three scopes (`read`, `manage`, `full`), revocable at any time. Keys act as the admin account, so give each app its own key with the least access it needs. |
 | Licence keys | `WRD-` plus 20 random characters from a 30-symbol alphabet (about 98 bits), generated with the platform's secure random source. Unknown keys get a generic 404. |
 | Check responses | Signed: `X-Warden-Signature` is the HMAC-SHA256 of the body, keyed with the licence key. A site can verify a response is genuine and unmodified. |
-| File downloads | Files live in a private R2 bucket with no public URL; the Worker streams them only after checking the licence (the licence status against the file's release statuses, and the domain when the file requires it). Every download and refusal is logged. Names are sanitised and sent as attachments with `X-Content-Type-Options: nosniff`. |
+| File downloads | Files live in a private R2 bucket with no public URL; the Worker streams them only after checking the licence (the licence status against the file's release statuses, and the domain when the file requires it). Every download and refusal is logged. Names are sanitised and sent as attachments with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`, so an uploaded file can never run as a page on the dashboard's origin. |
 | Database | Cloudflare D1, queries use bound parameters throughout. Check history older than 90 days is deleted daily. No visitor IPs are stored for checks; only the domain a site reports. |
 
 ## Limits you should know about
