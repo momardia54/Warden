@@ -117,7 +117,7 @@ test("an app can customise its statuses", async () => {
   assert.equal(DEFAULT_STATUSES.find((s) => s.key === "suspended")!.label, "Suspended")
 })
 
-test("a licence uses its own statuses, then its app's, then the defaults", async () => {
+test("a licence in an app uses the app's statuses; a standalone licence can have its own", async () => {
   const { env } = setup()
   const app = await newApp(env)
   await customizeStatuses(env, { app: app.id })
@@ -125,34 +125,37 @@ test("a licence uses its own statuses, then its app's, then the defaults", async
 
   const standalone = await createLicense(env, license)
   const inApp = await createLicense(env, { ...license, app_id: app.id, status: "trial" })
-  const own = await createLicense(env, { ...license, app_id: app.id })
+  const plainApp = await createLicense(env, license)
 
   assert.equal(await statusSource(env, standalone), "default")
   assert.equal(await statusSource(env, inApp), "app")
   assert.equal((await getStatusSetForLicense(env, inApp)).some((s) => s.key === "trial"), true)
   assert.equal((await getStatusSetForLicense(env, standalone)).some((s) => s.key === "trial"), false)
 
-  // a licence of the app customises its own: a copy of the app's statuses, then free to change
-  const copy = await customizeStatuses(env, { license: own.id })
-  assert.ok("set" in copy && (copy as { set: { key: string }[] }).set.some((s) => s.key === "trial"))
-  await createStatus(env, { license: own.id }, { ...input, label: "VIP", color: "#db2777" })
-  await updateStatus(env, { license: own.id }, "pending", { label: "Waiting" })
-  assert.equal(await statusSource(env, own), "licence")
-  const sets = await loadStatusSets(env)
-  assert.equal(setForLicense(sets, own).some((s) => s.key === "vip"), true)
-  assert.equal(setForLicense(sets, inApp).some((s) => s.key === "vip"), false) // the app and its other licences keep theirs
-  assert.equal((await getStatusSetForApp(env, app.id)).some((s) => s.key === "vip"), false)
-  assert.equal((await getStatusSetForApp(env, app.id)).find((s) => s.key === "pending")!.label, "Pending")
+  // a licence in an app cannot have statuses of its own
+  const refused = await customizeStatuses(env, { license: inApp.id })
+  assert.ok("error" in refused && /belongs to an app/.test(refused.error))
+  assert.equal(await hasCustomSet(env, { license: inApp.id }), false)
 
-  // a standalone licence can have its own statuses too
-  assert.ok("set" in (await customizeStatuses(env, { license: standalone.id })))
-  await createStatus(env, { license: standalone.id }, { ...input, label: "Beta" })
-  assert.equal((await getStatusSetForLicense(env, standalone)).some((s) => s.key === "beta"), true)
+  // a standalone licence customises its own: a copy of the defaults, then free to change
+  const copy = await customizeStatuses(env, { license: standalone.id })
+  assert.deepEqual((copy as { set: { key: string }[] }).set.map((s) => s.key), DEFAULT_STATUSES.map((s) => s.key))
+  await createStatus(env, { license: standalone.id }, { ...input, label: "Beta", color: "#db2777" })
+  await updateStatus(env, { license: standalone.id }, "pending", { label: "Waiting" })
   assert.equal(await statusSource(env, standalone), "licence")
+  const sets = await loadStatusSets(env)
+  assert.equal(setForLicense(sets, standalone).some((s) => s.key === "beta"), true)
+  assert.equal(setForLicense(sets, inApp).some((s) => s.key === "beta"), false)
+  assert.equal(setForLicense(sets, plainApp).some((s) => s.key === "beta"), false) // other standalone licences keep the defaults
+  assert.equal(DEFAULT_STATUSES.find((s) => s.key === "pending")!.label, "Pending")
+  await setStatus(env, (await getLicense(env, standalone.id))!, "beta")
+  assert.equal((await getLicense(env, standalone.id))!.status, "beta")
 
-  // statuses that are validated against the licence's own set
-  await setStatus(env, (await getLicense(env, own.id))!, "vip")
-  assert.equal((await getLicense(env, own.id))!.status, "vip")
+  // joining an app: the licence's own statuses are discarded and the app's apply
+  await updateLicense(env, (await getLicense(env, standalone.id))!, { ...license, app_id: app.id, status: "trial" })
+  assert.equal(await hasCustomSet(env, { license: standalone.id }), false)
+  assert.equal(await statusSource(env, (await getLicense(env, standalone.id))!), "app")
+  assert.equal((await getStatusSetForLicense(env, (await getLicense(env, standalone.id))!)).some((s) => s.key === "beta"), false)
 })
 
 test("the check uses the statuses that apply to the licence", async () => {
@@ -165,9 +168,10 @@ test("the check uses the statuses that apply to the licence", async () => {
   const trial = await createLicense(env, { ...license, app_id: app.id, status: "trial", expires_at: Date.now() + DAY })
   const refunded = await createLicense(env, { ...license, app_id: app.id, status: "refunded" })
   const standalone = await createLicense(env, license)
-  const own = await createLicense(env, { ...license, app_id: app.id, status: "trial" })
+  const own = await createLicense(env, license)
   await customizeStatuses(env, { license: own.id })
-  await updateStatus(env, { license: own.id }, "trial", { grants_access: false, check_message: "This licence's trial is paused." })
+  await createStatus(env, { license: own.id }, { ...input, label: "Paused", grants_access: false, check_message: "This licence is paused." })
+  await setStatus(env, (await getLicense(env, own.id))!, "paused")
 
   const check = async (l: { license_key: string }) => {
     const res = await handleCheck(new Request(`https://w.dev/check/${l.license_key}`), env, ctx, l.license_key)
@@ -177,8 +181,7 @@ test("the check uses the statuses that apply to the licence", async () => {
   assert.deepEqual(await check(trial).then((r) => [r.valid, r.status, r.message]), [true, "trial", "Trial running."])
   assert.deepEqual(await check(refunded).then((r) => [r.valid, r.status, r.message]), [false, "refunded", "This licence was refunded."])
   assert.equal((await check(standalone)).valid, true)
-  // the licence with its own statuses decides for itself, even though its app says otherwise
-  assert.deepEqual(await check(own).then((r) => [r.valid, r.message]), [false, "This licence's trial is paused."])
+  assert.deepEqual(await check(own).then((r) => [r.valid, r.status, r.message]), [false, "paused", "This licence is paused."])
 })
 
 test("filtering by status follows each licence's own statuses", async () => {
@@ -207,8 +210,7 @@ test("deleting a status that is in use needs a replacement", async () => {
   await customizeStatuses(env, { app: app.id })
   const a = await createLicense(env, { ...license, app_id: app.id, status: "suspended" })
   const b = await createLicense(env, { ...license, app_id: app.id, status: "suspended" })
-  const own = await createLicense(env, { ...license, app_id: app.id, status: "suspended" })
-  await customizeStatuses(env, { license: own.id }) // has its own copy, so the app's edits do not touch it
+  const standalone = await createLicense(env, { ...license, status: "suspended" }) // uses the defaults, so the app's edits do not touch it
   const file = (await storeFile(env, { app }, { name: "notice.html", statuses: "suspended,expired", size: 1, body: body("x"), checkDomain: false })) as { file: { id: string } }
 
   assert.deepEqual(await statusUsage(env, { app: app.id }, "suspended"), { licenses: 2, files: 1 })
@@ -220,10 +222,16 @@ test("deleting a status that is in use needs a replacement", async () => {
   assert.ok("set" in (await deleteStatus(env, { app: app.id }, "suspended", "disabled")))
   assert.equal((await getLicense(env, a.id))!.status, "disabled")
   assert.equal((await getLicense(env, b.id))!.status, "disabled")
-  assert.equal((await getLicense(env, own.id))!.status, "suspended") // its own statuses still have Suspended
+  assert.equal((await getLicense(env, standalone.id))!.status, "suspended")
   assert.equal((await getFile(env, { app }, file.file.id))!.statuses, "expired,disabled")
   assert.equal((await getStatusSetForApp(env, app.id)).some((s) => s.key === "suspended"), false)
-  assert.equal((await getStatusSetForLicense(env, own)).some((s) => s.key === "suspended"), true)
+  assert.equal((await getStatusSetForLicense(env, standalone)).some((s) => s.key === "suspended"), true)
+
+  // the same for a standalone licence's own statuses
+  await customizeStatuses(env, { license: standalone.id })
+  assert.deepEqual(await statusUsage(env, { license: standalone.id }, "suspended"), { licenses: 1, files: 0 })
+  assert.ok("set" in (await deleteStatus(env, { license: standalone.id }, "suspended", "pending")))
+  assert.equal((await getLicense(env, standalone.id))!.status, "pending")
 })
 
 test("deleting a status clears expiry rules that pointed to it, and a set keeps one status", async () => {
@@ -236,22 +244,23 @@ test("deleting a status clears expiry rules that pointed to it, and a set keeps 
   assert.match(((await deleteStatus(env, { app: app.id }, "active", null)) as { error: string }).error, /at least one/i)
 })
 
-test("going back to the next level of statuses", async () => {
+test("going back to the default statuses", async () => {
   const { env } = setup()
   const app = await newApp(env)
   await customizeStatuses(env, { app: app.id })
   await createStatus(env, { app: app.id }, { ...input, label: "Trial" })
   const inApp = await createLicense(env, { ...license, app_id: app.id, status: "trial" })
-  await customizeStatuses(env, { license: inApp.id })
-  await createStatus(env, { license: inApp.id }, { ...input, label: "Gold" })
-  await updateLicense(env, (await getLicense(env, inApp.id))!, { ...license, app_id: app.id, status: "gold" })
+  const solo = await createLicense(env, license)
+  await customizeStatuses(env, { license: solo.id })
+  await createStatus(env, { license: solo.id }, { ...input, label: "Gold" })
+  await setStatus(env, (await getLicense(env, solo.id))!, "gold")
 
-  // the licence returns to its app's statuses: "gold" does not exist there
-  const refusal = await resetStatuses(env, { license: inApp.id })
+  // the standalone licence returns to the defaults: "gold" does not exist there
+  const refusal = await resetStatuses(env, { license: solo.id })
   assert.ok("error" in refusal && /Gold/.test(refusal.error))
-  assert.deepEqual(await resetStatuses(env, { license: inApp.id }, { gold: "trial" }), { ok: true })
-  assert.equal((await getLicense(env, inApp.id))!.status, "trial")
-  assert.equal(await statusSource(env, inApp), "app")
+  assert.deepEqual(await resetStatuses(env, { license: solo.id }, { gold: "completed" }), { ok: true })
+  assert.equal((await getLicense(env, solo.id))!.status, "completed")
+  assert.equal(await statusSource(env, solo), "default")
 
   // the app returns to the defaults: "trial" does not exist there
   assert.ok("error" in (await resetStatuses(env, { app: app.id })))
@@ -325,23 +334,32 @@ test("API: statuses of apps and licences", async () => {
   assert.equal((await call("POST", "/licenses", manage, { name: "S", status: "trial" })).json.error.code, "invalid_status") // a standalone licence uses the defaults
   assert.equal((await call("PATCH", "/apps/harbor-theme", manage, { default_status: "trial" })).json.default_status, "trial")
 
-  // licence level: a copy of the app's statuses, then its own
-  assert.deepEqual(await call("GET", `/licenses/${lic.id}/statuses`, read).then((r) => [r.json.custom, r.json.source]), [false, "app"])
-  assert.equal((await call("POST", `/licenses/${lic.id}/statuses/customize`, manage)).status, 201)
-  assert.deepEqual(await call("GET", `/licenses/${lic.id}/statuses`, read).then((r) => [r.json.custom, r.json.source]), [true, "licence"])
-  assert.equal((await call("POST", `/licenses/${lic.id}/statuses`, manage, { label: "Gold", color: "#d97706" })).status, 201)
-  assert.equal((await call("POST", `/licenses/${lic.id}/status`, manage, { status: "gold" })).json.status, "gold")
-  assert.equal((await call("POST", "/apps/harbor-theme/licenses", manage, { name: "Other", status: "gold" })).json.error.code, "invalid_status") // the app does not have Gold
-  assert.equal((await call("DELETE", `/licenses/${lic.id}/statuses/gold`, full)).json.error.code, "status_in_use")
-  assert.equal((await call("DELETE", `/licenses/${lic.id}/statuses/gold?move_to=trial`, full)).status, 200)
-  assert.equal((await call("POST", `/licenses/${lic.id}/statuses/order`, manage, { keys: ["active"] })).status, 422)
+  // a licence in an app uses the app's statuses: readable, but changed on the app
+  assert.deepEqual(await call("GET", `/licenses/${lic.id}/statuses`, read).then((r) => [r.json.custom, r.json.source, r.json.data.some((x: any) => x.key === "trial")]), [false, "app", true])
+  assert.equal((await call("POST", `/licenses/${lic.id}/statuses/customize`, manage)).json.error.code, "license_in_app")
+  assert.equal((await call("POST", `/licenses/${lic.id}/statuses`, manage, { label: "Gold" })).json.error.code, "license_in_app")
 
-  // back to the next level
-  assert.equal((await call("DELETE", `/licenses/${lic.id}/statuses`, manage, {})).status, 403)
-  assert.equal((await call("DELETE", `/licenses/${lic.id}/statuses`, full, {})).json.custom, false)
-  assert.equal((await call("DELETE", "/apps/harbor-theme/statuses", full, { mapping: {} })).json.error.code, "statuses_in_use")
-  assert.equal((await call("DELETE", "/apps/harbor-theme/statuses", full, { mapping: { trial: "active" } })).json.custom, false)
-  assert.equal((await call("GET", `/licenses/${lic.id}`, read)).json.status, "active")
+  // a standalone licence can have its own statuses
+  const solo = (await call("POST", "/licenses", manage, { name: "Solo" })).json
+  assert.deepEqual(await call("GET", `/licenses/${solo.id}/statuses`, read).then((r) => [r.json.custom, r.json.source]), [false, "default"])
+  assert.equal((await call("POST", `/licenses/${solo.id}/statuses`, manage, { label: "Gold" })).json.error.code, "statuses_not_customized")
+  assert.equal((await call("POST", `/licenses/${solo.id}/statuses/customize`, manage)).status, 201)
+  assert.deepEqual(await call("GET", `/licenses/${solo.id}/statuses`, read).then((r) => [r.json.custom, r.json.source]), [true, "licence"])
+  assert.equal((await call("POST", `/licenses/${solo.id}/statuses`, manage, { label: "Gold", color: "#d97706", grants_access: true })).status, 201)
+  assert.equal((await call("POST", `/licenses/${solo.id}/status`, manage, { status: "gold" })).json.status, "gold")
+  assert.equal((await call("POST", "/licenses", manage, { name: "Other", status: "gold" })).json.error.code, "invalid_status") // another standalone licence uses the defaults
+  assert.equal((await call("DELETE", `/licenses/${solo.id}/statuses/gold`, full)).json.error.code, "status_in_use")
+  assert.equal((await call("DELETE", `/licenses/${solo.id}/statuses/gold?move_to=active`, full)).status, 200)
+  assert.equal((await call("POST", `/licenses/${solo.id}/statuses/order`, manage, { keys: ["active"] })).status, 422)
+  assert.equal((await call("DELETE", `/licenses/${solo.id}/statuses`, manage, {})).status, 403)
+  assert.equal((await call("DELETE", `/licenses/${solo.id}/statuses`, full, {})).json.custom, false)
+
+  // joining an app discards the licence's own statuses
+  await call("POST", `/licenses/${solo.id}/statuses/customize`, manage)
+  assert.equal((await call("PATCH", `/licenses/${solo.id}`, manage, { app: "harbor-theme" })).json.app.slug, "harbor-theme")
+  assert.equal((await call("GET", `/licenses/${solo.id}/statuses`, read).then((r) => r.json.source)), "app")
+
+  // back to the defaults
   void app
   assert.equal((await call("GET", "/stats", read)).json.by_status.active >= 1, true)
 })

@@ -159,12 +159,16 @@ async function effectiveStatusCondition(env: Env, key: string, now: number): Pro
   const customApps = Object.keys(sets.byApp)
   const customLicenses = Object.keys(sets.byLicense)
   const notIn = (column: string, ids: string[]) => (ids.length ? `${column} NOT IN (${ids.map(() => "?").join(",")})` : "1 = 1")
-  // One scope per set that applies to some licences: each licence with statuses of its own, each app with statuses of
-  // its own (for its licences that have none), and the built-in defaults for everything else.
+  // One scope per set that applies to some licences: each app with statuses of its own, each standalone licence with
+  // statuses of its own, and the built-in defaults for everything else.
   const scopes: { filter: string; args: string[]; set: StatusSet }[] = [
-    ...customLicenses.map((id) => ({ filter: "l.id = ?", args: [id], set: sets.byLicense[id] })),
-    ...customApps.map((appId) => ({ filter: `(l.app_id = ? AND ${notIn("l.id", customLicenses)})`, args: [appId, ...customLicenses], set: sets.byApp[appId] })),
-    { filter: `(${customApps.length ? `(l.app_id IS NULL OR ${notIn("l.app_id", customApps)})` : "1 = 1"} AND ${notIn("l.id", customLicenses)})`, args: [...customApps, ...customLicenses], set: DEFAULT_STATUSES },
+    ...customApps.map((appId) => ({ filter: "l.app_id = ?", args: [appId], set: sets.byApp[appId] })),
+    ...customLicenses.map((id) => ({ filter: "(l.app_id IS NULL AND l.id = ?)", args: [id], set: sets.byLicense[id] })),
+    {
+      filter: `((l.app_id IS NULL OR ${notIn("l.app_id", customApps)}) AND ${notIn("l.id", customLicenses)})`,
+      args: [...customApps, ...customLicenses],
+      set: DEFAULT_STATUSES,
+    },
   ]
   const parts: string[] = []
   const args: (string | number)[] = []
@@ -237,6 +241,8 @@ export async function updateLicense(env: Env, before: License, input: LicenseInp
     ).bind(input.name, input.customer_name, input.customer_email, input.app_id, input.max_sites, input.status, input.expires_at, input.domains, input.message, input.notes, now, before.id),
   ]
   if (changes.length) statements.push(logChange(env, before.id, now, input.status, changes.join("; ")))
+  // A licence that joins an app uses the app's statuses from then on, so statuses of its own are removed.
+  if (input.app_id) statements.push(env.DB.prepare("DELETE FROM statuses WHERE license_id = ?").bind(before.id))
   await env.DB.batch(statements)
 }
 

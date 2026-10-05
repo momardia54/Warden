@@ -51,7 +51,8 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
   const inherited = useStatusSetForLicense({ id: licenseId, app_id: appId || null })
   // Statuses being drafted for a licence that does not exist yet. They replace the inherited ones for this form.
   const [draft, setDraft] = useState<StatusSet | null>(null)
-  const statuses = draft ?? inherited
+  // Only a standalone licence can have statuses of its own; a licence in an app uses its app's.
+  const statuses = !appId && draft ? draft : inherited
 
   return (
     <Form method="post" className="max-w-2xl space-y-6">
@@ -65,6 +66,7 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
           value={appId}
           onChange={(e) => {
             setAppId(e.target.value)
+            if (e.target.value) setDraft(null)
             // Keep the status if the new app has it, otherwise fall back to that app's default.
             if (!findStatus(statuses, status)) setStatus(defaultStatusKey(statuses))
             if (reloadOnAppChange) navigate(e.target.value ? `?app=${e.target.value}` : "?", { replace: true })
@@ -149,11 +151,11 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
         <p className="text-xs text-muted-foreground">Optional. Returned to the site in the check response.</p>
       </div>
 
-      {allowStatusCustomisation && (
+      {allowStatusCustomisation && !appId && (
         <StatusDraft
           owner="licence"
           inherited={inherited}
-          inheritedFrom={appId ? `the statuses of ${apps.find((a) => a.id === appId)?.name ?? "its app"}` : "the default statuses"}
+          inheritedFrom="the default statuses"
           value={draft}
           onChange={(set) => {
             setDraft(set)
