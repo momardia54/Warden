@@ -2,10 +2,10 @@ import { redirect } from "react-router"
 import type { Route } from "./+types/licenses.new"
 import { PageHeader } from "#/components/page-header"
 import { EMPTY_FORM, LicenseForm, type FormValues } from "#/components/license-form"
-import { defaultStatusKey, statusLabel } from "#/lib/statuses"
+import { DEFAULT_STATUSES, defaultStatusKey, statusLabel } from "#/lib/statuses"
 import { requireAuth } from "~/server/auth.server"
 import { appDefaults, getApp, listApps } from "~/server/apps.server"
-import { getStatusSet, loadStatusSets } from "~/server/statuses.server"
+import { getStatusSetForApp, loadStatusSets } from "~/server/statuses.server"
 import { createLicense, readLicenseForm } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "New licence | Warden" }]
@@ -16,7 +16,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const apps = (await listApps(env)).map((a) => ({ id: a.id, name: a.name }))
   const appId = new URL(request.url).searchParams.get("app")
   const app = appId ? await getApp(env, appId) : null
-  if (!app) return { apps, values: { ...EMPTY_FORM, status: defaultStatusKey(await getStatusSet(env, null)) }, appHint: "" }
+  if (!app) return { apps, values: { ...EMPTY_FORM, status: defaultStatusKey(DEFAULT_STATUSES) }, appHint: "" }
 
   const defaults = appDefaults(app)
   const values: FormValues = {
@@ -30,7 +30,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const parts = [
     app.default_duration_days ? `expires after ${app.default_duration_days} days` : "no expiry",
     app.default_max_sites ? `${app.default_max_sites} site${app.default_max_sites === 1 ? "" : "s"}` : "unlimited sites",
-    `status ${statusLabel(await getStatusSet(env, app.id), defaults.status)}`,
+    `status ${statusLabel(await getStatusSetForApp(env, app.id), defaults.status)}`,
   ]
   return { apps, values, appHint: `Defaults from ${app.name} applied: ${parts.join(", ")}. You can change any of them.` }
 }

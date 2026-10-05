@@ -8,7 +8,8 @@ import { Button } from "#/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "#/components/ui/dialog"
 import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
-import { findStatus, keyFromLabel, TONES, TONE_LABEL, type StatusDef, type StatusSet, type Tone } from "#/lib/statuses"
+import { ColorPicker } from "#/components/color-picker"
+import { DEFAULT_COLOR, findStatus, isColor, keyFromLabel, type StatusDef, type StatusSet } from "#/lib/statuses"
 
 type Props = {
   statuses: StatusSet
@@ -23,16 +24,16 @@ type Draft = {
   key: string
   label: string
   description: string
-  tone: Tone
+  color: string
   grants_access: boolean
   on_expiry: string
   check_message: string
   is_default: boolean
 }
 
-const EMPTY: Draft = { mode: "create", key: "", label: "", description: "", tone: "neutral", grants_access: false, on_expiry: "", check_message: "", is_default: false }
+const EMPTY: Draft = { mode: "create", key: "", label: "", description: "", color: DEFAULT_COLOR, grants_access: false, on_expiry: "", check_message: "", is_default: false }
 
-const toDraft = (s: StatusDef): Draft => ({ mode: "edit", key: s.key, label: s.label, description: s.description, tone: s.tone, grants_access: s.grants_access, on_expiry: s.on_expiry ?? "", check_message: s.check_message, is_default: s.is_default })
+const toDraft = (s: StatusDef): Draft => ({ mode: "edit", key: s.key, label: s.label, description: s.description, color: s.color, grants_access: s.grants_access, on_expiry: s.on_expiry ?? "", check_message: s.check_message, is_default: s.is_default })
 
 /** Lists the statuses of a set and lets you add, change, reorder and delete them. */
 export function StatusEditor({ statuses, usage, actionPath }: Props) {
@@ -63,7 +64,7 @@ export function StatusEditor({ statuses, usage, actionPath }: Props) {
       key: draft.mode === "create" ? draft.key || keyFromLabel(draft.label) : draft.key,
       label: draft.label,
       description: draft.description,
-      tone: draft.tone,
+      color: draft.color,
       grants_access: String(draft.grants_access),
       on_expiry: draft.on_expiry,
       check_message: draft.check_message,
@@ -182,32 +183,24 @@ export function StatusEditor({ statuses, usage, actionPath }: Props) {
               </FieldLabel>
               <Input id="status-description" value={draft.description} maxLength={200} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="status-tone" help="The colour of the status badge.">
-                  Colour
-                </FieldLabel>
-                <NativeSelect id="status-tone" value={draft.tone} onChange={(e) => setDraft({ ...draft, tone: e.target.value as Tone })}>
-                  {TONES.map((t) => (
-                    <option key={t} value={t}>
-                      {TONE_LABEL[t]}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="status-expiry" help="What a licence with this status becomes, as seen by sites, once its expiry date has passed. Choose &quot;Nothing&quot; if the expiry date should not apply to this status, for example for a paid-in-full licence.">
-                  When the expiry date passes
-                </FieldLabel>
-                <NativeSelect id="status-expiry" value={draft.on_expiry} onChange={(e) => setDraft({ ...draft, on_expiry: e.target.value })}>
-                  <option value="">Nothing: the expiry date does not apply</option>
-                  {others(draft.key).map((s) => (
-                    <option key={s.key} value={s.key}>
-                      Becomes {s.label}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </div>
+            <div className="space-y-1.5">
+              <FieldLabel htmlFor="status-color" help="The colour of the status badge. Pick a preset or any colour.">
+                Colour
+              </FieldLabel>
+              <ColorPicker id="status-color" value={draft.color} onChange={(color) => setDraft({ ...draft, color })} />
+            </div>
+            <div className="space-y-1.5">
+              <FieldLabel htmlFor="status-expiry" help="What a licence with this status becomes, as seen by sites, once its expiry date has passed. Choose &quot;Nothing&quot; if the expiry date should not apply to this status, for example for a paid-in-full licence.">
+                When the expiry date passes
+              </FieldLabel>
+              <NativeSelect id="status-expiry" value={draft.on_expiry} onChange={(e) => setDraft({ ...draft, on_expiry: e.target.value })}>
+                <option value="">Nothing: the expiry date does not apply</option>
+                {others(draft.key).map((s) => (
+                  <option key={s.key} value={s.key}>
+                    Becomes {s.label}
+                  </option>
+                ))}
+              </NativeSelect>
             </div>
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm">
@@ -233,7 +226,7 @@ export function StatusEditor({ statuses, usage, actionPath }: Props) {
             <Button variant="outline" onClick={() => setEditorOpen(false)} disabled={busy}>
               Cancel
             </Button>
-            <Button onClick={save} disabled={busy || !draft.label.trim()}>
+            <Button onClick={save} disabled={busy || !draft.label.trim() || !isColor(draft.color)}>
               {busy ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>

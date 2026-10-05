@@ -7,6 +7,39 @@ export function openApiSpec(origin: string) {
   const secured = [{ bearer: [] }]
   const appParam = { name: "app", in: "path", required: true, description: "App id (app_...) or slug.", schema: { type: "string" } }
 
+  /** The endpoints that manage the statuses of an app or of a licence. */
+  const statusPaths = (base: string, params: object[], owner: string) => ({
+    [base]: {
+      parameters: params,
+      get: { summary: `The statuses that apply to the ${owner}`, description: "`custom` is true when the " + owner + " has statuses of its own. `source` is `" + owner + "`, `app` or `default`: where the statuses in effect come from.", responses: { 200: { description: "{ custom, source, data: Status[] }" }, 404: err } },
+      post: { summary: `Add a status to the ${owner}'s own statuses (permission: manage). Customize them first`, requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 201: { description: "The status" }, 403: err, 409: err, 422: err } },
+      delete: {
+        summary: `Remove the ${owner}'s own statuses so it uses the inherited statuses again (permission: full)`,
+        description: "Licences that use a status the inherited statuses lack must be mapped: send `{ \"mapping\": { \"custom_key\": \"inherited_key\" } }`.",
+        requestBody: { content: { "application/json": { schema: { type: "object", properties: { mapping: { type: "object", additionalProperties: { type: "string" } } } } } } },
+        responses: { 200: { description: "{ custom: false, data: Status[] }" }, 403: err, 409: err },
+      },
+    },
+    [`${base}/customize`]: {
+      parameters: params,
+      post: { summary: `Give the ${owner} its own statuses, starting as a copy of the ones it uses now (permission: manage)`, responses: { 201: { description: "{ custom: true, data: Status[] }" }, 403: err, 409: err } },
+    },
+    [`${base}/order`]: {
+      parameters: params,
+      post: { summary: `Reorder the ${owner}'s own statuses (permission: manage)`, requestBody: body({ type: "object", required: ["keys"], properties: { keys: { type: "array", items: { type: "string" } } } }), responses: { 200: { description: "{ data: Status[] }" }, 403: err, 409: err, 422: err } },
+    },
+    [`${base}/{key}`]: {
+      parameters: [...params, { name: "key", in: "path", required: true, schema: { type: "string" } }],
+      patch: { summary: `Change a status of the ${owner}'s own statuses (permission: manage). The key cannot be changed`, requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 200: { description: "The status" }, 403: err, 404: err, 409: err, 422: err } },
+      delete: {
+        summary: `Delete a status of the ${owner}'s own statuses (permission: full)`,
+        description: "Licences that use the status move to `move_to`, which is required when any licence uses it. File release rules and the app default that name it are updated.",
+        parameters: [{ name: "move_to", in: "query", description: "Key of the status the licences move to", schema: { type: "string" } }],
+        responses: { 200: { description: "{ data: Status[] }" }, 403: err, 404: err, 409: err },
+      },
+    },
+  })
+
   return {
     openapi: "3.1.0",
     info: {
@@ -97,41 +130,10 @@ export function openApiSpec(origin: string) {
         delete: { summary: "Release a site to free its slot (permission: manage)", responses: { 200: { description: "{ released: true, domain }" }, 403: err, 404: err } },
       },
       "/statuses": {
-        get: { summary: "The default statuses", description: "The statuses of every licence that has no app, and of every app that has no statuses of its own.", responses: { 200: { description: "{ data: Status[] }" }, 401: err } },
-        post: { summary: "Add a default status (permission: manage)", requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 201: { description: "The status" }, 403: err, 422: err } },
+        get: { summary: "The built-in default statuses (read only)", description: "What an app or a licence uses until its statuses are customised. Customise them per app (`/apps/{app}/statuses`) or per licence (`/licenses/{id}/statuses`).", responses: { 200: { description: "{ data: Status[] }" }, 401: err } },
       },
-      "/statuses/order": {
-        post: { summary: "Reorder the default statuses (permission: manage)", requestBody: body({ type: "object", required: ["keys"], properties: { keys: { type: "array", items: { type: "string" } } } }), responses: { 200: { description: "{ data: Status[] }" }, 403: err, 422: err } },
-      },
-      "/statuses/{key}": {
-        parameters: [{ name: "key", in: "path", required: true, schema: { type: "string" } }],
-        patch: { summary: "Change a status (permission: manage). The key cannot be changed", requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 200: { description: "The status" }, 403: err, 404: err, 422: err } },
-        delete: {
-          summary: "Delete a status (permission: full)",
-          description: "Licences that use the status move to `move_to`, which is required when any licence uses it. File release rules and app defaults that name the status are updated.",
-          parameters: [{ name: "move_to", in: "query", description: "Key of the status the licences move to", schema: { type: "string" } }],
-          responses: { 200: { description: "{ data: Status[] }" }, 403: err, 404: err, 409: err },
-        },
-      },
-      "/apps/{app}/statuses": {
-        parameters: [appParam],
-        get: { summary: "The statuses that apply to the app", description: "`custom` is true when the app has statuses of its own, false when it uses the default statuses.", responses: { 200: { description: "{ custom, data: Status[] }" }, 404: err } },
-        post: { summary: "Add a status to the app's own set (permission: manage). Customize the app's statuses first", requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 201: { description: "The status" }, 403: err, 409: err, 422: err } },
-        delete: { summary: "Remove the app's own statuses so it uses the default statuses again (permission: full)", description: "Licences using a status the default set lacks must be mapped: send `{ \"mapping\": { \"custom_key\": \"default_key\" } }`.", requestBody: { content: { "application/json": { schema: { type: "object", properties: { mapping: { type: "object", additionalProperties: { type: "string" } } } } } } }, responses: { 200: { description: "{ custom: false, data: Status[] }" }, 403: err, 409: err } },
-      },
-      "/apps/{app}/statuses/customize": {
-        parameters: [appParam],
-        post: { summary: "Give the app its own statuses, starting as a copy of the default statuses (permission: manage)", responses: { 201: { description: "{ custom: true, data: Status[] }" }, 403: err, 409: err } },
-      },
-      "/apps/{app}/statuses/order": {
-        parameters: [appParam],
-        post: { summary: "Reorder the app's own statuses (permission: manage)", requestBody: body({ type: "object", required: ["keys"], properties: { keys: { type: "array", items: { type: "string" } } } }), responses: { 200: { description: "{ data: Status[] }" }, 403: err, 409: err, 422: err } },
-      },
-      "/apps/{app}/statuses/{key}": {
-        parameters: [appParam, { name: "key", in: "path", required: true, schema: { type: "string" } }],
-        patch: { summary: "Change a status of the app's own set (permission: manage)", requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 200: { description: "The status" }, 403: err, 404: err, 409: err, 422: err } },
-        delete: { summary: "Delete a status of the app's own set (permission: full). Same `move_to` rule as for the default statuses", parameters: [{ name: "move_to", in: "query", schema: { type: "string" } }], responses: { 200: { description: "{ data: Status[] }" }, 403: err, 404: err, 409: err } },
-      },
+      ...statusPaths("/apps/{app}/statuses", [appParam], "app"),
+      ...statusPaths("/licenses/{id}/statuses", [idParam], "licence"),
       "/apps": {
         get: { summary: "List apps with their statistics", responses: { 200: { description: "{ data: App[] }" }, 401: err } },
         post: {
@@ -202,7 +204,7 @@ export function openApiSpec(origin: string) {
             label: { type: "string", maxLength: 40 },
             key: { type: "string", description: "Identifier: lowercase letters, digits and underscores, starting with a letter. Generated from the label if omitted. Create only" },
             description: { type: "string", maxLength: 200 },
-            tone: { enum: ["success", "warning", "danger", "info", "neutral"], default: "neutral", description: "Colour of the dashboard badge" },
+            color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", default: "#6b7280", description: "Badge colour as #rrggbb. Any colour can be used" },
             grants_access: { type: "boolean", default: false, description: "Sites can run under this status: the check response has valid = true" },
             on_expiry: { type: ["string", "null"], description: "Key of the status a licence takes on, as seen by sites, after its expiry date. null: the expiry date does not apply" },
             check_message: { type: "string", maxLength: 300, description: "Message returned to sites for this status when the licence has no public message" },

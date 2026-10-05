@@ -4,7 +4,7 @@ import { AppForm } from "#/components/app-form"
 import { PageHeader } from "#/components/page-header"
 import { requireAuth } from "~/server/auth.server"
 import { getApp, readAppForm, updateApp } from "~/server/apps.server"
-import { getStatusSet } from "~/server/statuses.server"
+import { getStatusSetForApp } from "~/server/statuses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Edit app | Warden" }]
 
@@ -13,7 +13,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   await requireAuth(request, env)
   const app = await getApp(env, params.appId)
   if (!app) throw new Response("App not found", { status: 404 })
-  return { app, statuses: await getStatusSet(env, app.id) }
+  return { app, statuses: await getStatusSetForApp(env, app.id) }
 }
 
 export async function action({ request, context, params }: Route.ActionArgs) {
@@ -21,7 +21,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   await requireAuth(request, env)
   const app = await getApp(env, params.appId)
   if (!app) throw new Response("App not found", { status: 404 })
-  const parsed = readAppForm(await request.formData(), await getStatusSet(env, app.id))
+  const parsed = readAppForm(await request.formData(), await getStatusSetForApp(env, app.id))
   if ("error" in parsed) return { error: parsed.error }
   const updated = await updateApp(env, app, parsed.input)
   if ("error" in updated) return { error: updated.error }

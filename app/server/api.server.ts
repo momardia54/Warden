@@ -1,5 +1,5 @@
 import { KEY_PATTERN } from "../lib/license"
-import { defaultStatusKey, findStatus, type StatusSet } from "../lib/statuses"
+import { DEFAULT_STATUSES, defaultStatusKey, findStatus, type StatusSet } from "../lib/statuses"
 import { applyAppBody, applyLicenseBody } from "./api-input.server"
 import { authenticate, type ApiKeyRow } from "./api-keys.server"
 import { CORS, fail, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
@@ -12,8 +12,8 @@ import {
 } from "./licenses.server"
 import { openApiSpec } from "./openapi.server"
 import {
-  createStatus, customizeAppStatuses, deleteStatus, getStatusSet, hasCustomSet, loadStatusSets, readStatusInput, resetAppStatuses, setFor, setStatusOrder, updateStatus,
-  type Scope as StatusScope, type StatusInput,
+  createStatus, customizeStatuses, deleteStatus, getStatusSetForApp, getStatusSetForLicense, hasCustomSet, loadStatusSets, readStatusInput, resetStatuses, setForLicense,
+  setStatusOrder, statusSource, updateStatus, type StatusInput, type StatusScope,
 } from "./statuses.server"
 
 type Context = { env: Env; request: Request; url: URL; origin: string; key: ApiKeyRow }
@@ -61,8 +61,8 @@ async function listLicensesResponse(ctx: Context, appId?: string): Promise<Respo
   const limit = Math.min(100, Math.max(1, Number(q.get("limit")) || 25))
   const sets = await loadStatusSets(ctx.env)
   const status = q.get("status") ?? undefined
-  if (status && ![sets.default, ...Object.values(sets.byApp)].some((set) => findStatus(set, status))) {
-    return fail(422, "invalid_status", `status must be one of: ${sets.default.map((s) => s.key).join(", ")} (or a status of an app's own set).`)
+  if (status && ![DEFAULT_STATUSES, ...Object.values(sets.byApp), ...Object.values(sets.byLicense)].some((set) => findStatus(set, status))) {
+    return fail(422, "invalid_status", `status must be one of: ${DEFAULT_STATUSES.map((s) => s.key).join(", ")}, or a status that an app or licence has defined.`)
   }
   let filterApp = appId
   const appRef = q.get("app")
@@ -73,7 +73,7 @@ async function listLicensesResponse(ctx: Context, appId?: string): Promise<Respo
   }
   const rows = await queryLicenses(ctx.env, { status, q: q.get("q") ?? undefined, externalRef: q.get("external_ref") ?? undefined, appId: filterApp, before: q.get("before") ?? undefined, limit: limit + 1 })
   const page = rows.slice(0, limit)
-  return reply({ data: page.map((l) => serializeLicense(l, ctx.origin, setFor(sets, l.app_id))), next: rows.length > limit ? page[page.length - 1].id : null })
+  return reply({ data: page.map((l) => serializeLicense(l, ctx.origin, setForLicense(sets, l))), next: rows.length > limit ? page[page.length - 1].id : null })
 }
 
 /** Creates a licence from a JSON body. Under an app, the app's defaults apply to every field the body leaves out. */
@@ -87,14 +87,14 @@ async function createLicenseResponse(ctx: Context, forcedApp?: App): Promise<Res
   if (body.external_ref !== undefined && body.external_ref !== null && !ref) return fail(422, "invalid_external_ref", "external_ref must be a non-empty string of at most 120 characters.")
   if (ref) {
     const existing = await getLicenseByRef(ctx.env, ref)
-    if (existing) return reply(serializeLicense(existing, ctx.origin, await getStatusSet(ctx.env, existing.app_id)), 200, { "idempotent-replayed": "true" })
+    if (existing) return reply(serializeLicense(existing, ctx.origin, await getStatusSetForLicense(ctx.env, existing)), 200, { "idempotent-replayed": "true" })
   }
   if (!("name" in body)) return fail(422, "invalid_name", "name is required.")
 
   const fromBody = forcedApp === undefined ? await resolveAppField(ctx.env, body) : forcedApp
   if (fromBody instanceof Response) return fromBody
   const app = fromBody ?? null
-  const set = await getStatusSet(ctx.env, app?.id ?? null)
+  const set = await getStatusSetForApp(ctx.env, app?.id ?? null)
   const base: LicenseInput = { ...LICENSE_DEFAULTS, status: defaultStatusKey(set), ...(app ? appDefaults(app) : {}), app_id: app?.id ?? null }
   const parsed = applyLicenseBody(body, base, set)
   if ("response" in parsed) return parsed.response
@@ -119,8 +119,9 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
 
   const license = await findLicense(env, segments[0])
   if (!license) return fail(404, "license_not_found", "No licence matches that id or key.")
-  const set = await getStatusSet(env, license.app_id)
-  const [, sub, extra] = segments
+  const set = await getStatusSetForLicense(env, license)
+  const [, sub, ...rest] = segments
+  const extra = rest[0]
 
   if (!sub) {
     if (method === "GET") return reply(serializeLicense(license, origin, set))
@@ -132,7 +133,7 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
       const app = await resolveAppField(env, body)
       if (app instanceof Response) return app
       const targetApp = app === undefined ? license.app_id : (app?.id ?? null)
-      const targetSet = targetApp === license.app_id ? set : await getStatusSet(env, targetApp)
+      const targetSet = targetApp === license.app_id ? set : await getStatusSetForLicense(env, { id: license.id, app_id: targetApp })
       const base = { ...toInput(license), app_id: targetApp }
       // Moving to an app whose statuses lack the licence's current status: the licence takes that set's default unless a status is sent.
       if (!findStatus(targetSet, base.status) && !("status" in body)) base.status = defaultStatusKey(targetSet)
@@ -151,6 +152,7 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
   }
 
   if (sub === "files") return filesRoute(ctx, { license }, extra)
+  if (sub === "statuses") return statusRoute(ctx, { license: license.id }, set, rest)
 
   if (sub === "activity") {
     if (method !== "GET") return fail(405, "method_not_allowed", "Use GET.")
@@ -250,21 +252,25 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
 // ---- statuses ---------------------------------------------------------------------
 
 /**
- * Statuses of the default set (scope null) or of an app's own set. Paths relative to /statuses:
- *   GET /  POST /  POST /order  PATCH /{key}  DELETE /{key}?move_to=
+ * The statuses of an app or of a licence. A licence uses its own statuses if it has customised them, otherwise its
+ * app's, otherwise the built-in defaults. `current` is the set in effect for the scope. Paths relative to .../statuses:
+ *   GET /  POST /  DELETE /  POST /customize  POST /order  PATCH /{key}  DELETE /{key}?move_to=
  */
-async function statusRoute(ctx: Context, scope: StatusScope, segments: string[]): Promise<Response> {
+async function statusRoute(ctx: Context, scope: StatusScope, current: StatusSet, segments: string[]): Promise<Response> {
   const { env, request, url } = ctx
   const method = request.method
-  const current = await getStatusSet(env, scope)
+  const custom = await hasCustomSet(env, scope)
   const list = (set: StatusSet) => reply({ data: set.map(serializeStatus) })
 
   if (segments.length === 0) {
-    if (method === "GET") return reply({ custom: scope === null ? null : await hasCustomSet(env, scope), data: current.map(serializeStatus) })
+    if (method === "GET") {
+      const source = "license" in scope ? await statusSource(env, { id: scope.license, app_id: await appOfLicense(env, scope.license) }) : custom ? "app" : "default"
+      return reply({ custom, source, data: current.map(serializeStatus) })
+    }
     if (method === "POST") {
       const denied = need(ctx, "manage")
       if (denied) return denied
-      if (scope !== null && !(await hasCustomSet(env, scope))) return fail(409, "statuses_not_customized", "This app uses the default statuses. Call POST /apps/{app}/statuses/customize first.")
+      if (!custom) return fail(409, "statuses_not_customized", "These statuses are not customised yet. Call POST .../statuses/customize first.")
       const body = await readJson(request)
       if (body instanceof Response) return body
       const parsed = readStatusInput(body, false)
@@ -272,23 +278,23 @@ async function statusRoute(ctx: Context, scope: StatusScope, segments: string[])
       const created = await createStatus(env, scope, parsed.input as StatusInput)
       return "error" in created ? fail(422, "invalid_status", created.error) : reply(serializeStatus(created.set.find((s) => s.key === (parsed.input.key || created.set[created.set.length - 1].key))!), 201)
     }
-    if (method === "DELETE" && scope !== null) {
+    if (method === "DELETE") {
       const denied = need(ctx, "full")
       if (denied) return denied
       const body = await readJson(request)
       if (body instanceof Response) return body
       const mapping = body.mapping && typeof body.mapping === "object" ? (body.mapping as Record<string, string>) : {}
-      const reset = await resetAppStatuses(env, scope, mapping)
-      return "error" in reset ? fail(409, "statuses_in_use", reset.error) : reply({ custom: false, data: (await getStatusSet(env, null)).map(serializeStatus) })
+      const reset = await resetStatuses(env, scope, mapping)
+      return "error" in reset ? fail(409, "statuses_in_use", reset.error) : reply({ custom: false, data: (await currentSet(env, scope)).map(serializeStatus) })
     }
-    return fail(405, "method_not_allowed", "Use GET or POST.")
+    return fail(405, "method_not_allowed", "Use GET, POST or DELETE.")
   }
 
   const [first] = segments
-  if (first === "customize" && scope !== null && method === "POST") {
+  if (first === "customize" && method === "POST") {
     const denied = need(ctx, "manage")
     if (denied) return denied
-    const result = await customizeAppStatuses(env, scope)
+    const result = await customizeStatuses(env, scope)
     return "error" in result ? fail(409, "already_customized", result.error) : reply({ custom: true, data: result.set.map(serializeStatus) }, 201)
   }
   if (first === "order" && method === "POST") {
@@ -302,7 +308,7 @@ async function statusRoute(ctx: Context, scope: StatusScope, segments: string[])
   }
 
   if (!findStatus(current, first)) return fail(404, "status_not_found", "No status with that key.")
-  if (scope !== null && !(await hasCustomSet(env, scope))) return fail(409, "statuses_not_customized", "This app uses the default statuses. Customize them first, or edit the default statuses.")
+  if (!custom) return fail(409, "statuses_not_customized", "These statuses are not customised yet. Call POST .../statuses/customize first.")
   if (method === "PATCH") {
     const denied = need(ctx, "manage")
     if (denied) return denied
@@ -322,6 +328,15 @@ async function statusRoute(ctx: Context, scope: StatusScope, segments: string[])
   return fail(405, "method_not_allowed", "Use PATCH or DELETE.")
 }
 
+async function appOfLicense(env: Env, licenseId: string): Promise<string | null> {
+  return (await env.DB.prepare("SELECT app_id FROM licenses WHERE id = ?").bind(licenseId).first<{ app_id: string | null }>())?.app_id ?? null
+}
+
+/** The statuses in effect for a scope. */
+async function currentSet(env: Env, scope: StatusScope): Promise<StatusSet> {
+  return "app" in scope ? getStatusSetForApp(env, scope.app) : getStatusSetForLicense(env, { id: scope.license, app_id: await appOfLicense(env, scope.license) })
+}
+
 // ---- apps -------------------------------------------------------------------------
 
 async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
@@ -336,8 +351,7 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
       const body = await readJson(request)
       if (body instanceof Response) return body
       if (!("name" in body)) return fail(422, "invalid_name", "name is required.")
-      const set = await getStatusSet(env, null)
-      const parsed = applyAppBody(body, { ...APP_DEFAULTS, default_status: defaultStatusKey(set) }, set)
+      const parsed = applyAppBody(body, { ...APP_DEFAULTS, default_status: defaultStatusKey(DEFAULT_STATUSES) }, DEFAULT_STATUSES)
       if ("response" in parsed) return parsed.response
       const created = await createApp(env, parsed.input)
       return "error" in created ? fail(409, "slug_taken", created.error) : reply(serializeApp((await getAppSummary(env, created.app.id))!), 201)
@@ -356,7 +370,7 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
       if (denied) return denied
       const body = await readJson(request)
       if (body instanceof Response) return body
-      const parsed = applyAppBody(body, toAppInput(app), await getStatusSet(env, app.id))
+      const parsed = applyAppBody(body, toAppInput(app), await getStatusSetForApp(env, app.id))
       if ("response" in parsed) return parsed.response
       const updated = await updateApp(env, app, parsed.input)
       return "error" in updated ? fail(409, "slug_taken", updated.error) : reply(serializeApp((await getAppSummary(env, app.id))!))
@@ -376,7 +390,7 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
     return fail(405, "method_not_allowed", "Use GET or POST.")
   }
   if (sub === "files") return filesRoute(ctx, { app }, rest[0])
-  if (sub === "statuses") return statusRoute(ctx, app.id, rest)
+  if (sub === "statuses") return statusRoute(ctx, { app: app.id }, await getStatusSetForApp(env, app.id), rest)
   return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
 }
 
@@ -400,6 +414,6 @@ export async function handleApi(request: Request, env: Env, execution: Execution
   }
   if (resource === "licenses") return licenseRoute(ctx, rest)
   if (resource === "apps") return appRoute(ctx, rest)
-  if (resource === "statuses") return statusRoute(ctx, null, rest)
+  if (resource === "statuses" && rest.length === 0 && request.method === "GET") return reply({ data: DEFAULT_STATUSES.map(serializeStatus) })
   return fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")
 }

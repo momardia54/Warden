@@ -81,7 +81,7 @@ export const serializeStatus = (s: StatusDef) => ({
   key: s.key,
   label: s.label,
   description: s.description,
-  tone: s.tone,
+  color: s.color,
   grants_access: s.grants_access,
   on_expiry: s.on_expiry,
   check_message: s.check_message,

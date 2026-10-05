@@ -5,7 +5,7 @@ import { Input } from "#/components/ui/input"
 import { FieldLabel } from "#/components/help-tip"
 import { Textarea } from "#/components/ui/textarea"
 import { NativeSelect } from "#/components/ui/native-select"
-import { useStatusSet } from "#/components/status-context"
+import { useStatusSetForLicense } from "#/components/status-context"
 import { defaultStatusKey, findStatus } from "#/lib/statuses"
 
 export type FormValues = {
@@ -35,15 +35,17 @@ type Props = {
   reloadOnAppChange?: boolean
   /** Describes the defaults applied from the selected app. */
   appHint?: string
+  /** The licence being edited, which may have statuses of its own. */
+  licenseId?: string
 }
 
-export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reloadOnAppChange, appHint }: Props) {
+export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reloadOnAppChange, appHint, licenseId = "" }: Props) {
   const busy = useNavigation().state === "submitting"
   const navigate = useNavigate()
   const [status, setStatus] = useState(values.status)
   const [appId, setAppId] = useState(values.app_id)
-  // The statuses available depend on the app: an app can have its own set.
-  const statuses = useStatusSet(appId || null)
+  // The statuses available depend on the licence and its app: either can have its own set.
+  const statuses = useStatusSetForLicense({ id: licenseId, app_id: appId || null })
 
   return (
     <Form method="post" className="max-w-2xl space-y-6">

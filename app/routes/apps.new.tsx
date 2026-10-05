@@ -2,23 +2,22 @@ import { redirect } from "react-router"
 import type { Route } from "./+types/apps.new"
 import { AppForm, EMPTY_APP_FORM } from "#/components/app-form"
 import { PageHeader } from "#/components/page-header"
-import { defaultStatusKey } from "#/lib/statuses"
+import { DEFAULT_STATUSES, defaultStatusKey } from "#/lib/statuses"
 import { requireAuth } from "~/server/auth.server"
 import { createApp, readAppForm } from "~/server/apps.server"
-import { getStatusSet } from "~/server/statuses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "New app | Warden" }]
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env
   await requireAuth(request, env)
-  return { statuses: await getStatusSet(env, null) }
+  return { statuses: DEFAULT_STATUSES }
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env
   await requireAuth(request, env)
-  const parsed = readAppForm(await request.formData(), await getStatusSet(env, null))
+  const parsed = readAppForm(await request.formData(), DEFAULT_STATUSES)
   if ("error" in parsed) return { error: parsed.error }
   const created = await createApp(env, parsed.input)
   if ("error" in created) return { error: created.error }

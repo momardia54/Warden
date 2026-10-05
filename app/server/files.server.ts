@@ -2,7 +2,7 @@ import { cleanFileName, defaultReleaseStatuses, MAX_FILE_BYTES } from "../lib/fi
 import { describeStatusKeys, parseStatusKeys, splitStatusKeys, type StatusSet } from "../lib/statuses"
 import type { App } from "./apps.server"
 import type { License } from "./licenses.server"
-import { getStatusSet } from "./statuses.server"
+import { getStatusSetForApp, getStatusSetForLicense } from "./statuses.server"
 import { newId } from "./util.server"
 
 /** The owner of a file: a single licence, or an app (shared by every licence of that app). */
@@ -37,8 +37,8 @@ export const releaseRule = (f: Pick<LicenseFile, "statuses" | "check_domain">, s
   check_domain: f.check_domain === 1,
 })
 
-/** The status set that applies to the files of an owner: the app's own set if it has one, otherwise the default set. */
-export const statusSetForOwner = (env: Env, owner: FileOwner): Promise<StatusSet> => getStatusSet(env, "license" in owner ? owner.license.app_id : owner.app.id)
+/** The statuses a file's release rule refers to: those of its licence (own, app's or default), or of its app. */
+export const statusSetForOwner = (env: Env, owner: FileOwner): Promise<StatusSet> => ("license" in owner ? getStatusSetForLicense(env, owner.license) : getStatusSetForApp(env, owner.app.id))
 
 export function storageConfigured(env: Env): boolean {
   return Boolean(env.FILES)

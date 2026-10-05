@@ -59,7 +59,7 @@ In every path below, `{id}` can be the licence id (`lic_...`) or the licence key
 |---|---|---|
 | `GET /me` | read | The key's name and scope |
 | `GET /stats` | read | `total`, `in_force`, `not_in_force`, `expiring_within_14_days`, `not_checked_for_3_days` and `by_status` (a count per status key) |
-| `GET /statuses` | read | The default statuses ([statuses.md](statuses.md)) |
+| `GET /statuses` | read | The built-in default statuses ([statuses.md](statuses.md)) |
 | `GET /licenses` | read | List, newest first |
 | `POST /licenses` | manage | Create |
 | `GET /licenses/{id}` | read | One licence |
@@ -106,7 +106,7 @@ Returns `{ "data": [licence, ...], "next": "lic_..." | null }`. `status` is a st
 | `customer_name` | string | Optional, up to 120 characters |
 | `customer_email` | string | Optional, a valid email address |
 | `max_sites` | integer or null | Maximum number of distinct sites (domains) that may use the licence. `null`: unlimited |
-| `status` | string | A status key of the licence's status set. Default: the default status of the set (the app's default status when issued under an app) |
+| `status` | string | A status key of the statuses that apply to the licence. Default: the default status of that set (the app's default status when issued under an app) |
 | `expires_at` | string or null | `YYYY-MM-DD` (end of that day, UTC) or an ISO date-time. `null` or omitted: no expiry date |
 | `duration_days` | integer | Alternative to `expires_at`: ends this many days from now (1 to 3650) |
 | `domains` | array of strings | Allowed domains; subdomains match. Empty: any |
@@ -130,7 +130,7 @@ With an `app`, the duration, status, site limit and public message come from the
 
 ### Status
 
-`POST /licenses/{id}/status` with `{"status": "suspended"}`. The value is a status key of the licence's status set ([statuses.md](statuses.md)); any status of the set can be set. An unknown key returns `422` with the valid keys.
+`POST /licenses/{id}/status` with `{"status": "suspended"}`. The value is a status key of the statuses that apply to the licence ([statuses.md](statuses.md)); any status of the set can be set. An unknown key returns `422` with the valid keys.
 
 ### Renew
 
@@ -179,7 +179,7 @@ Uploading returns `501` when the deployment has no R2 bucket.
 
 ### Statuses
 
-The statuses are configurable: see [statuses.md](statuses.md) for the model and the endpoints (`/statuses` for the default set, `/apps/{app}/statuses` for an app's own set).
+The statuses are configurable at app level and licence level: see [statuses.md](statuses.md) for the model and the endpoints (`/apps/{app}/statuses`, `/licenses/{id}/statuses`; `/statuses` returns the built-in defaults).
 
 ### Sites (activations)
 

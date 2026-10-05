@@ -43,7 +43,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 - **Apps**: a product sold to many customers, with defaults for new licences (status, duration, maximum sites, message), its own licence list and releases shared by all of its licences ([docs/apps.md](docs/apps.md))
 - **Site limit**: a licence can be limited to N sites; sites register on their first check and you can release them
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence, with a customer name and email
-- **Configurable statuses**: a default set (pending, active, completed, suspended, disabled, expired) that you can rename, change, extend and cut down. Each status says whether sites can run, what it becomes when the expiry date passes, its colour and its message to sites. An app can have its own set ([docs/statuses.md](docs/statuses.md))
+- **Configurable statuses** at app level and licence level: everything starts with a built-in set (pending, active, completed, suspended, disabled, expired), and an app or a single licence can customise its own. Each status says whether sites can run, what it becomes when the expiry date passes, its colour (any colour, with presets) and its message to sites ([docs/statuses.md](docs/statuses.md))
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
 - **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
 - Activity log per licence: every check (which domain, which result) and every change
@@ -61,10 +61,10 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | Licences of all apps, with app and status filters | Licence key, check URL and details |
 | ![Sites and files](docs/screenshots/sites-and-files.jpg) | ![Edit a file's release rule](docs/screenshots/edit-file.jpg) |
 | Registered sites, and the files a licence can download | Changing the statuses a file is available in |
-| ![Statuses](docs/screenshots/statuses.jpg) | ![Edit a status](docs/screenshots/edit-status.jpg) |
-| The default statuses, with usage | What a status does: sites, expiry rule, message |
-| ![App statuses](docs/screenshots/app-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
-| An app with its own statuses | Issuing a licence with the app's defaults |
+| ![App statuses](docs/screenshots/app-statuses.jpg) | ![Edit a status](docs/screenshots/edit-status.jpg) |
+| An app with its own statuses | Editing a status: colour picker, sites, expiry rule, message |
+| ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
+| A licence that uses its app's statuses and can customise its own | Issuing a licence with the app's defaults |
 
 ## The check URL
 
@@ -119,7 +119,7 @@ curl           "https://<worker>/api/v1/licenses?status=expired"   -H "Authoriza
 | `manage` | also create, edit, set status, renew |
 | `full` | also delete and regenerate keys |
 
-Endpoints: `GET /me`, `GET /stats`, `GET|POST /statuses`, `PATCH|DELETE /statuses/{key}`, `GET /apps/{app}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
+Endpoints: `GET /me`, `GET /stats`, `GET /statuses`, `GET|POST|DELETE /apps/{app}/statuses` and `/licenses/{id}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
 
 ## Run and deploy
 

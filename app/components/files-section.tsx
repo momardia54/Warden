@@ -32,7 +32,8 @@ export function formatBytes(bytes: number): string {
 
 type LicenseState = { status: string; expires_at: number | null; domains: string }
 
-export type SharedFiles = { appName: string; appHref: string; files: FileRow[] }
+/** Files shared by the licence's app. `statuses` are the app's statuses, which the files' release rules refer to. */
+export type SharedFiles = { appName: string; appHref: string; files: FileRow[]; statuses: StatusSet }
 
 const AVAILABILITY_HELP = (
   <>
@@ -42,9 +43,10 @@ const AVAILABILITY_HELP = (
 )
 const DOMAIN_HELP = "When on, the download request must include a domain (?domain=) that matches the licence's allowed domains. Ignored if the licence has no allowed domains."
 
-function FileRowItem({ file: f, license, statuses, link, onEdit, onDelete }: { file: FileRow; license: LicenseState | null; statuses: StatusSet; link?: string; onEdit?: () => void; onDelete?: () => void }) {
+/** `statuses` are the statuses the file's release rule refers to; `licenseStatuses` are the licence's own, used for its current status. */
+function FileRowItem({ file: f, license, statuses, licenseStatuses, link, onEdit, onDelete }: { file: FileRow; license: LicenseState | null; statuses: StatusSet; licenseStatuses: StatusSet; link?: string; onEdit?: () => void; onDelete?: () => void }) {
   const rule = { statuses: splitStatusKeys(f.statuses, statuses), check_domain: f.check_domain === 1 }
-  const availability = license ? evaluateFileAccess(license, rule, null, Date.now(), true, statuses).allowed : null
+  const availability = license ? evaluateFileAccess(license, rule, null, Date.now(), true, licenseStatuses, statuses).allowed : null
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-sm">
       <div className="min-w-0 space-y-1">
@@ -170,7 +172,7 @@ export function FilesSection({ title = "Files", description, uploadPath, downloa
           {files.length > 0 && (
             <ul className="divide-y rounded-md border">
               {files.map((f) => (
-                <FileRowItem key={f.id} file={f} license={license} statuses={statusSet} link={downloadUrl?.(f.id)} onEdit={() => openEditor(f)} onDelete={() => setRemoving(f)} />
+                <FileRowItem key={f.id} file={f} license={license} statuses={statusSet} licenseStatuses={statusSet} link={downloadUrl?.(f.id)} onEdit={() => openEditor(f)} onDelete={() => setRemoving(f)} />
               ))}
             </ul>
           )}
@@ -182,7 +184,7 @@ export function FilesSection({ title = "Files", description, uploadPath, downloa
               </p>
               <ul className="divide-y rounded-md border">
                 {shared.files.map((f) => (
-                  <FileRowItem key={f.id} file={f} license={license} statuses={statusSet} link={downloadUrl?.(f.id)} />
+                  <FileRowItem key={f.id} file={f} license={license} statuses={shared.statuses} licenseStatuses={statusSet} link={downloadUrl?.(f.id)} />
                 ))}
               </ul>
             </div>

@@ -8,7 +8,7 @@ import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "#/components/ui/empty"
-import { useAllStatuses, useStatusSets } from "#/components/status-context"
+import { statusSetForLicense, useAllStatuses, useStatusSets } from "#/components/status-context"
 import { effectiveStatusKey } from "#/lib/statuses"
 import { requireAuth } from "~/server/auth.server"
 import { listApps } from "~/server/apps.server"
@@ -32,7 +32,7 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
   const allStatuses = useAllStatuses()
 
   const shown = licenses.filter((l) => {
-    if (status !== "all" && effectiveStatusKey(l, (l.app_id && sets.byApp[l.app_id]) || sets.default) !== status) return false
+    if (status !== "all" && effectiveStatusKey(l, statusSetForLicense(sets, l)) !== status) return false
     if (appFilter === "none" ? l.app_id !== null : appFilter !== "all" && l.app_id !== appFilter) return false
     const q = query.trim().toLowerCase()
     return !q || `${l.name} ${l.customer_name} ${l.customer_email} ${l.license_key} ${l.domains} ${l.app_name ?? ""}`.toLowerCase().includes(q)

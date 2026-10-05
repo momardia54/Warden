@@ -6,8 +6,7 @@ import { createLicense, extendLicense, getLicense, overviewStats, readLicenseFor
 import { handleCheck } from "../app/server/check.server.ts"
 import { hmacHex } from "../app/server/util.server.ts"
 
-import { loadStatusSets } from "../app/server/statuses.server.ts"
-const SETS = { default: DEFAULT_STATUSES, byApp: {} }
+const SETS = { byApp: {}, byLicense: {} }
 const input = { name: "Harbor Studio", customer_name: "", customer_email: "", app_id: null, max_sites: null, status: "active" as const, expires_at: null, domains: "", message: "", notes: "" }
 const envOf = () => ({ DB: makeDb().DB }) as unknown as Env
 
