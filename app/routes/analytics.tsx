@@ -60,7 +60,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <PageHeader crumbs={[{ label: "Analytics" }]} />
-      <div className="max-w-6xl space-y-6 p-4 pt-0 lg:px-6">
+      <div className="space-y-6 p-4 pt-0 lg:px-6">
         <PageTitle title="Analytics" description="Licence checks and file downloads from customer sites, per day (UTC)." />
 
         <div className="flex flex-wrap items-center gap-2">

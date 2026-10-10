@@ -89,7 +89,7 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
   return (
     <>
       <PageHeader crumbs={[{ label: "Apps", to: "/apps" }, { label: app.name }]} />
-      <div className="max-w-6xl space-y-6 p-4 pt-0 lg:px-6">
+      <div className="space-y-6 p-4 pt-0 lg:px-6">
         {actionError && (
           <Alert variant="destructive">
             <AlertTitle>The app was not deleted</AlertTitle>

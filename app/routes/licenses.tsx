@@ -77,7 +77,7 @@ export default function Licenses({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <PageHeader crumbs={[{ label: "Licences" }]} />
-      <div className="max-w-6xl space-y-5 p-4 pt-0 lg:px-6">
+      <div className="space-y-5 p-4 pt-0 lg:px-6">
         <PageTitle
           title="Licences"
           description={`${licenses.length}${truncated ? "+" : ""} licence${licenses.length === 1 ? "" : "s"} across ${apps.length} app${apps.length === 1 ? "" : "s"} and standalone projects.`}

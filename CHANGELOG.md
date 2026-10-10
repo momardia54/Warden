@@ -60,6 +60,10 @@ Not released yet: on the `develop` branch.
 - Migrations 0011 (release sources and their imports) and 0012 (GitHub App installation and repository id of a source)
 - docs/repositories.md
 
+### Changed: layout
+
+- Dashboard pages with tables and charts (overview, licences, apps, an app, a licence, analytics, protection, API keys) use the full width of the window instead of stopping at 1,152 pixels. Forms and the Integrations page keep a readable width
+
 ### Changed: terminology
 
 - The descriptions of the built-in statuses use the same terms: Pending is "not valid yet", Active and Completed are "valid"

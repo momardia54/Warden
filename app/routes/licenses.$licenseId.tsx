@@ -141,7 +141,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <PageHeader crumbs={[{ label: "Licences", to: "/licenses" }, ...(license.app_id ? [{ label: license.app_name ?? "App", to: `/apps/${license.app_id}` }] : []), { label: license.name }]} />
-      <div className="max-w-6xl space-y-6 p-4 pt-0 lg:px-6">
+      <div className="space-y-6 p-4 pt-0 lg:px-6">
         {params.get("created") && (
           <Alert>
             <Check />

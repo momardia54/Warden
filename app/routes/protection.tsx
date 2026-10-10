@@ -81,7 +81,7 @@ export default function Protection({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <PageHeader crumbs={[{ label: "Protection" }]} />
-      <div className="max-w-6xl space-y-6 p-4 pt-0 lg:px-6">
+      <div className="space-y-6 p-4 pt-0 lg:px-6">
         <PageTitle
           title="Protection"
           description="Access control for the public check and download endpoints: IP blocklist, rate limits and blocking rules. IP blocking never applies to the dashboard or the API."
