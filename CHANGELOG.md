@@ -4,6 +4,11 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 
 ## 0.1.0 (unreleased)
 
+### Changed: terminology
+
+- Checks are described as **valid** or **invalid** throughout the dashboard, the API and the docs. The licence list views are now `?view=valid` and `?view=invalid` (`in_force` and `not_in_force` still work in bookmarked addresses)
+- API: `GET /stats` returns `valid` and `invalid`, and apps return `licenses_valid`. The earlier fields `in_force`, `not_in_force` and `licenses_in_force` are still returned as deprecated aliases and will be removed before 1.0
+
 ### Added: releases and updates
 
 - A file with a version is a **release**. Releases have a channel (`stable` or `beta`), public release notes and a SHA-256 checksum computed during the upload, and can be **withdrawn** and restored. A withdrawn release is not listed and its download returns `410`

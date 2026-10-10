@@ -43,7 +43,7 @@ The first returns the licence status and the files visible to the licence (its o
 }
 ```
 
-The second returns the file as an attachment (with its SHA-256 in the `X-Warden-Sha256` header), or HTTP 403 with `{ valid, status, message, file }` when the rule is not met, 410 for a withdrawn release, or 404 for an unknown key or file. Downloads and refusals are written to the licence's activity log.
+The second returns the file as an attachment (with its SHA-256 in the `X-Warden-Sha256` header), or HTTP 403 with `{ valid, status, message, file }` when the rule is not met, 410 for a withdrawn release, or 404 for an unknown key or file. Downloads and denied downloads are written to the licence's activity log.
 
 ## Managing files
 

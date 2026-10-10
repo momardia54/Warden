@@ -2,24 +2,24 @@ import { effectiveStatusKey, findStatus, type StatusSet } from "./statuses"
 
 /** Licences whose expiry date falls within this many days count as expiring soon. */
 export const EXPIRING_WINDOW_DAYS = 14
-/** Licences in force that no site has checked for this many days count as silent. */
+/** Valid licences that no site has checked for this many days count as silent. */
 export const SILENT_AFTER_DAYS = 3
 
 const DAY = 86_400_000
 
 /**
  * Saved filters of the licence list, also used by the overview counts so both always agree.
- *   in_force      the status reported to sites lets them run
- *   not_in_force  it does not (for example suspended, disabled or expired)
- *   expiring      in force, with an expiry date within EXPIRING_WINDOW_DAYS that its status reacts to
- *   silent        in force, but no check for SILENT_AFTER_DAYS (the site may be offline or no longer call Warden)
+ *   valid     a check currently returns valid: true (the effective status grants access)
+ *   invalid   a check currently returns valid: false (for example suspended, disabled or expired)
+ *   expiring  valid, with an expiry date within EXPIRING_WINDOW_DAYS that its status reacts to
+ *   silent    valid, but no check for SILENT_AFTER_DAYS (the site may be offline or no longer call Warden)
  */
-export const LICENSE_VIEWS = ["in_force", "not_in_force", "expiring", "silent"] as const
+export const LICENSE_VIEWS = ["valid", "invalid", "expiring", "silent"] as const
 export type LicenseView = (typeof LICENSE_VIEWS)[number]
 
 export const VIEW_LABELS: Record<LicenseView, string> = {
-  in_force: "Valid",
-  not_in_force: "Invalid",
+  valid: "Valid",
+  invalid: "Invalid",
   expiring: `Expiring within ${EXPIRING_WINDOW_DAYS} days`,
   silent: `No check in ${SILENT_AFTER_DAYS}+ days`,
 }
@@ -28,13 +28,16 @@ export function isLicenseView(value: unknown): value is LicenseView {
   return typeof value === "string" && (LICENSE_VIEWS as readonly string[]).includes(value)
 }
 
+/** Earlier names of views, still accepted in the address so bookmarked lists keep working. */
+const VIEW_ALIASES: Record<string, LicenseView> = { in_force: "valid", not_in_force: "invalid" }
+
 type LicenseFacts = { status: string; expires_at: number | null; last_check_at: number | null; created_at: number }
 
 export function inView(license: LicenseFacts, set: StatusSet, view: LicenseView, now = Date.now()): boolean {
-  const inForce = findStatus(set, effectiveStatusKey(license, set, now))?.grants_access ?? false
-  if (view === "in_force") return inForce
-  if (view === "not_in_force") return !inForce
-  if (!inForce) return false
+  const valid = findStatus(set, effectiveStatusKey(license, set, now))?.grants_access ?? false
+  if (view === "valid") return valid
+  if (view === "invalid") return !valid
+  if (!valid) return false
   if (view === "expiring") return license.expires_at !== null && license.expires_at <= now + EXPIRING_WINDOW_DAYS * DAY && Boolean(findStatus(set, license.status)?.on_expiry)
   return now - (license.last_check_at ?? license.created_at) > SILENT_AFTER_DAYS * DAY
 }
@@ -64,7 +67,8 @@ export type LicenseFilter = {
 }
 
 export function readLicenseFilter(params: URLSearchParams): LicenseFilter {
-  const view = params.get("view")
+  const raw = params.get("view") ?? ""
+  const view = Object.hasOwn(VIEW_ALIASES, raw) ? VIEW_ALIASES[raw] : raw
   return { q: params.get("q") ?? "", status: params.get("status") ?? "", app: params.get("app") ?? "", view: isLicenseView(view) ? view : "" }
 }
 

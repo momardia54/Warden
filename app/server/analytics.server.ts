@@ -7,7 +7,7 @@ import { loadStatusSets, setForApp, type StatusSets } from "./statuses.server"
  * Traffic analytics, computed from the activity log when asked (no counters to keep in sync).
  *
  * Whether a check was valid is decided by the status recorded with it, read against the licence's statuses as they
- * are today: changing whether a status lets sites run changes how its past checks are counted. Each figure reads the
+ * are today: changing whether a status is valid changes how its past checks are counted. Each figure reads the
  * rows of one kind of event over the period (index on event, at); checks older than 90 days are deleted daily, which
  * bounds that work.
  */

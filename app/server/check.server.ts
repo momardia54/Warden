@@ -80,7 +80,7 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
 }
 
 async function recordCheck(env: Env, license: License, status: string, domain: string | null, version: string | null, ip: string | null, now: number) {
-  // A site refused for its domain or the site limit is not registered.
+  // A site whose check is invalid because of its domain or the site limit is not registered.
   if (domain && status !== "domain_mismatch" && status !== "site_limit_reached") await recordActivation(env, license, domain, now, version, ip)
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET last_check_at = ?, last_check_domain = ?, check_count = check_count + 1 WHERE id = ?").bind(now, domain, license.id),

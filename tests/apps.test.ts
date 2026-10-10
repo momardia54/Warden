@@ -66,7 +66,7 @@ test("apps: unique slug, defaults, summary, delete rules", async () => {
   await createLicense(env, { ...baseLicense, app_id: app.id, status: "suspended" })
   await createLicense(env, { ...baseLicense, app_id: app.id, expires_at: Date.now() - 1000 })
   const summary = (await getAppSummary(env, "harbor-theme"))!
-  assert.deepEqual([summary.licenses, summary.in_force], [3, 1])
+  assert.deepEqual([summary.licenses, summary.valid], [3, 1])
   assert.equal((await listApps(env)).length, 2)
 
   const refused = await deleteApp(env, app)

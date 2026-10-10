@@ -138,7 +138,7 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
         />
 
         <FactStrip>
-          <Fact label="Licences" value={app.licenses} detail={`${app.in_force} valid`} help="Valid licences are those for which a check currently returns valid: true." />
+          <Fact label="Licences" value={app.licenses} detail={`${app.valid} valid`} help="Valid licences are those for which a check currently returns valid: true." />
           <Fact label="Sites" value={app.sites} detail="Registered across all licences" help="Each site registers on its first check with a domain." />
           <Fact
             label="Latest release"

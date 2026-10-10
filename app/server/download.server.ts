@@ -118,7 +118,7 @@ const publicEntry = (f: VisibleFile) => ({
  *
  *   GET /download/<key>[?domain=example.com][&channel=beta]  lists the licence's files and its app's files, with
  *                                                          availability and the latest release in the channel
- *   GET /download/<key>/<file id>[?domain=example.com]       returns the file, a JSON refusal with HTTP 403, or 410
+ *   GET /download/<key>/<file id>[?domain=example.com]       returns the file, a JSON error with HTTP 403, or 410
  *                                                          for a withdrawn release
  *
  * A file is released when the licence's effective status is one of the file's release statuses and, if the

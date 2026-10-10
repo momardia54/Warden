@@ -74,7 +74,7 @@ export default function Apps({ loaderData }: Route.ComponentProps) {
                       <div className="text-xs text-muted-foreground">{app.description || app.slug}</div>
                     </TableCell>
                     <TableCell className="tabular-nums">{app.licenses}</TableCell>
-                    <TableCell className="hidden tabular-nums sm:table-cell">{app.in_force}</TableCell>
+                    <TableCell className="hidden tabular-nums sm:table-cell">{app.valid}</TableCell>
                     <TableCell className="hidden tabular-nums md:table-cell">{app.sites}</TableCell>
                     <TableCell className="hidden md:table-cell">
                       {app.latest_version ? (

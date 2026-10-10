@@ -28,12 +28,12 @@ test("licence views and list filters", () => {
     status: "active", expires_at: null, last_check_at: now, created_at: now - 30 * DAY, app_id: null, name: "A", customer_name: "", customer_email: "", license_key: "WRD-X", domains: "", ...over,
   })
   const set = DEFAULT_STATUSES
-  assert.equal(inView(lic({}), set, "in_force", now), true)
-  assert.equal(inView(lic({ status: "suspended" }), set, "not_in_force", now), true)
+  assert.equal(inView(lic({}), set, "valid", now), true)
+  assert.equal(inView(lic({ status: "suspended" }), set, "invalid", now), true)
   assert.equal(inView(lic({ expires_at: now + 5 * DAY }), set, "expiring", now), true)
   assert.equal(inView(lic({ expires_at: now + 30 * DAY }), set, "expiring", now), false)
   assert.equal(inView(lic({ status: "completed", expires_at: now + 5 * DAY }), set, "expiring", now), false) // completed ignores the date
-  assert.equal(inView(lic({ expires_at: now - DAY }), set, "expiring", now), false) // already expired: not in force
+  assert.equal(inView(lic({ expires_at: now - DAY }), set, "expiring", now), false) // already expired: not valid
   assert.equal(inView(lic({ last_check_at: now - 4 * DAY }), set, "silent", now), true)
   assert.equal(inView(lic({ last_check_at: null, created_at: now - DAY }), set, "silent", now), false) // new licences get time to check in
   assert.equal(inView(lic({ status: "disabled", last_check_at: null }), set, "silent", now), false)
@@ -46,6 +46,8 @@ test("licence views and list filters", () => {
   assert.deepEqual(run("app=app_1"), ["Atlas"])
   assert.deepEqual(run("status=suspended"), ["Atlas"])
   assert.deepEqual(run("view=expiring"), ["Harbor"])
+  assert.deepEqual(readLicenseFilter(new URLSearchParams("view=in_force")).view, "valid") // earlier name, kept for bookmarks
+  assert.deepEqual(readLicenseFilter(new URLSearchParams("view=not_in_force")).view, "invalid")
   assert.deepEqual(run("view=bogus"), ["Maple Dental", "Atlas", "Harbor"]) // unknown views are ignored
 })
 

@@ -342,12 +342,12 @@ export async function recentActivity(env: Env, id: string, limit = 50): Promise<
 
 export type OverviewStats = {
   total: number
-  /** Licences that sites may currently run under (the status grants access and its expiry rule has not triggered). */
-  inForce: number
-  notInForce: number
-  /** Licences in force whose expiry date falls within the next 14 days (the "expiring" view). */
+  /** Licences for which a check currently returns valid: true (the status grants access and its expiry rule has not triggered). */
+  valid: number
+  invalid: number
+  /** Valid licences whose expiry date falls within the next 14 days (the "expiring" view). */
   endingSoon: number
-  /** Licences in force that no site has checked for 3 days (the "silent" view). */
+  /** Valid licences that no site has checked for 3 days (the "silent" view). */
   silent: number
   /** Number of licences per effective status key. */
   byStatus: Record<string, number>
@@ -356,23 +356,23 @@ export type OverviewStats = {
 export async function overviewStats(env: Env, now = Date.now()): Promise<OverviewStats> {
   const sets = await loadStatusSets(env)
   const rows = (await env.DB.prepare("SELECT id, status, expires_at, last_check_at, created_at, app_id FROM licenses").all<Pick<License, "id" | "status" | "expires_at" | "last_check_at" | "created_at" | "app_id">>()).results
-  const stats: OverviewStats = { total: rows.length, inForce: 0, notInForce: 0, endingSoon: 0, silent: 0, byStatus: {} }
+  const stats: OverviewStats = { total: rows.length, valid: 0, invalid: 0, endingSoon: 0, silent: 0, byStatus: {} }
   for (const row of rows) {
     const set = setForLicense(sets, row)
     const effective = effectiveStatusKey(row, set, now)
     stats.byStatus[effective] = (stats.byStatus[effective] ?? 0) + 1
-    if (!inView(row, set, "in_force", now)) {
-      stats.notInForce++
+    if (!inView(row, set, "valid", now)) {
+      stats.invalid++
       continue
     }
-    stats.inForce++
+    stats.valid++
     if (inView(row, set, "expiring", now)) stats.endingSoon++
     if (inView(row, set, "silent", now)) stats.silent++
   }
   return stats
 }
 
-/** Licences that need a decision: in force and expiring soon (soonest first), and in force but silent (longest first). */
+/** Licences that need a decision: valid and expiring soon (soonest first), and valid but silent (longest first). */
 export async function attentionLists(env: Env, limit = 8, now = Date.now()): Promise<{ expiring: License[]; silent: License[] }> {
   const sets = await loadStatusSets(env)
   const rows = (await env.DB.prepare(`${SELECT_LICENSES} WHERE l.expires_at IS NOT NULL OR l.last_check_at IS NULL OR l.last_check_at < ?`).bind(now - SILENT_AFTER_DAYS * 86_400_000).all<License>()).results

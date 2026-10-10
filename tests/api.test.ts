@@ -140,7 +140,7 @@ test("list: filters, search, pagination, stats", async () => {
   assert.equal(new Set([...page1.data, ...page2.data, ...page3.data].map((l: any) => l.id)).size, 7)
 
   const stats = (await call("GET", "/stats", keys.read)).json
-  assert.deepEqual([stats.total, stats.by_status.active, stats.by_status.expired, stats.by_status.suspended, stats.in_force, stats.not_in_force], [7, 5, 1, 1, 5, 2])
+  assert.deepEqual([stats.total, stats.by_status.active, stats.by_status.expired, stats.by_status.suspended, stats.valid, stats.invalid, stats.in_force, stats.not_in_force], [7, 5, 1, 1, 5, 2, 5, 2])
 })
 
 test("helpers", () => {
@@ -188,7 +188,7 @@ test("API: apps, defaults, listing and permissions", async () => {
   assert.equal((await call("GET", "/licenses?app=nope", keys.read)).status, 422)
   assert.equal((await call("GET", "/licenses?q=alice%40example", keys.read)).json.data.length, 1)
   const summary = (await call("GET", "/apps", keys.read)).json.data[0]
-  assert.deepEqual([summary.licenses, summary.licenses_in_force], [2, 1])
+  assert.deepEqual([summary.licenses, summary.licenses_valid, summary.licenses_in_force], [2, 1, 1])
 
   // move a licence to another app, and out of any app
   const other = (await call("POST", "/apps", keys.manage, { name: "Other" })).json

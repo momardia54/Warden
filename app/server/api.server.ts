@@ -494,7 +494,7 @@ export async function handleApi(request: Request, env: Env, execution: Execution
   if (resource === "me" && request.method === "GET") return reply({ name: key.name, scope: key.scope, prefix: key.prefix })
   if (resource === "stats" && request.method === "GET") {
     const stats = await overviewStats(env)
-    return reply({ total: stats.total, in_force: stats.inForce, not_in_force: stats.notInForce, expiring_within_14_days: stats.endingSoon, not_checked_for_3_days: stats.silent, by_status: stats.byStatus })
+    return reply({ total: stats.total, valid: stats.valid, invalid: stats.invalid, in_force: stats.valid, not_in_force: stats.invalid, expiring_within_14_days: stats.endingSoon, not_checked_for_3_days: stats.silent, by_status: stats.byStatus })
   }
   if (resource === "analytics" && rest.length === 0 && request.method === "GET") return analyticsRoute(ctx)
   if (resource === "ip-blocks") return ipBlockRoute(ctx, rest)

@@ -59,7 +59,7 @@ export function openApiSpec(origin: string) {
     security: secured,
     paths: {
       "/me": { get: { summary: "Who the key belongs to", responses: { 200: { description: "Key name and scope" }, 401: err } } },
-      "/stats": { get: { summary: "Licence statistics", responses: { 200: { description: "{ total, in_force, not_in_force, expiring_within_14_days, not_checked_for_3_days, by_status }" }, 401: err } } },
+      "/stats": { get: { summary: "Licence statistics", responses: { 200: { description: "{ total, valid, invalid, expiring_within_14_days, not_checked_for_3_days, by_status }; in_force and not_in_force are deprecated aliases of valid and invalid" }, 401: err } } },
       "/ip-blocks": {
         get: {
           summary: "Blocked IP addresses and ranges",
@@ -319,7 +319,7 @@ export function openApiSpec(origin: string) {
           properties: {
             id: { type: "string" }, name: { type: "string" }, customer_name: { type: "string" }, customer_email: { type: "string" }, app: { type: ["object", "null"], properties: { id: { type: "string" }, slug: { type: "string" }, name: { type: "string" } } }, max_sites: { type: ["integer", "null"] }, sites_used: { type: "integer" }, key: { type: "string" }, check_url: { type: "string" },
             status: { type: "string", description: "The status reported to sites: the stored status, or the status its expiry rule points to once the expiry date has passed" },
-            stored_status: { type: "string" }, valid: { type: "boolean", description: "true when the reported status lets sites run (by default Active and Completed)" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
+            stored_status: { type: "string" }, valid: { type: "boolean", description: "true when the reported status is valid (grants_access; by default Active and Completed)" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
             message: { type: "string" }, notes: { type: "string" }, external_ref: { type: ["string", "null"] },
             created_at: { type: "string" }, updated_at: { type: "string" }, last_check_at: { type: ["string", "null"] }, last_check_domain: { type: ["string", "null"] }, check_count: { type: "integer" },
           },

@@ -35,7 +35,7 @@ The overview shows the checks of the last 30 days across all licences, each app 
 ## How the figures are computed
 
 - Days are calendar days in UTC.
-- A check is **valid** if the status recorded with it lets sites run, read against the licence's statuses as they are today. If you later change whether a status lets sites run, its past checks are counted the new way.
+- A check is **valid** if the status recorded with it is valid, read against the licence's statuses as they are today. If you later change whether a status is valid, its past checks are counted the new way.
 - Checks rejected for the domain or the site limit do not register a site, so they do not count towards active sites.
 - Checks are deleted after 90 days by the daily scheduled job, which is why no period goes further back. Downloads and changes are kept.
 - Nothing is pre-aggregated: the figures are read from the activity log each time a page is opened. D1 bills rows read. A site checking about twice a day adds about 60 check rows per 30 days. The overview chart reads those rows once (300 sites: about 18,000 rows per load). The Analytics page reads them about six times (300 sites over 90 days: about 330,000 rows). The D1 free plan allows 5 million rows read per day.

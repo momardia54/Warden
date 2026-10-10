@@ -26,7 +26,8 @@ export type AppInput = Omit<App, "id" | "created_at" | "updated_at">
 export type AppSummary = App & {
   licenses: number
   /** Licences that are currently valid for sites: completed, or active and not expired. */
-  in_force: number
+  /** Licences for which a check currently returns valid: true. */
+  valid: number
   /** Total number of site activations across the app's licences. */
   sites: number
   files: number
@@ -116,7 +117,7 @@ export async function listApps(env: Env, now = Date.now()): Promise<AppSummary[]
         (SELECT COUNT(*) FROM activations x JOIN licenses l ON l.id = x.license_id WHERE l.app_id = a.id) AS sites,
         (SELECT COUNT(*) FROM files f WHERE f.app_id = a.id) AS files
        FROM apps a ORDER BY a.name COLLATE NOCASE`
-    ).all<Omit<AppSummary, "latest_version" | "in_force">>()
+    ).all<Omit<AppSummary, "latest_version" | "valid">>()
   ).results
   const versions = (
     await env.DB.prepare("SELECT app_id, version, channel, withdrawn_at FROM files WHERE app_id IS NOT NULL AND version != '' AND withdrawn_at IS NULL").all<{ app_id: string; version: string; channel: string; withdrawn_at: null }>()
@@ -125,8 +126,8 @@ export async function listApps(env: Env, now = Date.now()): Promise<AppSummary[]
   const licenses = (await env.DB.prepare("SELECT app_id, status, expires_at FROM licenses WHERE app_id IS NOT NULL").all<{ app_id: string; status: string; expires_at: number | null }>()).results
   return apps.map((app) => {
     const set = setForApp(sets, app.id)
-    const inForce = licenses.filter((l) => l.app_id === app.id && findStatus(set, effectiveStatusKey(l, set, now))?.grants_access).length
-    return { ...app, in_force: inForce, latest_version: latestRelease(versions.filter((v) => v.app_id === app.id))?.version ?? null }
+    const valid = licenses.filter((l) => l.app_id === app.id && findStatus(set, effectiveStatusKey(l, set, now))?.grants_access).length
+    return { ...app, valid, latest_version: latestRelease(versions.filter((v) => v.app_id === app.id))?.version ?? null }
   })
 }
 

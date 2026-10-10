@@ -49,7 +49,7 @@ Errors: HTTP status plus `{ "error": { "code": "...", "message": "..." } }`. `40
 }
 ```
 
-`status` is what a site is told: the stored status, or the status its expiry rule points to once the expiry date has passed (by default Active becomes Expired). `stored_status` is what is saved. `valid` is `true` when that status lets sites run. `app` is `null` for a standalone licence. `max_sites` is `null` when the number of sites is unlimited; `sites_used` is the number of sites that have registered.
+`status` is what a site is told: the stored status, or the status its expiry rule points to once the expiry date has passed (by default Active becomes Expired). `stored_status` is what is saved. `valid` is `true` when that status is valid (`grants_access`). `app` is `null` for a standalone licence. `max_sites` is `null` when the number of sites is unlimited; `sites_used` is the number of sites that have registered.
 
 In every path below, `{id}` can be the licence id (`lic_...`) or the licence key (`WRD-...`).
 
@@ -58,8 +58,8 @@ In every path below, `{id}` can be the licence id (`lic_...`) or the licence key
 | Method and path | Scope | What it does |
 |---|---|---|
 | `GET /me` | read | The key's name and scope |
-| `GET /stats` | read | `total`, `in_force`, `not_in_force`, `expiring_within_14_days`, `not_checked_for_3_days` and `by_status` (a count per status key) |
-| `GET /analytics` | read | Checks and downloads per day, totals, refusal reasons, busiest licences and files (`days`, `app`, `license`; see [analytics.md](analytics.md)) |
+| `GET /stats` | read | `total`, `valid`, `invalid`, `expiring_within_14_days`, `not_checked_for_3_days` and `by_status` (a count per status key). `in_force` and `not_in_force` are deprecated aliases of `valid` and `invalid` |
+| `GET /analytics` | read | Checks and downloads per day, totals, invalid checks by reason, top licences and files (`days`, `app`, `license`; see [analytics.md](analytics.md)) |
 | `GET /ip-blocks` | read | Blocked IP addresses and ranges ([protection.md](protection.md)) |
 | `POST /ip-blocks` | manage | Block an address or range (`ip`, `reason`, `expires_at`) |
 | `DELETE /ip-blocks/{id}` | manage | Remove a block |
@@ -194,7 +194,7 @@ The statuses are configurable at app level and licence level: see [statuses.md](
 
 ### Sites (activations)
 
-A site registers when it checks the licence with its domain (`?domain=`). When the licence has a `max_sites` limit, further sites are refused (`site_limit_reached`) once it is reached.
+A site registers when it checks the licence with its domain (`?domain=`). When the licence has a `max_sites` limit, checks from further sites are invalid (`site_limit_reached`) once it is reached.
 
 `GET /licenses/{id}/activations` returns `{ "max_sites": 3, "data": [ { "domain", "version", "first_seen_at", "last_seen_at", "check_count" } ] }`. `version` is the version the site last reported with its check (`?version=`), or `null`. `DELETE /licenses/{id}/activations/{domain}` releases a site; it can register again on its next check if the licence has room. See [apps.md](apps.md#sites-and-the-site-limit).
 
@@ -214,7 +214,7 @@ An app is a product you license to many customers. See [apps.md](apps.md) for th
   "default_message": "Thank you for your purchase",
   "notes": "",
   "licenses": 3,
-  "licenses_in_force": 3,
+  "licenses_valid": 3,
   "sites": 2,
   "files": 3,
   "latest_version": "2.0.0",
@@ -227,7 +227,7 @@ An app is a product you license to many customers. See [apps.md](apps.md) for th
 
 `DELETE /apps/{app}` needs the `full` permission and returns `409` (`app_not_empty`) while the app still has licences. It deletes the app's files.
 
-`licenses_in_force` counts licences that are currently valid (their status lets sites run). `latest_version` is the highest stable version among the app's current releases (withdrawn releases excluded).
+`licenses_valid` counts licences for which a check currently returns `valid: true`. `licenses_in_force` is a deprecated alias with the same value. `latest_version` is the highest stable version among the app's current releases (withdrawn releases excluded).
 
 `GET /apps/{app}/versions` returns `{ "latest_version", "sites", "outdated", "data": [ { "version", "sites", "outdated" } ] }`: how many sites run each reported version, newest first (`version` is `null` for sites that never reported one).
 

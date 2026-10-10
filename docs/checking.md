@@ -12,7 +12,7 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 
 | `status` | `valid` | Meaning |
 |---|---|---|
-| a status key, such as `active` or `completed` | true | The status lets sites run, its expiry rule has not triggered, and the domain is allowed |
+| a status key, such as `active` or `completed` | true | The status is valid, its expiry rule has not triggered, and the domain is allowed |
 | a status key, such as `pending`, `suspended`, `disabled` or `expired` | false | The status does not let sites run. Which statuses exist, and which let sites run, is configured per app and per licence ([statuses.md](statuses.md)) |
 | `domain_mismatch` | false | The site sent a domain that is not allowed for the licence, or no domain although the licence has a site limit |
 | `site_limit_reached` | false | The licence is already used on its maximum number of sites, and this domain is not one of them |

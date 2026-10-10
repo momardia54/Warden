@@ -47,7 +47,9 @@ export function serializeApp(a: AppSummary) {
     default_message: a.default_message,
     notes: a.notes,
     licenses: a.licenses,
-    licenses_in_force: a.in_force,
+    licenses_valid: a.valid,
+    /** Deprecated alias of licenses_valid. */
+    licenses_in_force: a.valid,
     sites: a.sites,
     files: a.files,
     latest_version: a.latest_version,

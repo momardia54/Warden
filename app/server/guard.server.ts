@@ -104,7 +104,7 @@ export function resetGuard() {
 const CORS = { "access-control-allow-origin": "*", "cache-control": "no-store" }
 
 /**
- * Returns the refusal for a blocked or rate-limited caller of /check or /download, or null to go on. A blocked
+ * Returns the error response for a blocked or rate-limited caller of /check or /download, or null to go on. A blocked
  * caller gets a verdict (`valid: false`, status `blocked`). A rate-limited caller gets no verdict, only `429` with
  * Retry-After: a site that checks too often should keep its last answer, not shut down.
  */

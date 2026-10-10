@@ -47,7 +47,7 @@ A licence can limit how many different sites (domains) may use it. Each site reg
 
 1. The customer's site checks the licence with its domain: `GET /check/<key>?domain=harborstudio.com`.
 2. If the licence has room, the domain is registered and the check succeeds.
-3. When the limit is reached, a new domain is refused with `site_limit_reached`. Domains that are already registered keep working.
+3. When the limit is reached, a check from a new domain is invalid, with `site_limit_reached`. Domains that are already registered keep working.
 4. On the licence page, **Release site** frees a slot, for example when the customer moves to a new domain. The old site can register again if there is room.
 
 A licence with a site limit requires the domain in every check (and download). A licence without a limit does not.

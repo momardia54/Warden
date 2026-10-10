@@ -25,7 +25,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   await requireAuth(request, env)
   const [stats, attention, events, apps, traffic] = await Promise.all([overviewStats(env), attentionLists(env), recentEvents(env, 12), listApps(env), dailyTraffic(env, {}, 30, Date.now(), "checks")])
   const outdated = await outdatedSitesByApp(env, apps)
-  return { stats, attention, events, traffic: traffic.series, apps: apps.map((a) => ({ id: a.id, name: a.name, licenses: a.licenses, in_force: a.in_force, sites: a.sites, latest_version: a.latest_version, outdated: outdated[a.id] ?? 0 })) }
+  return { stats, attention, events, traffic: traffic.series, apps: apps.map((a) => ({ id: a.id, name: a.name, licenses: a.licenses, valid: a.valid, sites: a.sites, latest_version: a.latest_version, outdated: outdated[a.id] ?? 0 })) }
 }
 
 export default function Overview({ loaderData }: Route.ComponentProps) {
@@ -43,7 +43,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
       <div className="max-w-6xl space-y-8 p-4 pt-0 lg:px-6">
         <PageTitle
           title="Overview"
-          description={stats.total === 0 ? "Nothing issued yet. Start with an app for a product you sell, or a standalone licence for a single project." : `${stats.total} licence${stats.total === 1 ? "" : "s"}, ${stats.inForce} valid.`}
+          description={stats.total === 0 ? "Nothing issued yet. Start with an app for a product you sell, or a standalone licence for a single project." : `${stats.total} licence${stats.total === 1 ? "" : "s"}, ${stats.valid} valid.`}
           actions={
             <>
               <Button asChild variant="outline">
@@ -59,8 +59,8 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         />
 
         <FactStrip>
-          <Fact label="Valid licences" to="/licenses?view=in_force" value={stats.inForce} detail={`of ${stats.total} licences`} help="Licences for which a check currently returns valid: true." />
-          <Fact label="Invalid licences" to="/licenses?view=not_in_force" value={stats.notInForce} detail="Checks return valid: false" help="Licences for which a check currently returns valid: false, such as pending, suspended, disabled or expired licences." />
+          <Fact label="Valid licences" to="/licenses?view=valid" value={stats.valid} detail={`of ${stats.total} licences`} help="Licences for which a check currently returns valid: true." />
+          <Fact label="Invalid licences" to="/licenses?view=invalid" value={stats.invalid} detail="Checks return valid: false" help="Licences for which a check currently returns valid: false, such as pending, suspended, disabled or expired licences." />
           <Fact
             label={VIEW_LABELS.expiring}
             to="/licenses?view=expiring&sort=expires&dir=asc"
@@ -183,7 +183,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                         {a.name}
                       </Link>
                       <div className="text-xs text-muted-foreground tabular-nums">
-                        {a.in_force} of {a.licenses} valid, {a.sites} site{a.sites === 1 ? "" : "s"}
+                        {a.valid} of {a.licenses} valid, {a.sites} site{a.sites === 1 ? "" : "s"}
                       </div>
                     </div>
                     {a.outdated > 0 && (
