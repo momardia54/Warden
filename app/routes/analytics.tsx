@@ -61,7 +61,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
     <>
       <PageHeader crumbs={[{ label: "Analytics" }]} />
       <div className="max-w-6xl space-y-6 p-4 pt-0 lg:px-6">
-        <PageTitle title="Analytics" description="Checks from your customers' sites and downloads of your files, by day (UTC)." />
+        <PageTitle title="Analytics" description="Licence checks and file downloads from customer sites, per day (UTC)." />
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-md border p-0.5" role="group" aria-label="Period">
@@ -90,7 +90,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
           ) : (
             <div className="w-52">
               <NativeSelect value={app} onChange={(e) => update("app", e.target.value)} aria-label="Filter by app">
-                <option value="">All apps and licences</option>
+                <option value="">All licences</option>
                 <option value="none">Standalone licences</option>
                 {apps.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -105,31 +105,31 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
         {/* While another period loads, the current figures stay in place, dimmed. */}
         <div className={cn("space-y-8 transition-opacity", loading && "opacity-60")}>
           <FactStrip>
-            <Fact label="Checks" value={totals.checks.toLocaleString("en-GB")} detail={`${percent(totals.valid, totals.checks)} valid`} help="Every call of a check URL in the period, whatever the answer." />
+            <Fact label="Checks" value={totals.checks.toLocaleString("en-GB")} detail={`${percent(totals.valid, totals.checks)} valid`} help="All licence checks in the period, valid and invalid." />
             <Fact
-              label="Refused checks"
-              value={totals.refused.toLocaleString("en-GB")}
-              detail={`${percent(totals.refused, totals.checks)} of checks`}
-              tone={totals.refused > 0 ? "warning" : "default"}
-              help="Checks answered as not valid: a status that does not let the site run (suspended, expired…), a domain that is not allowed, or a full site limit."
+              label="Invalid checks"
+              value={totals.invalid.toLocaleString("en-GB")}
+              detail={`${percent(totals.invalid, totals.checks)} of checks`}
+              tone={totals.invalid > 0 ? "warning" : "default"}
+              help="Checks answered with valid: false: a status that does not allow use (such as suspended or expired), a domain that is not allowed, or a site limit reached."
             />
-            <Fact label="Active sites" value={totals.sites.toLocaleString("en-GB")} detail={`${totals.new_sites} new in the period`} help="Distinct sites (a licence on a domain) that checked in during the period. Sites refused for their domain or the site limit are not counted." />
+            <Fact label="Active sites" value={totals.sites.toLocaleString("en-GB")} detail={`${totals.new_sites} new in the period`} help="Distinct sites (a licence on a domain) with at least one check in the period. Checks rejected for the domain or the site limit are excluded." />
             <Fact
               label="Downloads"
               value={totals.downloads.toLocaleString("en-GB")}
-              detail={totals.refused_downloads > 0 ? `${totals.refused_downloads} refused` : "None refused"}
-              help="Files downloaded through download links. A refused download is a request for a file the licence's status does not release."
+              detail={`${totals.denied_downloads.toLocaleString("en-GB")} denied`}
+              help="Completed file downloads. Denied downloads are requests for a file that the licence's status does not release."
             />
           </FactStrip>
 
           <section className="rounded-lg border bg-card p-4">
             <ColumnChart
               title="Checks per day"
-              description="Valid answers let the site run; refused ones do not."
+              description="Valid and invalid checks."
               data={series}
               series={[
                 { key: "valid", label: "Valid", color: "var(--chart-1)" },
-                { key: "refused", label: "Refused", color: "var(--chart-2)" },
+                { key: "invalid", label: "Invalid", color: "var(--chart-2)" },
               ]}
               height={220}
             />
@@ -137,28 +137,28 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
 
           <div className="grid gap-6 lg:grid-cols-2">
             <section className="rounded-lg border bg-card p-4">
-              <ColumnChart title="Active sites per day" description="Distinct sites that checked in." data={series} series={[{ key: "sites", label: "Sites", color: "var(--chart-1)" }]} height={160} />
+              <ColumnChart title="Active sites per day" description="Distinct sites with at least one check." data={series} series={[{ key: "sites", label: "Sites", color: "var(--chart-1)" }]} height={160} />
             </section>
             <section className="rounded-lg border bg-card p-4">
-              <ColumnChart title="Downloads per day" description="Files downloaded through download links." data={series} series={[{ key: "downloads", label: "Downloads", color: "var(--chart-1)" }]} height={160} />
+              <ColumnChart title="Downloads per day" description="Completed file downloads." data={series} series={[{ key: "downloads", label: "Downloads", color: "var(--chart-1)" }]} height={160} />
             </section>
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
             <section className="space-y-3">
-              <h2 className="font-semibold">Why checks were refused</h2>
-              {report.refusals.length === 0 ? (
-                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No check was refused in this period.</p>
+              <h2 className="font-semibold">Invalid checks by reason</h2>
+              {report.reasons.length === 0 ? (
+                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No invalid checks in this period.</p>
               ) : (
                 <ul className="divide-y rounded-lg border bg-card">
-                  {report.refusals.map((r) => (
+                  {report.reasons.map((r) => (
                     <li key={r.key} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1.5 px-4 py-2.5 text-sm">
                       <span className="truncate">{r.label}</span>
                       <span className="text-muted-foreground tabular-nums">
-                        {r.checks.toLocaleString("en-GB")} <span className="text-xs">({percent(r.checks, totals.refused)})</span>
+                        {r.checks.toLocaleString("en-GB")} <span className="text-xs">({percent(r.checks, totals.invalid)})</span>
                       </span>
                       <span className="col-span-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                        <span className="block h-full rounded-full" style={{ width: percent(r.checks, totals.refused), background: "var(--chart-2)" }} />
+                        <span className="block h-full rounded-full" style={{ width: percent(r.checks, totals.invalid), background: "var(--chart-2)" }} />
                       </span>
                     </li>
                   ))}
@@ -167,9 +167,9 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
             </section>
 
             <section className="space-y-3">
-              <ListHeading title="Most checked licences" count={report.licenses.length} expanded={expanded.licenses} onToggle={() => toggle("licenses")} />
+              <ListHeading title="Top licences by checks" count={report.licenses.length} expanded={expanded.licenses} onToggle={() => toggle("licenses")} />
               {report.licenses.length === 0 ? (
-                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No licence was checked in this period.</p>
+                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No checks in this period.</p>
               ) : (
                 <div className="overflow-hidden rounded-lg border bg-card">
                   <table className="w-full text-sm">
@@ -177,7 +177,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                       <tr>
                         <th className="px-4 py-2 text-left font-medium">Licence</th>
                         <th className="w-20 px-3 py-2 text-right font-medium">Checks</th>
-                        <th className="w-24 px-4 py-2 text-right font-medium">Refused</th>
+                        <th className="w-24 px-4 py-2 text-right font-medium">Invalid</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -188,11 +188,11 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                               {l.name}
                             </Link>
                             <span className="block truncate text-xs text-muted-foreground">
-                              {l.app_name ?? "Standalone"}, last check <Ago ts={l.last_check_at} />
+                              {l.app_name ?? "Standalone"}, last checked <Ago ts={l.last_check_at} />
                             </span>
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">{compactNumber(l.checks)}</td>
-                          <td className={cn("px-4 py-2 text-right tabular-nums", l.refused > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{compactNumber(l.refused)}</td>
+                          <td className={cn("px-4 py-2 text-right tabular-nums", l.invalid > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{compactNumber(l.invalid)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -203,9 +203,9 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
           </div>
 
           <section className="space-y-3">
-            <ListHeading title="Most downloaded files" count={report.files.length} expanded={expanded.files} onToggle={() => toggle("files")} />
+            <ListHeading title="Top files by downloads" count={report.files.length} expanded={expanded.files} onToggle={() => toggle("files")} />
             {report.files.length === 0 ? (
-              <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No file was downloaded in this period.</p>
+              <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No downloads in this period.</p>
             ) : (
               <ul className="divide-y rounded-lg border bg-card">
                 {preview(report.files, "files").map((f) => (
@@ -220,17 +220,17 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <section className="space-y-3">
-              <ListHeading title="Top addresses" count={report.ips.length} expanded={expanded.ips} onToggle={() => toggle("ips")} />
+              <ListHeading title="Top IP addresses" count={report.ips.length} expanded={expanded.ips} onToggle={() => toggle("ips")} />
               {report.ips.length === 0 ? (
-                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No address recorded in this period. Addresses are recorded since this version of Warden.</p>
+                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No IP addresses recorded in this period.</p>
               ) : (
                 <div className="overflow-x-auto rounded-lg border bg-card">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50 text-xs text-muted-foreground">
                       <tr>
-                        <th className="px-4 py-2 text-left font-medium">Address</th>
+                        <th className="px-4 py-2 text-left font-medium">IP address</th>
                         <th className="px-3 py-2 text-right font-medium">Checks</th>
-                        <th className="px-3 py-2 text-right font-medium">Refused</th>
+                        <th className="px-3 py-2 text-right font-medium">Invalid</th>
                         <th className="px-3 py-2 text-right font-medium">Downloads</th>
                         <th className="px-4 py-2 text-right font-medium">Licences</th>
                       </tr>
@@ -242,7 +242,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                             <IpAddress ip={row.ip} blocked={row.blocked} />
                           </td>
                           <td className="px-3 py-2 text-right">{compactNumber(row.checks)}</td>
-                          <td className={cn("px-3 py-2 text-right", row.refused > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{compactNumber(row.refused)}</td>
+                          <td className={cn("px-3 py-2 text-right", row.invalid > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{compactNumber(row.invalid)}</td>
                           <td className="px-3 py-2 text-right">{compactNumber(row.downloads)}</td>
                           <td className="px-4 py-2 text-right">{row.licenses}</td>
                         </tr>
@@ -251,35 +251,35 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                   </table>
                 </div>
               )}
-              <p className="text-xs text-muted-foreground">An address that checks many licences, or gets many refusals, is worth a look. Click an address to block it.</p>
+              <p className="text-xs text-muted-foreground">A high number of licences or invalid checks from one address can indicate key sharing or misuse. Select an address to block it.</p>
             </section>
 
             <section className="space-y-3">
-              <h2 className="font-semibold">Refused before any licence was read</h2>
+              <h2 className="font-semibold">Blocked and rate-limited requests</h2>
               {totals.blocked === null || totals.rate_limited === null ? (
-                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">These requests belong to no licence, so they are counted for the whole installation only. Clear the filter to see them.</p>
+                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Not attributable to a licence. Available for all licences only.</p>
               ) : (
                 <dl className="divide-y rounded-lg border bg-card text-sm">
                   <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
                     <dt>
                       <Link to="/protection" className="hover:underline">
-                        From a blocked address
+                        Blocked IP addresses (403)
                       </Link>
                     </dt>
                     <dd className="tabular-nums">{totals.blocked.toLocaleString("en-GB")}</dd>
                   </div>
                   <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
-                    <dt>Over a rate limit</dt>
+                    <dt>Rate limited (429)</dt>
                     <dd className="tabular-nums">{totals.rate_limited.toLocaleString("en-GB")}</dd>
                   </div>
                 </dl>
               )}
-              <p className="text-xs text-muted-foreground">Approximate counts of checks and downloads refused with 403 (blocked) or 429 (too many requests).</p>
+              <p className="text-xs text-muted-foreground">Checks and downloads rejected before licence validation. Counts are approximate.</p>
             </section>
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Checks are kept for 90 days. A check counts as valid if its status lets sites run under the statuses in use today.
+            Check history is retained for 90 days. Validity is evaluated against the current status configuration.
           </p>
         </div>
       </div>

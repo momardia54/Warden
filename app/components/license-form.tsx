@@ -133,7 +133,7 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
       </div>
 
       <div className="space-y-2">
-        <FieldLabel htmlFor="max_sites" help="How many different sites (domains) may use this licence. Each site registers automatically on its first successful check; further sites are refused once the limit is reached. You can release a site on the licence page to free its slot.">
+        <FieldLabel htmlFor="max_sites" help="How many different sites (domains) may use this licence. Each site registers automatically on its first successful check; checks from additional sites return site_limit_reached once the limit is reached. You can release a site on the licence page to free its slot.">
           Maximum sites
         </FieldLabel>
         <Input id="max_sites" name="max_sites" type="number" min={1} step={1} key={values.max_sites} defaultValue={values.max_sites} placeholder="Unlimited" className="max-w-40" />

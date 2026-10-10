@@ -48,11 +48,11 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
 - **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
 - Activity log per licence: every check (which domain, which result) and every change
-- **Protection**: the IP address of every check and download, block an address or range from any log line or directly, rate limits per address, per licence key and per API key, and rules that block automatically (key guessing, refused checks, many licences from one address, staying over a limit), all set in the dashboard ([docs/protection.md](docs/protection.md))
-- **Analytics**: checks per day (valid and refused), why checks were refused, active sites, downloads, the busiest licences and the most downloaded files, over 7, 30 or 90 days, for everything or one app ([docs/analytics.md](docs/analytics.md))
-- **Overview** with a *Needs attention* queue: licences expiring soon (extend them in one click) and licences in force whose site stopped checking in, plus apps with sites on an old version
+- **Protection**: client IP address of every check and download, an IP blocklist (addresses and CIDR ranges), rate limits per IP address, licence key and API key, and blocking rules (invalid licence keys, invalid checks, licences per IP address, rate limit violations) with an allowlist, all configured in the dashboard ([docs/protection.md](docs/protection.md))
+- **Analytics**: valid and invalid checks per day, invalid checks by reason, active sites, downloads, and top licences, files and IP addresses, over 7, 30 or 90 days, for everything or one app ([docs/analytics.md](docs/analytics.md))
+- **Overview** with a *Needs attention* queue: licences expiring soon (extend them in one click) and valid licences with no recent check, plus apps with outdated sites
 - **Quick search** (Ctrl+K or Cmd+K) across licences, customers, keys, site domains and apps
-- **Licence list** with saved views in the address (in force, not in force, expiring, silent), filters, sorting and **CSV export**
+- **Licence list** with saved views in the address (valid, invalid, expiring, no recent check), filters, sorting and **CSV export**
 - **Files per licence** (stored in R2), each with a release rule: the licence statuses in which it can be downloaded. Use it to ship updates while a licence is in effect, to release a final build when the client has paid in full, or to serve a notice while a licence is suspended ([docs/files.md](docs/files.md))
 - **Extend expiry** in one click (+30 days, +90 days, +1 year) and **regenerate key**
 - **API** with scoped keys, idempotent create, renew, status, search and paging, plus an OpenAPI description
@@ -69,7 +69,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | ![App statuses](docs/screenshots/app-statuses.jpg) | ![Edit a status](docs/screenshots/edit-status.jpg) |
 | An app with its own statuses | Editing a status: colour picker, sites, expiry rule, message |
 | ![Creating an app](docs/screenshots/new-app.jpg) | ![Analytics](docs/screenshots/analytics.jpg) |
-| Statuses can be customised while creating an app or a licence | Analytics: checks per day, valid and refused |
+| Statuses can be customised while creating an app or a licence | Analytics: valid and invalid checks per day |
 | ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
 | A standalone licence: default statuses, customisable (a licence in an app uses its app's) | Issuing a licence with the app's defaults |
 

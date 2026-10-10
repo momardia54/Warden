@@ -47,7 +47,7 @@ export type SharedFiles = { appName: string; appHref: string; files: FileRow[]; 
 type ActionResult = { ok?: true; error?: string }
 
 const AVAILABILITY_HELP =
-  "The file can be downloaded only while the licence has one of these statuses. Typical choices: the statuses that let the site run for updates, only the paid-in-full status for a final release, or only the suspended status for a maintenance notice."
+  "The file can be downloaded only while the licence has one of these statuses. Typical choices: the valid statuses for updates, only the paid-in-full status for a final release, or only the suspended status for a maintenance notice."
 const DOMAIN_HELP = "When on, the download must include a domain (?domain=) the licence allows, within its site limit. Turn it off for files someone downloads by hand. Ignored when the licence has no allowed domains and no site limit."
 const VERSION_HELP = "A version makes the file a release: sites that send their version with their check are offered it as an update. Leave it empty for an attachment such as a manual or a notice."
 const CHANNEL_HELP = "Stable releases are offered to every site. Beta releases are offered only to sites that check with channel=beta."

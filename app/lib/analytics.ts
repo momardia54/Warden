@@ -19,33 +19,33 @@ export type TrafficDay = {
   /** Checks answered with a status that lets the site run. */
   valid: number
   /** Checks answered with a status that does not (suspended, expired, wrong domain, site limit reached…). */
-  refused: number
+  invalid: number
   /** Distinct sites (licence and domain) registered by a check that day. */
   sites: number
-  /** Files downloaded (refused downloads are not counted). */
+  /** Files downloaded (denied downloads are not counted). */
   downloads: number
 }
 
 export type TrafficTotals = {
   checks: number
   valid: number
-  refused: number
+  invalid: number
   sites: number
   new_sites: number
   downloads: number
-  refused_downloads: number
+  denied_downloads: number
   /**
-   * Checks and downloads refused before any licence was read: from a blocked address, or over a rate limit.
+   * Checks and downloads rejected before any licence was read: from a blocked address, or over a rate limit.
    * Approximate. They belong to no licence, so they are only reported for the whole installation (null otherwise).
    */
   blocked: number | null
   rate_limited: number | null
 }
 
-export type RefusalReason = { key: string; label: string; checks: number }
-export type LicenseTraffic = { id: string; name: string; app_name: string | null; checks: number; refused: number; last_check_at: number | null }
+export type InvalidReason = { key: string; label: string; checks: number }
+export type LicenseTraffic = { id: string; name: string; app_name: string | null; checks: number; invalid: number; last_check_at: number | null }
 export type FileTraffic = { name: string; downloads: number }
-export type IpTraffic = { ip: string; checks: number; refused: number; downloads: number; licenses: number; /** Covered by an active block. */ blocked: boolean }
+export type IpTraffic = { ip: string; checks: number; invalid: number; downloads: number; licenses: number; /** Covered by an active block. */ blocked: boolean }
 
 /** Ranked lists hold at most this many rows; the page shows the first few and "View all" shows the rest. */
 export const LIST_LIMIT = 100
@@ -58,7 +58,7 @@ export type TrafficReport = {
   to: number
   series: TrafficDay[]
   totals: TrafficTotals
-  refusals: RefusalReason[]
+  reasons: InvalidReason[]
   licenses: LicenseTraffic[]
   files: FileTraffic[]
   ips: IpTraffic[]
@@ -75,7 +75,7 @@ export const isoDay = (at: number) => new Date(at).toISOString().slice(0, 10)
 /** An empty series covering the period, one entry per day, oldest first. */
 export function emptySeries(days: number, now: number): TrafficDay[] {
   const from = periodStart(days, now)
-  return Array.from({ length: days }, (_, i) => ({ date: isoDay(from + i * DAY_MS), valid: 0, refused: 0, sites: 0, downloads: 0 }))
+  return Array.from({ length: days }, (_, i) => ({ date: isoDay(from + i * DAY_MS), valid: 0, invalid: 0, sites: 0, downloads: 0 }))
 }
 
 /** "12.9K" style numbers for axes and summaries. */

@@ -1,4 +1,4 @@
-import { durationLabel, readProtection, RULE_INFO, windowLabel, DEFAULT_PROTECTION, type ProtectionSettings, type RuleKey } from "../lib/protection"
+import { LIMIT_KEYS, readProtection, RULE_INFO, RULE_KEYS, windowLabel, DEFAULT_PROTECTION, type ProtectionSettings, type RuleKey } from "../lib/protection"
 import { grantsAccess, DEFAULT_STATUSES } from "../lib/statuses"
 import { parseIp, parseRange, rangeContains } from "../lib/ip"
 import { createBlock, findBlock } from "./ip-blocks.server"
@@ -28,7 +28,7 @@ export async function getProtection(env: Env, now = Date.now()): Promise<Protect
     try {
       // Stored settings are read through the same validation, so a value saved by an older version falls back to
       // the default for whatever is no longer valid.
-      const parsed = readProtection(JSON.parse(row.value))
+      const parsed = readProtection(knownParts(JSON.parse(row.value)))
       if ("settings" in parsed) settings = parsed.settings
     } catch {
       settings = DEFAULT_PROTECTION
@@ -36,6 +36,15 @@ export async function getProtection(env: Env, now = Date.now()): Promise<Protect
   }
   cache = { at: now, settings }
   return settings
+}
+
+/** Stored settings keep only the limits and rules this version knows, so a renamed or removed key is ignored. */
+function knownParts(stored: unknown): unknown {
+  if (typeof stored !== "object" || stored === null) return stored
+  const value = stored as Record<string, unknown>
+  const pick = (part: unknown, keys: readonly string[]) =>
+    typeof part === "object" && part !== null ? Object.fromEntries(Object.entries(part).filter(([k]) => keys.includes(k))) : part
+  return { ...value, limits: pick(value.limits, LIMIT_KEYS), rules: pick(value.rules, RULE_KEYS) }
 }
 
 export async function saveProtection(env: Env, input: unknown): Promise<{ settings: ProtectionSettings } | { error: string }> {
@@ -61,12 +70,12 @@ export function isTrusted(settings: ProtectionSettings, ip: string | null): bool
 
 // ---- events and rules ------------------------------------------------------------------
 
-export type IpEventKind = "unknown_key" | "rate_limited"
+export type IpEventKind = "invalid_key" | "rate_limited"
 
 /** What just happened, for the rules to look at. */
-export type RuleTrigger = { kind: "unknown_key" } | { kind: "rate_limited" } | { kind: "check"; refused: boolean }
+export type RuleTrigger = { kind: "invalid_key" } | { kind: "rate_limited" } | { kind: "check"; invalid: boolean }
 
-const RULE_FOR: Record<IpEventKind, RuleKey> = { unknown_key: "unknown_keys", rate_limited: "rate_limited" }
+const RULE_FOR: Record<IpEventKind, RuleKey> = { invalid_key: "invalid_keys", rate_limited: "rate_limit_violations" }
 
 async function countEvents(env: Env, ip: string, kind: IpEventKind, since: number): Promise<number> {
   const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM ip_events WHERE ip = ? AND kind = ? AND at >= ?").bind(ip, kind, since).first<{ n: number }>()
@@ -111,16 +120,16 @@ export async function applyRules(env: Env, ip: string | null, trigger: RuleTrigg
   }
 
   const candidates: RuleKey[] =
-    trigger.kind === "check" ? [...(trigger.refused ? (["refused_checks"] as const) : []), "many_licenses"] : [RULE_FOR[trigger.kind]]
+    trigger.kind === "check" ? [...(trigger.invalid ? (["invalid_checks"] as const) : []), "licenses_per_ip"] : [RULE_FOR[trigger.kind]]
   for (const key of candidates) {
     const rule = settings.rules[key]
     if (!rule.enabled) continue
     const since = now - rule.minutes * 60_000
     const count =
-      key === "refused_checks" ? await countRefusedChecks(env, ip, since) : key === "many_licenses" ? await countLicenses(env, ip, since) : await countEvents(env, ip, trigger.kind as IpEventKind, since)
+      key === "invalid_checks" ? await countRefusedChecks(env, ip, since) : key === "licenses_per_ip" ? await countLicenses(env, ip, since) : await countEvents(env, ip, trigger.kind as IpEventKind, since)
     if (count < rule.count) continue
     if (await findBlock(env, ip, now)) return null
-    const reason = `Automatic: ${count} ${RULE_INFO[key].event} in ${windowLabel(rule.minutes)} (rule "${RULE_INFO[key].label}", ${durationLabel(rule.block_hours)})`
+    const reason = `Rule "${RULE_INFO[key].label}": ${count} ${RULE_INFO[key].unit} in ${windowLabel(rule.minutes)}.`
     await createBlock(env, { value: ip, reason, expires_at: rule.block_hours === 0 ? null : now + rule.block_hours * 3_600_000, source: "auto" }, now)
     return key
   }

@@ -24,7 +24,7 @@ test("periods cover whole UTC days ending today", () => {
   assert.equal(readRange(null), 30)
 })
 
-test("checks are split into valid and refused per day, by each licence's statuses", async () => {
+test("checks are split into valid and invalid per day, by each licence's statuses", async () => {
   const env = { DB: makeDb().DB } as unknown as Env
   const { ctx, settle } = makeCtx()
   const check = (key: string, domain: string) => handleCheck(new Request(`https://w.dev/check/${key}?domain=${domain}`), env, ctx, key)
@@ -56,22 +56,22 @@ test("checks are split into valid and refused per day, by each licence's statuse
   const report = await trafficReport(env, {}, 30, now)
   assert.equal(report.series.length, 30)
   const today = report.series[29]
-  assert.deepEqual({ valid: today.valid, refused: today.refused, sites: today.sites, downloads: today.downloads }, { valid: 3, refused: 2, sites: 3, downloads: 1 })
+  assert.deepEqual({ valid: today.valid, invalid: today.invalid, sites: today.sites, downloads: today.downloads }, { valid: 3, invalid: 2, sites: 3, downloads: 1 })
   assert.equal(report.series[27].valid, 1)
-  assert.deepEqual(report.totals, { checks: 6, valid: 4, refused: 2, sites: 3, new_sites: 3, downloads: 1, refused_downloads: 1, blocked: 0, rate_limited: 0 })
+  assert.deepEqual(report.totals, { checks: 6, valid: 4, invalid: 2, sites: 3, new_sites: 3, downloads: 1, denied_downloads: 1, blocked: 0, rate_limited: 0 })
   assert.deepEqual(
-    report.refusals.map((r) => [r.key, r.label, r.checks]).sort(),
+    report.reasons.map((r) => [r.key, r.label, r.checks]).sort(),
     [["site_limit_reached", "Site limit reached", 1], ["suspended", "Suspended", 1]]
   )
-  assert.deepEqual(report.licenses[0], { id: shop.id, name: "Shop", app_name: "Harbor Theme", checks: 4, refused: 1, last_check_at: report.licenses[0].last_check_at })
+  assert.deepEqual(report.licenses[0], { id: shop.id, name: "Shop", app_name: "Harbor Theme", checks: 4, invalid: 1, last_check_at: report.licenses[0].last_check_at })
   assert.deepEqual(report.files.map((f) => ({ ...f })), [{ name: "harbor-1.0.0.zip", downloads: 1 }])
 
   // Scopes.
   const appOnly = await trafficReport(env, { app: app.id }, 7, now)
-  assert.deepEqual([appOnly.totals.checks, appOnly.totals.refused], [4, 1])
+  assert.deepEqual([appOnly.totals.checks, appOnly.totals.invalid], [4, 1])
   const standalone = await trafficReport(env, { standalone: true }, 7, now)
   assert.deepEqual([standalone.totals.checks, standalone.totals.valid], [2, 1])
   const one = await dailyTraffic(env, { license: trial.id }, 7, now)
-  assert.equal(one.series.reduce((n, d) => n + d.valid + d.refused, 0), 1)
+  assert.equal(one.series.reduce((n, d) => n + d.valid + d.invalid, 0), 1)
   assert.equal((await trafficReport(env, {}, 90, now)).totals.checks, 7)
 })

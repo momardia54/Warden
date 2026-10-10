@@ -18,10 +18,10 @@ export const LICENSE_VIEWS = ["in_force", "not_in_force", "expiring", "silent"] 
 export type LicenseView = (typeof LICENSE_VIEWS)[number]
 
 export const VIEW_LABELS: Record<LicenseView, string> = {
-  in_force: "In force",
-  not_in_force: "Not in force",
+  in_force: "Valid",
+  not_in_force: "Invalid",
   expiring: `Expiring within ${EXPIRING_WINDOW_DAYS} days`,
-  silent: `No check for ${SILENT_AFTER_DAYS}+ days`,
+  silent: `No check in ${SILENT_AFTER_DAYS}+ days`,
 }
 
 export function isLicenseView(value: unknown): value is LicenseView {

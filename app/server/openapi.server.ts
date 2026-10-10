@@ -67,14 +67,14 @@ export function openApiSpec(origin: string) {
         },
         post: {
           summary: "Block an IP address or range (permission: manage)",
-          description: "Checks and downloads from the address are refused with 403 before any licence is read. The dashboard and the API are not affected. A block applies within 30 seconds everywhere.",
+          description: "Checks and downloads from the address receive 403 before any licence is read. The dashboard and the API are not affected. Takes effect within 30 seconds.",
           requestBody: body({
             type: "object",
             required: ["ip"],
             properties: {
               ip: { type: "string", description: "IPv4 or IPv6 address, or a CIDR range (at most /8 for IPv4, /16 for IPv6)", example: "203.0.113.0/24" },
               reason: { type: "string", maxLength: 200, description: "Internal note" },
-              expires_at: { type: ["string", "null"], format: "date-time", description: "End of the block; null or absent = until removed" },
+              expires_at: { type: ["string", "null"], format: "date-time", description: "End of the block; null or absent for a permanent block" },
             },
           }),
           responses: { 201: { description: "The block" }, 403: err, 409: { description: "Already blocked (`already_blocked`)" }, 422: err },
@@ -83,13 +83,13 @@ export function openApiSpec(origin: string) {
       "/protection": {
         get: {
           summary: "Protection settings: rate limits, automatic blocking rules, never-block list",
-          responses: { 200: { description: "{ limits: { check_ip, check_key, download_ip, api_key }, rules: { unknown_keys, refused_checks, many_licenses, rate_limited: { enabled, count, minutes, block_hours } }, never_block: string[] }" }, 401: err },
+          responses: { 200: { description: "{ limits: { check_ip, check_key, download_ip, api_key }, rules: { invalid_keys, invalid_checks, licenses_per_ip, rate_limit_violations: { enabled, count, minutes, block_hours } }, never_block: string[] }" }, 401: err },
         },
         patch: {
           summary: "Change protection settings (permission: full)",
           description:
-            "Send only what changes. Limits are requests per minute: 0 (off), 30, 60, 120, 300, 600 or 1200. Rules: `count` 2 to 10000, `minutes` 5, 10, 30, 60, 360 or 1440, `block_hours` 1, 6, 24, 168, 720 or 0 (until removed). `never_block` replaces the whole list. Changes apply within 30 seconds.",
-          requestBody: body({ type: "object", example: { limits: { check_ip: 300 }, rules: { refused_checks: { enabled: true, count: 100 } } } }),
+            "Send only what changes. Limits are requests per minute: 0 (off), 30, 60, 120, 300, 600 or 1200. Rules: `count` 2 to 10000, `minutes` 5, 10, 30, 60, 360 or 1440, `block_hours` 1, 6, 24, 168, 720 or 0 (permanent). `never_block` (the allowlist) replaces the whole list. Changes apply within 30 seconds.",
+          requestBody: body({ type: "object", example: { limits: { check_ip: 300 }, rules: { invalid_checks: { enabled: true, count: 100 } } } }),
           responses: { 200: { description: "The complete settings" }, 403: err, 422: err },
         },
       },
@@ -101,14 +101,14 @@ export function openApiSpec(origin: string) {
         get: {
           summary: "Traffic analytics",
           description:
-            "Checks and downloads per UTC day over a period, with totals, refusal reasons, the most checked licences and the most downloaded files. A check is valid if its recorded status lets sites run under the statuses in use today. Checks are kept for 90 days.",
+            "Checks and downloads per UTC day over a period, with totals, invalid checks by reason, and top licences, files and IP addresses. Validity is evaluated against the current status configuration. Check history is retained for 90 days.",
           parameters: [
             { name: "days", in: "query", description: "Length of the period, ending today", schema: { type: "integer", enum: [7, 30, 90], default: 30 } },
             { name: "app", in: "query", description: "Only the licences of this app (id or slug), or `none` for standalone licences", schema: { type: "string" } },
             { name: "license", in: "query", description: "Only this licence (id or key). Takes precedence over `app`.", schema: { type: "string" } },
           ],
           responses: {
-            200: { description: "{ days, from, to, series: [{ date, valid, refused, sites, downloads }], totals: { checks, valid, refused, sites, new_sites, downloads, refused_downloads, blocked, rate_limited }, refusals: [{ key, label, checks }], licenses: [{ id, name, app_name, checks, refused, last_check_at }], files: [{ name, downloads }], ips: [{ ip, checks, refused, downloads, licenses, blocked }] }. Lists hold at most 100 rows. `blocked` and `rate_limited` count requests refused before any licence was read (approximate); they are null when the report is filtered" },
+            200: { description: "{ days, from, to, series: [{ date, valid, invalid, sites, downloads }], totals: { checks, valid, invalid, sites, new_sites, downloads, denied_downloads, blocked, rate_limited }, reasons: [{ key, label, checks }], licenses: [{ id, name, app_name, checks, invalid, last_check_at }], files: [{ name, downloads }], ips: [{ ip, checks, invalid, downloads, licenses, blocked }] }. Lists hold at most 100 rows. `blocked` and `rate_limited` count requests rejected before licence validation (approximate); they are null when the report is filtered" },
             401: err,
             404: err,
             422: err,

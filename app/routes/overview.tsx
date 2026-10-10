@@ -30,8 +30,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 export default function Overview({ loaderData }: Route.ComponentProps) {
   const { stats, attention, events, apps, traffic } = loaderData
-  const checks = traffic.reduce((n, d) => n + d.valid + d.refused, 0)
-  const refused = traffic.reduce((n, d) => n + d.refused, 0)
+  const checks = traffic.reduce((n, d) => n + d.valid + d.invalid, 0)
+  const invalid = traffic.reduce((n, d) => n + d.invalid, 0)
   const statusLabel = useStatusLabel()
   const allStatuses = useAllStatuses()
   const byStatus = Object.entries(stats.byStatus).sort((a, b) => b[1] - a[1])
@@ -43,7 +43,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
       <div className="max-w-6xl space-y-8 p-4 pt-0 lg:px-6">
         <PageTitle
           title="Overview"
-          description={stats.total === 0 ? "Nothing issued yet. Start with an app for a product you sell, or a standalone licence for a single project." : `${stats.total} licence${stats.total === 1 ? "" : "s"}, ${stats.inForce} in force.`}
+          description={stats.total === 0 ? "Nothing issued yet. Start with an app for a product you sell, or a standalone licence for a single project." : `${stats.total} licence${stats.total === 1 ? "" : "s"}, ${stats.inForce} valid.`}
           actions={
             <>
               <Button asChild variant="outline">
@@ -59,15 +59,15 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         />
 
         <FactStrip>
-          <Fact label="In force" to="/licenses?view=in_force" value={stats.inForce} detail={`of ${stats.total} licences`} help="Licences whose status, as reported to sites right now, lets the site run." />
-          <Fact label="Not in force" to="/licenses?view=not_in_force" value={stats.notInForce} detail="Sites are refused" help="Licences that sites currently see as not valid: for example pending, suspended, disabled or expired." />
+          <Fact label="Valid licences" to="/licenses?view=in_force" value={stats.inForce} detail={`of ${stats.total} licences`} help="Licences for which a check currently returns valid: true." />
+          <Fact label="Invalid licences" to="/licenses?view=not_in_force" value={stats.notInForce} detail="Checks return valid: false" help="Licences for which a check currently returns valid: false, such as pending, suspended, disabled or expired licences." />
           <Fact
             label={VIEW_LABELS.expiring}
             to="/licenses?view=expiring&sort=expires&dir=asc"
             value={stats.endingSoon}
             detail="Extend or let them lapse"
             tone={stats.endingSoon > 0 ? "warning" : "default"}
-            help={`Licences in force whose expiry date is within the next ${EXPIRING_WINDOW_DAYS} days.`}
+            help={`Valid licences whose expiry date is within the next ${EXPIRING_WINDOW_DAYS} days.`}
           />
           <Fact
             label={VIEW_LABELS.silent}
@@ -75,23 +75,23 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             value={stats.silent}
             detail="Site offline or check removed"
             tone={stats.silent > 0 ? "warning" : "default"}
-            help={`Licences in force whose site has not called the check URL for ${SILENT_AFTER_DAYS} days. The site may be offline, or the check may have been removed from its code.`}
+            help={`Valid licences with no check in the last ${SILENT_AFTER_DAYS} days. The site may be offline, or the licence check may have been removed from its code.`}
           />
         </FactStrip>
 
         <section className="rounded-lg border bg-card p-4">
           <ColumnChart
-            title="Checks, last 30 days"
-            description="Calls of your check URLs from customers' sites."
+            title="Licence checks, last 30 days"
+            description="Checks from customer sites across all licences."
             data={traffic}
             series={[
               { key: "valid", label: "Valid", color: "var(--chart-1)" },
-              { key: "refused", label: "Refused", color: "var(--chart-2)" },
+              { key: "invalid", label: "Invalid", color: "var(--chart-2)" },
             ]}
             height={150}
             summary={
               <span className="tabular-nums">
-                {checks.toLocaleString("en-GB")} checks{refused > 0 ? `, ${refused.toLocaleString("en-GB")} refused` : ""}
+                {checks.toLocaleString("en-GB")} checks{invalid > 0 ? `, ${invalid.toLocaleString("en-GB")} invalid` : ""}
               </span>
             }
             viewAll="/analytics"
@@ -105,7 +105,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
               <div className="flex items-start gap-3 rounded-lg border bg-card p-4 text-sm">
                 <CircleCheck className="mt-0.5 size-4 shrink-0 text-green-600" />
                 <p className="text-muted-foreground">
-                  Nothing to do. No licence in force expires within {EXPIRING_WINDOW_DAYS} days, and every site in force has checked in within {SILENT_AFTER_DAYS} days.
+                  No action required. No valid licence expires within {EXPIRING_WINDOW_DAYS} days, and every valid licence has been checked within {SILENT_AFTER_DAYS} days.
                 </p>
               </div>
             ) : (
@@ -183,7 +183,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                         {a.name}
                       </Link>
                       <div className="text-xs text-muted-foreground tabular-nums">
-                        {a.in_force} of {a.licenses} in force, {a.sites} site{a.sites === 1 ? "" : "s"}
+                        {a.in_force} of {a.licenses} valid, {a.sites} site{a.sites === 1 ? "" : "s"}
                       </div>
                     </div>
                     {a.outdated > 0 && (

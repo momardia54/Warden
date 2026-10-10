@@ -70,7 +70,7 @@ const TABS = ["licences", "releases", "statuses"]
 export default function AppPage({ loaderData, actionData }: Route.ComponentProps) {
   const actionError = actionData && "error" in actionData ? actionData.error : null
   const { app, licenses, files, statuses, custom, usage, versions, traffic, filesConfigured } = loaderData
-  const checks = traffic.reduce((n, d) => n + d.valid + d.refused, 0)
+  const checks = traffic.reduce((n, d) => n + d.valid + d.invalid, 0)
   const [tab, setTab] = useRouteTab(TABS)
   const [deleting, setDeleting] = useState(false)
   const defaults = [
@@ -138,7 +138,7 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
         />
 
         <FactStrip>
-          <Fact label="Licences" value={app.licenses} detail={`${app.in_force} in force`} help="Licences in force are those whose current status lets the site run." />
+          <Fact label="Licences" value={app.licenses} detail={`${app.in_force} valid`} help="Valid licences are those for which a check currently returns valid: true." />
           <Fact label="Sites" value={app.sites} detail="Registered across all licences" help="Each site registers on its first check with a domain." />
           <Fact
             label="Latest release"
@@ -147,7 +147,7 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
             help="The highest stable version among the app's current releases. Withdrawn and beta releases are not counted."
           />
           <Fact
-            label="Sites on an old version"
+            label="Outdated sites"
             value={versions.outdated}
             detail={versions.sites > 0 ? `of ${versions.sites} sites` : "No site yet"}
             tone={versions.outdated > 0 ? "warning" : "default"}
@@ -157,12 +157,12 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
 
         <section className="rounded-lg border bg-card p-4">
           <ColumnChart
-            title="Checks, last 30 days"
-            description={`Checks from the sites of every ${app.name} licence.`}
+            title="Licence checks, last 30 days"
+            description={`Checks from customer sites across all ${app.name} licences.`}
             data={traffic}
             series={[
               { key: "valid", label: "Valid", color: "var(--chart-1)" },
-              { key: "refused", label: "Refused", color: "var(--chart-2)" },
+              { key: "invalid", label: "Invalid", color: "var(--chart-2)" },
             ]}
             height={140}
             summary={<span className="tabular-nums">{checks.toLocaleString("en-GB")} checks</span>}

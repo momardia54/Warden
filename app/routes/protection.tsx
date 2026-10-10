@@ -84,19 +84,19 @@ export default function Protection({ loaderData }: Route.ComponentProps) {
       <div className="max-w-6xl space-y-6 p-4 pt-0 lg:px-6">
         <PageTitle
           title="Protection"
-          description="Who may call your check and download URLs, how often, and which addresses are blocked automatically. The dashboard and your API keys are never blocked by address."
+          description="Access control for the public check and download endpoints: IP blocklist, rate limits and blocking rules. IP blocking never applies to the dashboard or the API."
           actions={
             <Button onClick={() => setAdding(true)}>
-              <Ban /> Block an IP
+              <Ban /> Block IP address
             </Button>
           }
         />
 
         <RouteTabs
           tabs={[
-            { id: "blocked", label: "Blocked IPs", count: active.length },
+            { id: "blocked", label: "IP blocklist", count: active.length },
             { id: "limits", label: "Rate limits" },
-            { id: "rules", label: "Automatic blocking", count: rulesOn },
+            { id: "rules", label: "Blocking rules", count: rulesOn },
           ]}
           value={tab}
           onChange={setTab}
@@ -121,17 +121,17 @@ function BlockedTab({ blocks, now, onAdd }: { blocks: LoaderData["blocks"]; now:
           <EmptyMedia variant="icon">
             <ShieldBan />
           </EmptyMedia>
-          <EmptyTitle>No blocked addresses</EmptyTitle>
+          <EmptyTitle>No blocked IP addresses</EmptyTitle>
           <EmptyDescription>
-            Block an address from a licence&apos;s activity, its sites or{" "}
+            Block an address from a licence&apos;s activity log, its sites or{" "}
             <Link to="/analytics" className="underline underline-offset-2">
               Analytics
             </Link>
-            , or let the automatic rules do it. To stop one customer, suspending the licence or regenerating its key is usually better: an address can be shared by many sites.
+            , or let the blocking rules add it. To stop a single customer, suspend the licence or regenerate its key instead: one IP address can be shared by several sites.
           </EmptyDescription>
         </EmptyHeader>
         <Button onClick={onAdd}>
-          <Ban /> Block an IP
+          <Ban /> Block IP address
         </Button>
       </Empty>
     )
@@ -141,11 +141,11 @@ function BlockedTab({ blocks, now, onAdd }: { blocks: LoaderData["blocks"]; now:
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Address or range</TableHead>
+              <TableHead>IP address or range</TableHead>
               <TableHead className="hidden md:table-cell">Reason</TableHead>
-              <TableHead>Until</TableHead>
-              <TableHead className="text-right">Refused</TableHead>
-              <TableHead className="hidden sm:table-cell">Last refused</TableHead>
+              <TableHead>Expires</TableHead>
+              <TableHead className="text-right">Blocked requests</TableHead>
+              <TableHead className="hidden sm:table-cell">Last blocked</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -157,7 +157,7 @@ function BlockedTab({ blocks, now, onAdd }: { blocks: LoaderData["blocks"]; now:
                   <TableCell>
                     <span className="flex items-center gap-2 font-mono text-xs">
                       {b.value}
-                      {b.source === "auto" && <Badge variant="info">Automatic</Badge>}
+                      {b.source === "auto" && <Badge variant="info">Rule</Badge>}
                     </span>
                     <span className="text-xs text-muted-foreground">
                       Added <Ago ts={b.created_at} />
@@ -166,7 +166,7 @@ function BlockedTab({ blocks, now, onAdd }: { blocks: LoaderData["blocks"]; now:
                   <TableCell className="hidden max-w-80 md:table-cell">
                     <span className="line-clamp-2 text-sm whitespace-normal">{b.reason || <span className="text-muted-foreground">None</span>}</span>
                   </TableCell>
-                  <TableCell>{expired ? <Badge variant="secondary">Expired</Badge> : b.expires_at === null ? "Until removed" : <Ago ts={b.expires_at} />}</TableCell>
+                  <TableCell>{expired ? <Badge variant="secondary">Expired</Badge> : b.expires_at === null ? "Never" : <Ago ts={b.expires_at} />}</TableCell>
                   <TableCell className="text-right tabular-nums">{b.hits.toLocaleString("en-GB")}</TableCell>
                   <TableCell className="hidden text-muted-foreground sm:table-cell">
                     <Ago ts={b.last_hit_at} empty="Never" />
@@ -180,7 +180,7 @@ function BlockedTab({ blocks, now, onAdd }: { blocks: LoaderData["blocks"]; now:
           </TableBody>
         </Table>
       </div>
-      <p className="text-xs text-muted-foreground">A change applies within 30 seconds everywhere. Refused counts are approximate. Expired blocks are deleted 30 days after they end.</p>
+      <p className="text-xs text-muted-foreground">Changes take effect within 30 seconds. Blocked request counts are approximate. Expired entries are deleted 30 days after expiry.</p>
     </div>
   )
 }
@@ -218,7 +218,7 @@ function SaveRow({ fetcher, dirty }: { fetcher: ReturnType<typeof useFetcher<{ o
         saved &&
         !dirty && (
           <p className="flex items-center gap-1 text-sm text-muted-foreground">
-            <Check className="size-4 text-green-600" /> Saved. Applies within 30 seconds everywhere.
+            <Check className="size-4 text-green-600" /> Saved. Takes effect within 30 seconds.
           </p>
         )
       )}
@@ -234,8 +234,8 @@ function LimitsTab({ settings }: { settings: ProtectionSettings }) {
     <fetcher.Form method="post" className="space-y-5">
       <input type="hidden" name="intent" value="save-limits" />
       <p className="max-w-3xl text-sm text-muted-foreground">
-        Over a limit, a request is refused with <code className="text-foreground">429 Too Many Requests</code> and <code className="text-foreground">Retry-After: 60</code>. A refused check carries no verdict, so a site that
-        keeps its last answer keeps running. Counts are approximate: Cloudflare keeps them per location. Addresses on the never-block list (Automatic blocking) are not limited.
+        Requests over a limit receive <code className="text-foreground">429 Too Many Requests</code> with <code className="text-foreground">Retry-After: 60</code>. A rate-limited check returns no licence verdict, so a site
+        that keeps its last valid response continues to run. Counters are maintained per Cloudflare location and are approximate. Allowlisted addresses are exempt.
       </p>
       <div className="divide-y rounded-lg border bg-card">
         {LIMIT_KEYS.map((key) => (
@@ -245,11 +245,11 @@ function LimitsTab({ settings }: { settings: ProtectionSettings }) {
                 {LIMIT_INFO[key].label}
               </Label>
               <p className="text-xs text-muted-foreground">
-                Requests {LIMIT_INFO[key].per}. {LIMIT_INFO[key].help}
+                {LIMIT_INFO[key].scope} {LIMIT_INFO[key].help}
               </p>
             </div>
             <NativeSelect id={`limit-${key}`} name={key} value={values[key]} onChange={(e) => setValues((v) => ({ ...v, [key]: Number(e.target.value) as typeof v[typeof key] }))}>
-              <option value={0}>Off (no limit)</option>
+              <option value={0}>Disabled</option>
               {RATE_TIERS.map((tier) => (
                 <option key={tier} value={tier}>
                   {tier.toLocaleString("en-GB")} per minute
@@ -275,8 +275,8 @@ function RulesTab({ settings }: { settings: ProtectionSettings }) {
     <fetcher.Form method="post" className="space-y-5">
       <input type="hidden" name="intent" value="save-rules" />
       <p className="max-w-3xl text-sm text-muted-foreground">
-        A rule blocks an address by itself when the address goes past its threshold. Automatic blocks appear under Blocked IPs with their reason, and you can remove them like any other. The rules run after the
-        answer is sent, so they never slow a check down.
+        When an address reaches a rule&apos;s threshold within the time window, it is added to the IP blocklist for the block duration, marked <span className="font-medium text-foreground">Rule</span>. Rules are
+        evaluated after the response is sent and add no latency.
       </p>
       <div className="space-y-3">
         {RULE_KEYS.map((key) => {
@@ -295,35 +295,47 @@ function RulesTab({ settings }: { settings: ProtectionSettings }) {
                       {RULE_INFO[key].help}
                     </p>
                   </div>
-                  <fieldset disabled={!rule.enabled} className={cn("flex flex-wrap items-center gap-x-2 gap-y-2 text-sm", !rule.enabled && "opacity-60")}>
-                    <span>Block an address for</span>
-                    <div className="w-36">
-                      <NativeSelect name={`${key}.block_hours`} value={rule.block_hours} onChange={(e) => update(key, { block_hours: Number(e.target.value) })} aria-label="Block duration">
-                        {RULE_DURATIONS.map((h) => (
-                          <option key={h} value={h}>
-                            {durationLabel(h)}
+                  <fieldset disabled={!rule.enabled} className={cn("grid gap-3 sm:grid-cols-3", !rule.enabled && "opacity-60")}>
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`${key}-count`} className="text-xs text-muted-foreground">
+                        Threshold
+                      </Label>
+                      <Input
+                        id={`${key}-count`}
+                        name={`${key}.count`}
+                        type="number"
+                        min={2}
+                        max={MAX_RULE_COUNT}
+                        value={rule.count}
+                        onChange={(e) => update(key, { count: Number(e.target.value) })}
+                        className="tabular-nums"
+                        aria-describedby={`${key}-unit`}
+                        required
+                      />
+                      <p id={`${key}-unit`} className="text-xs text-muted-foreground">
+                        {RULE_INFO[key].unit[0].toUpperCase() + RULE_INFO[key].unit.slice(1)}
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`${key}-minutes`} className="text-xs text-muted-foreground">
+                        Time window
+                      </Label>
+                      <NativeSelect id={`${key}-minutes`} name={`${key}.minutes`} value={rule.minutes} onChange={(e) => update(key, { minutes: Number(e.target.value) })}>
+                        {RULE_WINDOWS.map((m) => (
+                          <option key={m} value={m}>
+                            {windowLabel(m)}
                           </option>
                         ))}
                       </NativeSelect>
                     </div>
-                    <span>after</span>
-                    <Input
-                      name={`${key}.count`}
-                      type="number"
-                      min={2}
-                      max={MAX_RULE_COUNT}
-                      value={rule.count}
-                      onChange={(e) => update(key, { count: Number(e.target.value) })}
-                      aria-label="Threshold"
-                      className="w-24 tabular-nums"
-                      required
-                    />
-                    <span>{RULE_INFO[key].event} within</span>
-                    <div className="w-36">
-                      <NativeSelect name={`${key}.minutes`} value={rule.minutes} onChange={(e) => update(key, { minutes: Number(e.target.value) })} aria-label="Window">
-                        {RULE_WINDOWS.map((m) => (
-                          <option key={m} value={m}>
-                            {windowLabel(m)}
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`${key}-hours`} className="text-xs text-muted-foreground">
+                        Block duration
+                      </Label>
+                      <NativeSelect id={`${key}-hours`} name={`${key}.block_hours`} value={rule.block_hours} onChange={(e) => update(key, { block_hours: Number(e.target.value) })}>
+                        {RULE_DURATIONS.map((h) => (
+                          <option key={h} value={h}>
+                            {durationLabel(h)}
                           </option>
                         ))}
                       </NativeSelect>
@@ -346,10 +358,9 @@ function RulesTab({ settings }: { settings: ProtectionSettings }) {
 
       <section className="space-y-2 rounded-lg border bg-card p-4">
         <Label htmlFor="never-block" className="flex items-center gap-1.5 font-medium">
-          Never block automatically{" "}
-          <HelpTip>These addresses are not rate limited and no rule blocks them. A block you add yourself still applies.</HelpTip>
+          Allowlist <HelpTip>Exempt from rate limits and blocking rules. Addresses you block manually remain blocked.</HelpTip>
         </Label>
-        <p className="text-xs text-muted-foreground">Your own servers, monitoring, a host you trust. One address or range per line, at most {MAX_NEVER_BLOCK}.</p>
+        <p className="text-xs text-muted-foreground">One IP address or CIDR range per line, up to {MAX_NEVER_BLOCK}. For example your own servers or monitoring services.</p>
         <Textarea id="never-block" name="never_block" value={neverBlock} onChange={(e) => setNeverBlock(e.target.value)} rows={4} className="font-mono text-xs" placeholder={"198.51.100.10\n203.0.113.0/24"} />
       </section>
 

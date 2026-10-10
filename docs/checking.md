@@ -19,7 +19,7 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 | `unknown` | false | No such key (HTTP 404) |
 | `blocked` | false | The caller's IP address is blocked (HTTP 403, unsigned: no licence was read). See [protection.md](protection.md) |
 
-A check can also be refused with **HTTP 429** (`"status": "rate_limited"`, no `valid` field, `Retry-After: 60`) when it goes over a rate limit. That is not a verdict on the licence: keep the last answer and try again later.
+A check can also receive **HTTP 429** (`"status": "rate_limited"`, no `valid` field, `Retry-After: 60`) when it goes over a rate limit. That is not a verdict on the licence: keep the last answer and try again later.
 
 Send the installed version as well (`&version=1.3.0`) and the response includes an `update` block: the newest release the licence can download and whether it is newer. See [releases.md](releases.md).
 

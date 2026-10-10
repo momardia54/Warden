@@ -63,7 +63,7 @@ In every path below, `{id}` can be the licence id (`lic_...`) or the licence key
 | `GET /ip-blocks` | read | Blocked IP addresses and ranges ([protection.md](protection.md)) |
 | `POST /ip-blocks` | manage | Block an address or range (`ip`, `reason`, `expires_at`) |
 | `DELETE /ip-blocks/{id}` | manage | Remove a block |
-| `GET /protection` | read | Rate limits, automatic blocking rules, never-block list |
+| `GET /protection` | read | Rate limits, blocking rules and allowlist ([protection.md](protection.md)) |
 | `PATCH /protection` | full | Change protection settings (only what you send) |
 | `GET /statuses` | read | The built-in default statuses ([statuses.md](statuses.md)) |
 | `GET /licenses` | read | List, newest first |

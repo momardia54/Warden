@@ -12,14 +12,14 @@ export type RateTier = 0 | (typeof RATE_TIERS)[number]
 export const LIMIT_KEYS = ["check_ip", "check_key", "download_ip", "api_key"] as const
 export type LimitKey = (typeof LIMIT_KEYS)[number]
 
-export const LIMIT_INFO: Record<LimitKey, { label: string; per: string; help: string }> = {
-  check_ip: { label: "Checks per address", per: "from one IP address", help: "A site checks about twice a day, but many sites on one shared host use the same address." },
-  check_key: { label: "Checks per licence key", per: "for one licence key, from any address", help: "Stops a leaked key being called from many places at once." },
-  download_ip: { label: "Downloads per address", per: "from one IP address", help: "Downloads are larger; a site downloads an update once." },
-  api_key: { label: "API requests per API key", per: "with one API key", help: "Your own tools (payment webhooks, scripts). Over the limit the API answers 429." },
+export const LIMIT_INFO: Record<LimitKey, { label: string; scope: string; help: string }> = {
+  check_ip: { label: "Checks per IP address", scope: "Counted per client IP address.", help: "Sites hosted on the same server share one IP address; allow for your largest host." },
+  check_key: { label: "Checks per licence key", scope: "Counted per licence key, across all IP addresses.", help: "Limits the use of a leaked key from multiple locations." },
+  download_ip: { label: "Downloads per IP address", scope: "Counted per client IP address.", help: "Applies to file downloads and download listings." },
+  api_key: { label: "API requests per API key", scope: "Counted per API key.", help: "Applies to your integrations, such as payment webhooks and scripts." },
 }
 
-export const RULE_KEYS = ["unknown_keys", "refused_checks", "many_licenses", "rate_limited"] as const
+export const RULE_KEYS = ["invalid_keys", "invalid_checks", "licenses_per_ip", "rate_limit_violations"] as const
 export type RuleKey = (typeof RULE_KEYS)[number]
 
 export type Rule = {
@@ -28,42 +28,42 @@ export type Rule = {
   count: number
   /** The window, in minutes. */
   minutes: number
-  /** How long the automatic block lasts, in hours; 0 = until removed. */
+  /** How long the automatic block lasts, in hours; 0 = permanent. */
   block_hours: number
 }
 
-export const RULE_INFO: Record<RuleKey, { label: string; event: string; help: string }> = {
-  unknown_keys: {
-    label: "Guessing licence keys",
-    event: "checks or downloads with a key that does not exist",
-    help: "A real site always sends a real key. Many unknown keys from one address mean someone is trying keys.",
+export const RULE_INFO: Record<RuleKey, { label: string; unit: string; help: string }> = {
+  invalid_keys: {
+    label: "Invalid licence keys",
+    unit: "requests with an invalid licence key",
+    help: "Checks and downloads that use a licence key that does not exist. Repeated attempts from one address indicate key enumeration.",
   },
-  refused_checks: {
-    label: "Refused checks",
-    event: "refused checks (suspended or expired licence, wrong domain, site limit reached)",
-    help: "Careful: a customer site with a suspended licence that checks on every page view can trigger this, and a shared host blocks every site on it.",
+  invalid_checks: {
+    label: "Invalid checks",
+    unit: "invalid checks",
+    help: "Checks answered with valid: false, such as a suspended or expired licence, a domain that is not allowed, or a site limit reached. A suspended customer site that checks on every page view can reach this threshold.",
   },
-  many_licenses: {
-    label: "Many licences from one address",
-    event: "different licences checked",
-    help: "One address checking many licences can be key sharing, or simply a host with many of your customers. Set the number above your largest legitimate host.",
+  licenses_per_ip: {
+    label: "Licences per IP address",
+    unit: "distinct licences checked",
+    help: "Distinct licences checked from one address. A high count can indicate key sharing; a hosting provider can also serve many customers from one address. Set the threshold above your largest legitimate host.",
   },
-  rate_limited: {
-    label: "Staying over a rate limit",
-    event: "minutes with requests over a rate limit",
-    help: "Each address counts at most once a minute, so this means an address kept going over a limit for that many minutes.",
+  rate_limit_violations: {
+    label: "Rate limit violations",
+    unit: "rate limit violations",
+    help: "Minutes in which the address exceeded a rate limit. Each address is counted at most once per minute.",
   },
 }
 
 /** Window lengths offered, in minutes. Events older than a day are deleted, so no window is longer. */
 export const RULE_WINDOWS = [5, 10, 30, 60, 360, 1440] as const
-/** Block lengths offered, in hours; 0 = until removed. */
+/** Block lengths offered, in hours; 0 = permanent. */
 export const RULE_DURATIONS = [1, 6, 24, 168, 720, 0] as const
 export const MAX_RULE_COUNT = 10_000
 export const MAX_NEVER_BLOCK = 50
 
 export function durationLabel(hours: number): string {
-  if (hours === 0) return "until removed"
+  if (hours === 0) return "Permanent"
   if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"}`
   const days = hours / 24
   return `${days} day${days === 1 ? "" : "s"}`
@@ -78,17 +78,17 @@ export function windowLabel(minutes: number): string {
 export type ProtectionSettings = {
   limits: Record<LimitKey, RateTier>
   rules: Record<RuleKey, Rule>
-  /** Addresses and ranges never rate limited and never blocked by a rule (your own servers, monitoring). */
+  /** Allowlist: addresses and ranges exempt from rate limits and blocking rules (your own servers, monitoring). */
   never_block: string[]
 }
 
 export const DEFAULT_PROTECTION: ProtectionSettings = {
   limits: { check_ip: 120, check_key: 60, download_ip: 30, api_key: 600 },
   rules: {
-    unknown_keys: { enabled: true, count: 20, minutes: 10, block_hours: 24 },
-    refused_checks: { enabled: false, count: 50, minutes: 10, block_hours: 24 },
-    many_licenses: { enabled: false, count: 25, minutes: 60, block_hours: 24 },
-    rate_limited: { enabled: true, count: 5, minutes: 10, block_hours: 1 },
+    invalid_keys: { enabled: true, count: 20, minutes: 10, block_hours: 24 },
+    invalid_checks: { enabled: false, count: 50, minutes: 10, block_hours: 24 },
+    licenses_per_ip: { enabled: false, count: 25, minutes: 60, block_hours: 24 },
+    rate_limit_violations: { enabled: true, count: 5, minutes: 10, block_hours: 1 },
   },
   never_block: [],
 }
@@ -131,7 +131,7 @@ export function readProtection(input: unknown, base: ProtectionSettings = DEFAUL
         rule.minutes = value.minutes as number
       }
       if (value.block_hours !== undefined) {
-        if (!(RULE_DURATIONS as readonly unknown[]).includes(value.block_hours)) return { error: `rules.${key}.block_hours must be one of ${RULE_DURATIONS.join(", ")} (0 = until removed).` }
+        if (!(RULE_DURATIONS as readonly unknown[]).includes(value.block_hours)) return { error: `rules.${key}.block_hours must be one of ${RULE_DURATIONS.join(", ")} (0 = permanent).` }
         rule.block_hours = value.block_hours as number
       }
     }

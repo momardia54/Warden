@@ -17,17 +17,17 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 ### Added: protection
 
 - The **IP address** of every check and download is recorded and shown in the activity log, on each site, in Analytics (top addresses) and in the API (`ip`, `last_ip`); quick search finds licences by address. Addresses are cleared after 90 days
-- **Block an IP address or range** from any address in the dashboard, or directly on the new **Protection** page, for 1, 7 or 30 days or until removed, with a reason. Blocked callers get `403` (`status: blocked`) on checks and downloads before any licence is read; the dashboard and the API are never blocked by address
+- **Block an IP address or range** from any address in the dashboard, or directly on the new **Protection** page, for 1, 7 or 30 days or permanently, with a reason. Blocked clients receive `403` (`status: blocked`) on checks and downloads before any licence is read; the dashboard and the API are never blocked by address
 - **Rate limits**, set in the dashboard: checks per address, checks per licence key, downloads per address and API requests per key (30 to 1,200 per minute, or off). Over a limit: `429` with `Retry-After`, and no verdict on checks
-- **Automatic blocking rules**, each with a threshold, a window and a block length: guessing licence keys (on), refused checks, many licences from one address, staying over a rate limit (on). A never-block list exempts your own servers
-- Analytics shows requests refused before any licence was read (blocked, rate limited)
+- **Blocking rules**, each with a threshold, a time window and a block duration: invalid licence keys (enabled), invalid checks, licences per IP address, rate limit violations (enabled). An allowlist exempts your own servers
+- Analytics shows blocked and rate-limited requests
 - API: `GET/POST /ip-blocks`, `DELETE /ip-blocks/{id}`, `GET/PATCH /protection`
-- Migrations 0009 (addresses, blocklist, refused counts) and 0010 (settings, automatic blocks, rule events)
+- Migrations 0009 (IP addresses, blocklist, rejected request counts) and 0010 (settings, rule-based blocks, rule events)
 - docs/protection.md
 
 ### Added: analytics
 
-- **Analytics** page: checks per day split into valid and refused, active sites and downloads per day, refusals by reason, most checked licences and most downloaded files, over 7, 30 or 90 days, for every licence, one app or the standalone licences
+- **Analytics** page: valid and invalid checks per day, active sites and downloads per day, invalid checks by reason, top licences by checks and top files by downloads, over 7, 30 or 90 days, for every licence, one app or the standalone licences
 - Checks of the last 30 days on the overview and on each licence's Activity tab
 - Charts can be read by hovering, with the keyboard, or as a table; the charts on the overview, an app and a licence have **View all**, and ranked lists show eight rows with **View all** for up to 100
 - API: `GET /analytics` (`days`, `app`, `license`)
@@ -40,7 +40,7 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 - Release manager: upload dialog with drag and drop, version filled in from the file name, channel and release notes; releases listed by version with the latest marked; edit, copy link or checksum, withdraw, restore and delete from a menu
 - Versions in use per app, and per site on the licence page with "Update available"
 - Overview with a *Needs attention* queue (expiring licences with one-click extend, silent licences), apps with sites on an old version, links from every number to the matching list, and recent activity across all licences
-- Licence list: quick views (in force, not in force, expiring, silent), filters and sorting kept in the address, clickable rows, expiry shown as "in 5 days", and CSV export of the filtered list (spreadsheet formulas are neutralised)
+- Licence list: quick views (valid, invalid, expiring, no recent check), filters and sorting kept in the address, clickable rows, expiry shown as "in 5 days", and CSV export of the filtered list (spreadsheet formulas are neutralised)
 - Quick search with Ctrl+K or Cmd+K (or `/`): licences by name, customer, key, reference or registered site domain, apps and pages
 - Activity tab with filters for changes, checks and downloads
 - File actions in the dashboard now report errors instead of failing silently

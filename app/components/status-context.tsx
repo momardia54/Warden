@@ -41,8 +41,8 @@ export function useStatusLabel(): (key: string | null) => string {
   const all = useAllStatuses()
   return (key) => {
     if (!key) return ""
-    if (key === "domain_mismatch") return "Wrong domain"
-    if (key === "unknown") return "Unknown key"
+    if (key === "domain_mismatch") return "Domain not allowed"
+    if (key === "unknown") return "Invalid licence key"
     if (key === "site_limit_reached") return "Site limit reached"
     return all.find((s) => s.key === key)?.label ?? key
   }

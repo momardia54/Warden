@@ -3,9 +3,9 @@
 export type ParsedIp = { version: 4 | 6; value: bigint }
 export type IpRange = { version: 4 | 6; base: bigint; prefix: number }
 
-/** Durations offered when blocking, in days; 0 = until removed. */
+/** Durations offered when blocking, in days; 0 = permanent. */
 export const BLOCK_DURATIONS = [1, 7, 30, 0] as const
-export const BLOCK_DURATION_LABELS: Record<(typeof BLOCK_DURATIONS)[number], string> = { 1: "1 day", 7: "7 days", 30: "30 days", 0: "Until removed" }
+export const BLOCK_DURATION_LABELS: Record<(typeof BLOCK_DURATIONS)[number], string> = { 1: "1 day", 7: "7 days", 30: "30 days", 0: "Permanent" }
 
 /** The narrowest ranges allowed: a block of a whole /8 (IPv4) or /16 (IPv6) is already very large. */
 export const MIN_PREFIX = { 4: 8, 6: 16 } as const
@@ -103,13 +103,13 @@ export function normalizeIp(raw: string | null | undefined): string | null {
  */
 export function parseRange(raw: string): { range: IpRange } | { error: string } {
   const [address, prefixText, extra] = raw.trim().split("/")
-  if (extra !== undefined) return { error: "Enter an IP address or a range such as 203.0.113.0/24." }
+  if (extra !== undefined) return { error: "Enter an IPv4 or IPv6 address, or a CIDR range such as 203.0.113.0/24." }
   const ip = parseIp(address ?? "")
-  if (!ip) return { error: "Enter an IP address (IPv4 or IPv6), or a range such as 203.0.113.0/24." }
+  if (!ip) return { error: "Enter an IPv4 or IPv6 address, or a CIDR range such as 203.0.113.0/24." }
   const bits = BITS[ip.version]
   const prefix = prefixText === undefined ? bits : /^\d{1,3}$/.test(prefixText) ? Number(prefixText) : NaN
-  if (!Number.isInteger(prefix) || prefix > bits) return { error: `The range size must be a number from ${MIN_PREFIX[ip.version]} to ${bits}.` }
-  if (prefix < MIN_PREFIX[ip.version]) return { error: `A range wider than /${MIN_PREFIX[ip.version]} could block a large part of the internet.` }
+  if (!Number.isInteger(prefix) || prefix > bits) return { error: `The prefix length must be between ${MIN_PREFIX[ip.version]} and ${bits}.` }
+  if (prefix < MIN_PREFIX[ip.version]) return { error: `Ranges wider than /${MIN_PREFIX[ip.version]} are not accepted.` }
   const mask = ((1n << BigInt(bits)) - 1n) ^ ((1n << BigInt(bits - prefix)) - 1n)
   return { range: { version: ip.version, base: ip.value & mask, prefix } }
 }

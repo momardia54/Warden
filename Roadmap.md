@@ -16,8 +16,8 @@ This is a plan, not a promise. Order can change.
 - Status **completed** (paid in full) and **files per licence** in R2: per-file release rules by licence status, gated downloads, download log, upload by dashboard or API
 - **Releases and updates**: versions, stable and beta channels, release notes, SHA-256 checksums, withdrawal, update offers in the check response, versions in use per site and per app
 - Dashboard: needs-attention queue with one-click extend, quick search, saved list views, CSV export
-- **Analytics**: checks, refusals, active sites and downloads per day, busiest licences, files and addresses
-- **Protection**: caller IP addresses, IP blocklist, rate limits and automatic blocking rules set in the dashboard
+- **Analytics**: valid and invalid checks, active sites and downloads per day; top licences, files and IP addresses
+- **Protection**: client IP addresses, IP blocklist, rate limits and blocking rules configured in the dashboard
 
 ## Next (towards 1.0.0)
 

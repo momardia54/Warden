@@ -458,7 +458,7 @@ async function ipBlockRoute(ctx: Context, rest: string[]): Promise<Response> {
     let expiresAt: number | null = null
     if (body.expires_at !== undefined && body.expires_at !== null) {
       const parsed = typeof body.expires_at === "string" ? Date.parse(body.expires_at) : NaN
-      if (Number.isNaN(parsed)) return fail(422, "invalid_expires_at", "expires_at must be an ISO 8601 date and time, or null for a block until removed.")
+      if (Number.isNaN(parsed)) return fail(422, "invalid_expires_at", "expires_at must be an ISO 8601 date and time, or null for a permanent block.")
       expiresAt = parsed
     }
     const created = await createBlock(env, { value: ip, reason, expires_at: expiresAt })

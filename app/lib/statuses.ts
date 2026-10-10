@@ -91,8 +91,8 @@ export function expirySources(set: StatusSet, key: string): string[] {
 
 export function statusLabel(set: StatusSet, key: string | null): string {
   if (!key) return ""
-  if (key === "domain_mismatch") return "Wrong domain"
-  if (key === "unknown") return "Unknown key"
+  if (key === "domain_mismatch") return "Domain not allowed"
+  if (key === "unknown") return "Invalid licence key"
   if (key === "site_limit_reached") return "Site limit reached"
   return findStatus(set, key)?.label ?? key
 }

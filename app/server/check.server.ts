@@ -70,7 +70,7 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
     ctx.waitUntil(
       recordCheck(env, license, result.status, domain, version, ip, now)
         // The rules read the check just recorded.
-        .then(() => applyRules(env, ip, { kind: "check", refused: !result.valid }, now))
+        .then(() => applyRules(env, ip, { kind: "check", invalid: !result.valid }, now))
         .catch((error) => console.error("Failed to record check:", error))
     )
   } else reportUnknownKey(env, ctx, request)

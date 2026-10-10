@@ -1,4 +1,4 @@
-import { DAY_MS, emptySeries, LIST_LIMIT, periodStart, type FileTraffic, type IpTraffic, type LicenseTraffic, type RefusalReason, type TrafficReport, type TrafficTotals } from "../lib/analytics"
+import { DAY_MS, emptySeries, LIST_LIMIT, periodStart, type FileTraffic, type IpTraffic, type LicenseTraffic, type InvalidReason, type TrafficReport, type TrafficTotals } from "../lib/analytics"
 import { DEFAULT_STATUSES, grantsAccess, statusLabel, type StatusSet } from "../lib/statuses"
 import { findBlock } from "./ip-blocks.server"
 import { loadStatusSets, setForApp, type StatusSets } from "./statuses.server"
@@ -37,7 +37,7 @@ function setOfOwner(sets: StatusSets, owner: string): StatusSet {
 
 type CheckRow = { day: number; status: string; owner: string; n: number }
 
-/** The checks of the period grouped by day, status and status set: the base of the daily series and the refusals. */
+/** The checks of the period grouped by day, status and status set: the base of the daily series and the reasons. */
 async function checksByDay(env: Env, scope: TrafficScope, from: number): Promise<CheckRow[]> {
   const s = scopeSql(scope)
   return (
@@ -52,7 +52,7 @@ async function checksByDay(env: Env, scope: TrafficScope, from: number): Promise
 }
 
 /**
- * The checks of each day split into valid and refused, plus sites and downloads per day. With `parts = "checks"`
+ * The checks of each day split into valid and invalid, plus sites and downloads per day. With `parts = "checks"`
  * only the checks are read, for the small charts of the overview and licence pages.
  */
 export async function dailyTraffic(env: Env, scope: TrafficScope, days: number, now = Date.now(), parts: "checks" | "all" = "all") {
@@ -84,7 +84,7 @@ export async function dailyTraffic(env: Env, scope: TrafficScope, days: number, 
     const entry = at(row.day)
     if (!entry) continue
     if (isValid(statusSets, row)) entry.valid += row.n
-    else entry.refused += row.n
+    else entry.invalid += row.n
   }
   for (const row of sites.results) if (at(row.day)) at(row.day).sites = row.n
   for (const row of downloads.results) if (at(row.day)) at(row.day).downloads = row.n
@@ -152,7 +152,7 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
     .first<{ n: number }>()
 
   // Refusals by reason. The same key can be labelled differently by two sets; the first label seen is kept.
-  const reasons = new Map<string, RefusalReason>()
+  const reasons = new Map<string, InvalidReason>()
   for (const row of checks) {
     if (isValid(sets, row)) continue
     const reason = reasons.get(row.status) ?? { key: row.status, label: statusLabel(setOfOwner(sets, row.owner), row.status), checks: 0 }
@@ -162,18 +162,18 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
 
   const licenses = new Map<string, LicenseTraffic>()
   for (const row of perLicense.results) {
-    const entry = licenses.get(row.id) ?? { id: row.id, name: row.name, app_name: row.app_name, checks: 0, refused: 0, last_check_at: row.last_check_at }
+    const entry = licenses.get(row.id) ?? { id: row.id, name: row.name, app_name: row.app_name, checks: 0, invalid: 0, last_check_at: row.last_check_at }
     entry.checks += row.n
-    if (!isValid(sets, row)) entry.refused += row.n
+    if (!isValid(sets, row)) entry.invalid += row.n
     licenses.set(row.id, entry)
   }
 
   const ips = new Map<string, IpTraffic>()
   for (const row of perIp.results) {
-    const entry = ips.get(row.ip) ?? { ip: row.ip, checks: 0, refused: 0, downloads: 0, licenses: 0, blocked: false }
+    const entry = ips.get(row.ip) ?? { ip: row.ip, checks: 0, invalid: 0, downloads: 0, licenses: 0, blocked: false }
     if (row.event === "check") {
       entry.checks += row.n
-      if (!isValid(sets, row)) entry.refused += row.n
+      if (!isValid(sets, row)) entry.invalid += row.n
     } else entry.downloads += row.n
     ips.set(row.ip, entry)
   }
@@ -186,15 +186,15 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
   const guardedCount = (kind: string) => guarded?.results.find((r) => r.kind === kind)?.n ?? 0
 
   const valid = series.reduce((n, d) => n + d.valid, 0)
-  const refused = series.reduce((n, d) => n + d.refused, 0)
+  const invalid = series.reduce((n, d) => n + d.invalid, 0)
   const totals: TrafficTotals = {
-    checks: valid + refused,
+    checks: valid + invalid,
     valid,
-    refused,
+    invalid,
     sites: siteTotals?.sites ?? 0,
     new_sites: newSites?.n ?? 0,
     downloads: series.reduce((n, d) => n + d.downloads, 0),
-    refused_downloads: refusedDownloads?.n ?? 0,
+    denied_downloads: refusedDownloads?.n ?? 0,
     blocked: whole ? guardedCount("blocked") : null,
     rate_limited: whole ? guardedCount("rate_limited") : null,
   }
@@ -204,7 +204,7 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
     to: now,
     series,
     totals,
-    refusals: [...reasons.values()].sort((a, b) => b.checks - a.checks),
+    reasons: [...reasons.values()].sort((a, b) => b.checks - a.checks),
     licenses: [...licenses.values()].sort((a, b) => b.checks - a.checks || a.name.localeCompare(b.name)).slice(0, LIST_LIMIT),
     files: files.results,
     ips: topIps,

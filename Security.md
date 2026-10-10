@@ -25,7 +25,7 @@ Supported versions: only the latest release (there is no 1.0 yet, so none is lon
 | CSV export | Cells that a spreadsheet would read as a formula (starting with `=`, `+`, `-`, `@`) are prefixed with an apostrophe, so opening an export cannot run anything. |
 | Database | Cloudflare D1, queries use bound parameters throughout. Check history older than 90 days is deleted daily. |
 | Caller addresses | The IP address of each check and download (normally the customer's server, not a visitor) is stored with it, to investigate misuse and block addresses. Addresses go with the checks after 90 days, and are cleared from downloads after 90 days. Mention this in your privacy notice if your customers are in the EU. |
-| Blocking and rate limits | Blocked addresses and ranges get 403 on checks and downloads before any licence is read. Rate limits per address, per licence key and per API key (Workers rate limiting, approximate) answer 429. Rules can block an address automatically (key guessing, refused checks, many licences, staying over a limit). The dashboard and the API are never blocked by address. See [docs/protection.md](docs/protection.md). |
+| Blocking and rate limits | Blocked addresses and ranges get 403 on checks and downloads before any licence is read. Rate limits per address, per licence key and per API key (Workers rate limiting, approximate) answer 429. Blocking rules add addresses automatically (invalid licence keys, invalid checks, licences per IP address, rate limit violations). IP blocking never applies to the dashboard or the API. See [docs/protection.md](docs/protection.md). |
 
 ## Limits you should know about
 

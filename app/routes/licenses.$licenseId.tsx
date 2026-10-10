@@ -241,10 +241,10 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
 
         <FactStrip>
           <Fact
-            label="What sites see"
-            help="The result the check endpoint returns right now. It differs from the stored status only when the status has an expiry rule and the expiry date has passed."
+            label="Check result"
+            help="The status a check returns now. It differs from the stored status only when the status has an expiry rule and the expiry date has passed."
             value={<StatusBadge status={reported ?? { label: effective, color: DEFAULT_COLOR }} />}
-            detail={valid ? "Sites can run" : "Sites are refused"}
+            detail={valid ? "valid: true" : "valid: false"}
             tone={valid ? "success" : "danger"}
           />
           <Fact
@@ -255,14 +255,14 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           />
           <Fact
             label="Sites"
-            help="Sites register automatically on their first check with a domain. When the licence has a site limit, further sites are refused once it is reached."
+            help="Sites register automatically on their first check with a domain. Once the site limit is reached, checks from additional sites return site_limit_reached."
             value={license.max_sites === null ? `${license.sites_used ?? 0}` : `${license.sites_used ?? 0} of ${license.max_sites}`}
             detail={license.max_sites === null ? "No site limit" : (license.sites_used ?? 0) >= license.max_sites ? "Limit reached" : `${license.max_sites - (license.sites_used ?? 0)} free`}
             tone={license.max_sites !== null && (license.sites_used ?? 0) >= license.max_sites ? "warning" : "default"}
           />
           <Fact
             label="Last check"
-            help="The last time a site called the check URL, and the domain it reported."
+            help="Time of the most recent check and the domain it reported."
             value={<Ago ts={license.last_check_at} empty="Never" />}
             detail={license.last_check_domain ? `From ${license.last_check_domain}, ${license.check_count} in total` : `${license.check_count} checks in total`}
             tone={valid && silent ? "warning" : "default"}
@@ -488,16 +488,16 @@ const EVENT_FILTERS = [
 function ActivityTab({ licenseId, activity, blockedIps, traffic, statuses }: { licenseId: string; activity: LoaderData["activity"]; blockedIps: string[]; traffic: LoaderData["traffic"]; statuses: ReturnType<typeof useStatusSetForLicense> }) {
   const [filter, setFilter] = useState<(typeof EVENT_FILTERS)[number]["id"]>("all")
   const shown = filter === "all" ? activity : activity.filter((a) => a.event === filter)
-  const checks = traffic.reduce((n, d) => n + d.valid + d.refused, 0)
+  const checks = traffic.reduce((n, d) => n + d.valid + d.invalid, 0)
   return (
     <div className="space-y-3">
       <section className="mb-6 rounded-lg border bg-card p-4">
         <ColumnChart
-          title="Checks, last 30 days"
+          title="Licence checks, last 30 days"
           data={traffic}
           series={[
             { key: "valid", label: "Valid", color: "var(--chart-1)" },
-            { key: "refused", label: "Refused", color: "var(--chart-2)" },
+            { key: "invalid", label: "Invalid", color: "var(--chart-2)" },
           ]}
           height={140}
           summary={<span className="tabular-nums">{checks.toLocaleString("en-GB")} checks</span>}

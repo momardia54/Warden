@@ -34,10 +34,10 @@ test("addresses and ranges are parsed and normalised", () => {
   assert.equal(range("203.0.113.9/24"), "203.0.113.0/24") // the base is masked
   assert.equal(range("203.0.113.9/32"), "203.0.113.9")
   assert.equal(range("2001:db8::1/32"), "2001:db8::/32")
-  assert.match(range("10.0.0.0/4"), /large part of the internet/)
-  assert.match(range("2001::/8"), /large part of the internet/)
-  assert.match(range("10.0.0.0/33"), /number from 8 to 32/)
-  assert.match(range("nonsense"), /Enter an IP address/)
+  assert.match(range("10.0.0.0/4"), /wider than \/8 are not accepted/)
+  assert.match(range("2001::/8"), /wider than \/16 are not accepted/)
+  assert.match(range("10.0.0.0/33"), /between 8 and 32/)
+  assert.match(range("nonsense"), /Enter an IPv4 or IPv6 address/)
 
   const r = parseRange("203.0.113.0/24")
   assert.ok("range" in r)
@@ -139,7 +139,7 @@ test("checks and downloads record the caller's address; old addresses are cleare
   assert.equal((await listActivations(env, lic.id))[0].last_ip, "2001:db8::5")
 
   const report = await trafficReport(env, {}, 7)
-  assert.deepEqual(report.ips.map((r) => ({ ...r })), [{ ip: "2001:db8::5", checks: 1, refused: 0, downloads: 0, licenses: 1, blocked: false }])
+  assert.deepEqual(report.ips.map((r) => ({ ...r })), [{ ip: "2001:db8::5", checks: 1, invalid: 0, downloads: 0, licenses: 1, blocked: false }])
 
   const old = Date.now() - 100 * DAY
   await env.DB.prepare("INSERT INTO activity (license_id, at, event, status, domain, detail, ip) VALUES (?, ?, 'download', 'active', NULL, 'Downloaded: a.zip', '203.0.113.1')").bind(lic.id, old).run()

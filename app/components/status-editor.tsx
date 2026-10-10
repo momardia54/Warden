@@ -119,8 +119,8 @@ export function StatusEditor({ statuses, usage = {}, actionPath, onChange }: Pro
               </div>
               {s.description && <p className="text-xs text-muted-foreground">{s.description}</p>}
               <p className="text-xs text-muted-foreground">
-                {s.grants_access ? "Sites can run" : "Sites are blocked"}
-                {s.on_expiry ? ` · becomes ${findStatus(statuses, s.on_expiry)?.label ?? s.on_expiry} when the expiry date passes` : " · expiry date does not apply"}
+                {s.grants_access ? "Valid" : "Invalid"}
+                {s.on_expiry ? ` · changes to ${findStatus(statuses, s.on_expiry)?.label ?? s.on_expiry} after the expiry date` : " · no expiry"}
                 {` · ${usage[s.key] ?? 0} licence${(usage[s.key] ?? 0) === 1 ? "" : "s"}`}
               </p>
             </div>
@@ -235,8 +235,8 @@ export function StatusEditor({ statuses, usage = {}, actionPath, onChange }: Pro
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" className="size-4 accent-primary" checked={draft.grants_access} onChange={(e) => setDraft({ ...draft, grants_access: e.target.checked })} />
-                Sites can run under this status
-                <HelpTip>When on, the check response says valid: true and the site keeps working. When off, the site is told the licence is not valid and decides what to do, for example show a notice.</HelpTip>
+                Valid status
+                <HelpTip>Checks return valid: true while a licence has this status. When off, checks return valid: false and the site applies its own handling, such as showing a notice.</HelpTip>
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" className="size-4 accent-primary" checked={draft.is_default} onChange={(e) => setDraft({ ...draft, is_default: e.target.checked })} />

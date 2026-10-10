@@ -59,7 +59,7 @@ export default function Apps({ loaderData }: Route.ComponentProps) {
                 <TableRow>
                   <TableHead>App</TableHead>
                   <TableHead>Licences</TableHead>
-                  <TableHead className="hidden sm:table-cell">In force</TableHead>
+                  <TableHead className="hidden sm:table-cell">Valid</TableHead>
                   <TableHead className="hidden md:table-cell">Sites</TableHead>
                   <TableHead className="hidden md:table-cell">Latest release</TableHead>
                 </TableRow>
