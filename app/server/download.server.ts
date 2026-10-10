@@ -1,4 +1,5 @@
 import { evaluateFileAccess, type FileAccess } from "../lib/files"
+import { clientIp, reportUnknownKey } from "./guard.server"
 import { buildCheckResponse, KEY_PATTERN, normalizeDomain, type CheckResponse } from "../lib/license"
 import { isChannel, latestRelease, type Channel } from "../lib/releases"
 import { describeStatusKeys, type StatusSet } from "../lib/statuses"
@@ -133,7 +134,10 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
   const now = Date.now()
 
   const license = KEY_PATTERN.test(key) ? await getLicenseByKey(env, key) : null
-  if (!license) return reply({ valid: false, status: "unknown", message: "Unknown licence." }, 404)
+  if (!license) {
+    reportUnknownKey(env, ctx, request)
+    return reply({ valid: false, status: "unknown", message: "Unknown licence." }, 404)
+  }
 
   const activated = license.max_sites !== null ? (await listActivations(env, license.id)).map((a) => a.domain) : []
   const set = await getStatusSetForLicense(env, license)
@@ -153,7 +157,7 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
 
   const access = accessFor(license, file, domain, check, now, set)
   if (!access.allowed) {
-    ctx.waitUntil(logDownload(env, license, file, access.status, domain, now, false, set).catch((e) => console.error("Failed to log download:", e)))
+    ctx.waitUntil(logDownload(env, license, file, access.status, domain, clientIp(request), now, false, set).catch((e) => console.error("Failed to log download:", e)))
     return reply({ valid: false, status: access.status, message: access.message, file: { id: file.id, name: file.name, statuses: releaseRule(file, set).statuses } }, 403)
   }
   if (!env.FILES) return reply({ error: "File storage is not configured." }, 501)
@@ -176,13 +180,13 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
     object.body.cancel().catch(() => {})
     return new Response(null, { status: 200, headers })
   }
-  ctx.waitUntil(logDownload(env, license, file, access.status, domain, now, true, set).catch((e) => console.error("Failed to log download:", e)))
+  ctx.waitUntil(logDownload(env, license, file, access.status, domain, clientIp(request), now, true, set).catch((e) => console.error("Failed to log download:", e)))
   return new Response(object.body, { status: 200, headers })
 }
 
-async function logDownload(env: Env, license: License, file: LicenseFile, status: string, domain: string | null, now: number, granted: boolean, set: StatusSet) {
+async function logDownload(env: Env, license: License, file: LicenseFile, status: string, domain: string | null, ip: string | null, now: number, granted: boolean, set: StatusSet) {
   const detail = granted ? `Downloaded: ${file.name}` : `Download refused: ${file.name} (available when ${describeStatusKeys(releaseRule(file, set).statuses, set)})`
-  const statements = [env.DB.prepare("INSERT INTO activity (license_id, at, event, status, domain, detail) VALUES (?, ?, 'download', ?, ?, ?)").bind(license.id, now, status, domain, detail)]
+  const statements = [env.DB.prepare("INSERT INTO activity (license_id, at, event, status, domain, detail, ip) VALUES (?, ?, 'download', ?, ?, ?, ?)").bind(license.id, now, status, domain, detail, ip)]
   if (granted) statements.push(env.DB.prepare("UPDATE files SET download_count = download_count + 1, last_download_at = ? WHERE id = ?").bind(now, file.id))
   await env.DB.batch(statements)
 }

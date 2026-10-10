@@ -1,5 +1,6 @@
-import { DAY_MS, emptySeries, periodStart, type FileTraffic, type LicenseTraffic, type RefusalReason, type TrafficReport, type TrafficTotals } from "../lib/analytics"
+import { DAY_MS, emptySeries, LIST_LIMIT, periodStart, type FileTraffic, type IpTraffic, type LicenseTraffic, type RefusalReason, type TrafficReport, type TrafficTotals } from "../lib/analytics"
 import { DEFAULT_STATUSES, grantsAccess, statusLabel, type StatusSet } from "../lib/statuses"
+import { findBlock } from "./ip-blocks.server"
 import { loadStatusSets, setForApp, type StatusSets } from "./statuses.server"
 
 /**
@@ -98,7 +99,8 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
   const { from, series, checks, sets } = daily
   const s = scopeSql(scope)
 
-  const [siteTotals, refusedDownloads, perLicense, files] = await Promise.all([
+  const whole = Object.keys(scope).length === 0
+  const [siteTotals, refusedDownloads, perLicense, files, perIp, licensesPerIp, guarded] = await Promise.all([
     env.DB.prepare(
       `SELECT COUNT(DISTINCT a.license_id || ' ' || a.domain) AS sites
        FROM activity a JOIN licenses l ON l.id = a.license_id
@@ -122,10 +124,26 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
     env.DB.prepare(
       `SELECT substr(a.detail, 13) AS name, COUNT(*) AS downloads
        FROM activity a JOIN licenses l ON l.id = a.license_id
-       WHERE a.event = 'download' AND a.at >= ? AND a.detail LIKE 'Downloaded: %'${s.sql} GROUP BY a.detail ORDER BY downloads DESC, name LIMIT 8`
+       WHERE a.event = 'download' AND a.at >= ? AND a.detail LIKE 'Downloaded: %'${s.sql} GROUP BY a.detail ORDER BY downloads DESC, name LIMIT ${LIST_LIMIT}`
     )
       .bind(from, ...s.binds)
       .all<FileTraffic>(),
+    env.DB.prepare(
+      `SELECT a.ip AS ip, a.event AS event, a.status AS status, ${OWNER} AS owner, COUNT(*) AS n
+       FROM activity a JOIN licenses l ON l.id = a.license_id
+       WHERE a.event IN ('check', 'download') AND a.at >= ? AND a.ip IS NOT NULL${s.sql} GROUP BY a.ip, a.event, a.status, owner`
+    )
+      .bind(from, ...s.binds)
+      .all<{ ip: string; event: "check" | "download"; status: string; owner: string; n: number }>(),
+    env.DB.prepare(
+      `SELECT a.ip AS ip, COUNT(DISTINCT a.license_id) AS n FROM activity a JOIN licenses l ON l.id = a.license_id
+       WHERE a.event IN ('check', 'download') AND a.at >= ? AND a.ip IS NOT NULL${s.sql} GROUP BY a.ip`
+    )
+      .bind(from, ...s.binds)
+      .all<{ ip: string; n: number }>(),
+    whole
+      ? env.DB.prepare("SELECT kind, SUM(count) AS n FROM refused_requests WHERE day >= ? GROUP BY kind").bind(from / DAY_MS).all<{ kind: string; n: number }>()
+      : Promise.resolve(null),
   ])
   const newSites = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM activations ac JOIN licenses l ON l.id = ac.license_id WHERE ac.first_seen_at >= ?${scopeSql(scope, "ac.license_id").sql}`
@@ -150,6 +168,23 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
     licenses.set(row.id, entry)
   }
 
+  const ips = new Map<string, IpTraffic>()
+  for (const row of perIp.results) {
+    const entry = ips.get(row.ip) ?? { ip: row.ip, checks: 0, refused: 0, downloads: 0, licenses: 0, blocked: false }
+    if (row.event === "check") {
+      entry.checks += row.n
+      if (!isValid(sets, row)) entry.refused += row.n
+    } else entry.downloads += row.n
+    ips.set(row.ip, entry)
+  }
+  for (const row of licensesPerIp.results) {
+    const entry = ips.get(row.ip)
+    if (entry) entry.licenses = row.n
+  }
+  const topIps = [...ips.values()].sort((a, b) => b.checks + b.downloads - (a.checks + a.downloads) || a.ip.localeCompare(b.ip)).slice(0, LIST_LIMIT)
+  for (const entry of topIps) entry.blocked = (await findBlock(env, entry.ip, now)) !== null
+  const guardedCount = (kind: string) => guarded?.results.find((r) => r.kind === kind)?.n ?? 0
+
   const valid = series.reduce((n, d) => n + d.valid, 0)
   const refused = series.reduce((n, d) => n + d.refused, 0)
   const totals: TrafficTotals = {
@@ -160,6 +195,8 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
     new_sites: newSites?.n ?? 0,
     downloads: series.reduce((n, d) => n + d.downloads, 0),
     refused_downloads: refusedDownloads?.n ?? 0,
+    blocked: whole ? guardedCount("blocked") : null,
+    rate_limited: whole ? guardedCount("rate_limited") : null,
   }
   return {
     days,
@@ -168,7 +205,8 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
     series,
     totals,
     refusals: [...reasons.values()].sort((a, b) => b.checks - a.checks),
-    licenses: [...licenses.values()].sort((a, b) => b.checks - a.checks || a.name.localeCompare(b.name)).slice(0, 8),
+    licenses: [...licenses.values()].sort((a, b) => b.checks - a.checks || a.name.localeCompare(b.name)).slice(0, LIST_LIMIT),
     files: files.results,
+    ips: topIps,
   }
 }

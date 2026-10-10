@@ -60,6 +60,11 @@ In every path below, `{id}` can be the licence id (`lic_...`) or the licence key
 | `GET /me` | read | The key's name and scope |
 | `GET /stats` | read | `total`, `in_force`, `not_in_force`, `expiring_within_14_days`, `not_checked_for_3_days` and `by_status` (a count per status key) |
 | `GET /analytics` | read | Checks and downloads per day, totals, refusal reasons, busiest licences and files (`days`, `app`, `license`; see [analytics.md](analytics.md)) |
+| `GET /ip-blocks` | read | Blocked IP addresses and ranges ([protection.md](protection.md)) |
+| `POST /ip-blocks` | manage | Block an address or range (`ip`, `reason`, `expires_at`) |
+| `DELETE /ip-blocks/{id}` | manage | Remove a block |
+| `GET /protection` | read | Rate limits, automatic blocking rules, never-block list |
+| `PATCH /protection` | full | Change protection settings (only what you send) |
 | `GET /statuses` | read | The built-in default statuses ([statuses.md](statuses.md)) |
 | `GET /licenses` | read | List, newest first |
 | `POST /licenses` | manage | Create |
@@ -230,7 +235,9 @@ An app is a product you license to many customers. See [apps.md](apps.md) for th
 
 ### Activity
 
-`GET /licenses/{id}/activity?limit=50` returns `{ "data": [ { "at", "event": "check" | "change" | "download", "status", "domain", "detail" } ] }`, newest first.
+`GET /licenses/{id}/activity?limit=50` returns `{ "data": [ { "at", "event": "check" | "change" | "download", "status", "domain", "ip", "detail" } ] }`, newest first. `ip` is the caller of a check or a download (null for changes, and after 90 days). Sites (`/activations`) include `last_ip`.
+
+Each API key is rate limited (600 requests per minute by default, set under Protection). Over the limit the API answers `429` with `Retry-After: 60` and the code `rate_limited`.
 
 ## Examples
 

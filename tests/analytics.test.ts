@@ -58,7 +58,7 @@ test("checks are split into valid and refused per day, by each licence's statuse
   const today = report.series[29]
   assert.deepEqual({ valid: today.valid, refused: today.refused, sites: today.sites, downloads: today.downloads }, { valid: 3, refused: 2, sites: 3, downloads: 1 })
   assert.equal(report.series[27].valid, 1)
-  assert.deepEqual(report.totals, { checks: 6, valid: 4, refused: 2, sites: 3, new_sites: 3, downloads: 1, refused_downloads: 1 })
+  assert.deepEqual(report.totals, { checks: 6, valid: 4, refused: 2, sites: 3, new_sites: 3, downloads: 1, refused_downloads: 1, blocked: 0, rate_limited: 0 })
   assert.deepEqual(
     report.refusals.map((r) => [r.key, r.label, r.checks]).sort(),
     [["site_limit_reached", "Site limit reached", 1], ["suspended", "Suspended", 1]]

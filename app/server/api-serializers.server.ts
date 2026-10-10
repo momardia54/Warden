@@ -1,3 +1,4 @@
+import type { IpBlock } from "./ip-blocks.server"
 import { evaluateFileAccess } from "../lib/files"
 import { parseDomains } from "../lib/license"
 import { effectiveStatusKey, grantsAccess, type StatusDef, type StatusSet } from "../lib/statuses"
@@ -93,6 +94,10 @@ export const serializeStatus = (s: StatusDef) => ({
   is_default: s.is_default,
 })
 
-export const serializeActivity = (a: Activity) => ({ at: iso(a.at), event: a.event, status: a.status, domain: a.domain, detail: a.detail })
+export const serializeActivity = (a: Activity) => ({ at: iso(a.at), event: a.event, status: a.status, domain: a.domain, ip: a.ip, detail: a.detail })
 
-export const serializeActivation = (a: Activation) => ({ domain: a.domain, version: a.version, first_seen_at: iso(a.first_seen_at), last_seen_at: iso(a.last_seen_at), check_count: a.check_count })
+export const serializeActivation = (a: Activation) => ({ domain: a.domain, version: a.version, first_seen_at: iso(a.first_seen_at), last_seen_at: iso(a.last_seen_at), check_count: a.check_count, last_ip: a.last_ip })
+
+export const serializeBlock = (b: IpBlock) => ({
+  id: b.id, ip: b.value, source: b.source, reason: b.reason, created_at: iso(b.created_at), expires_at: iso(b.expires_at), hits: b.hits, last_hit_at: iso(b.last_hit_at),
+})

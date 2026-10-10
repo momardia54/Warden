@@ -14,11 +14,22 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 - Migration 0007 (file channel, release notes, checksum, withdrawal; the version of each site)
 - docs/releases.md
 
+### Added: protection
+
+- The **IP address** of every check and download is recorded and shown in the activity log, on each site, in Analytics (top addresses) and in the API (`ip`, `last_ip`); quick search finds licences by address. Addresses are cleared after 90 days
+- **Block an IP address or range** from any address in the dashboard, or directly on the new **Protection** page, for 1, 7 or 30 days or until removed, with a reason. Blocked callers get `403` (`status: blocked`) on checks and downloads before any licence is read; the dashboard and the API are never blocked by address
+- **Rate limits**, set in the dashboard: checks per address, checks per licence key, downloads per address and API requests per key (30 to 1,200 per minute, or off). Over a limit: `429` with `Retry-After`, and no verdict on checks
+- **Automatic blocking rules**, each with a threshold, a window and a block length: guessing licence keys (on), refused checks, many licences from one address, staying over a rate limit (on). A never-block list exempts your own servers
+- Analytics shows requests refused before any licence was read (blocked, rate limited)
+- API: `GET/POST /ip-blocks`, `DELETE /ip-blocks/{id}`, `GET/PATCH /protection`
+- Migrations 0009 (addresses, blocklist, refused counts) and 0010 (settings, automatic blocks, rule events)
+- docs/protection.md
+
 ### Added: analytics
 
 - **Analytics** page: checks per day split into valid and refused, active sites and downloads per day, refusals by reason, most checked licences and most downloaded files, over 7, 30 or 90 days, for every licence, one app or the standalone licences
 - Checks of the last 30 days on the overview and on each licence's Activity tab
-- Charts can be read by hovering, with the keyboard, or as a table
+- Charts can be read by hovering, with the keyboard, or as a table; the charts on the overview, an app and a licence have **View all**, and ranked lists show eight rows with **View all** for up to 100
 - API: `GET /analytics` (`days`, `app`, `license`)
 - Migration 0008: index on activity (event, at), so each figure reads only checks or only downloads
 - docs/analytics.md

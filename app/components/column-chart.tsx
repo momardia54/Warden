@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react"
-import { Table2, ChartColumn } from "lucide-react"
+import { Link } from "react-router"
+import { ChartColumn, ChevronRight, Table2 } from "lucide-react"
 import { compactNumber } from "#/lib/analytics"
 
 export type ChartSeries<K extends string> = { key: K; label: string; /** A CSS colour, normally a chart token. */ color: string }
@@ -37,6 +38,8 @@ function useWidth() {
   const [width, setWidth] = useState<number | null>(null)
   useEffect(() => {
     if (!node) return
+    // Measure at once: the observer's first report waits for the next frame, which a background tab may never draw.
+    setWidth(Math.max(120, Math.floor(node.getBoundingClientRect().width)))
     const observer = new ResizeObserver(([entry]) => setWidth(Math.max(120, Math.floor(entry.contentRect.width))))
     observer.observe(node)
     return () => observer.disconnect()
@@ -55,6 +58,7 @@ export function ColumnChart<K extends string>({
   description,
   height = 180,
   summary,
+  viewAll,
 }: {
   data: Row<K>[]
   series: ChartSeries<K>[]
@@ -63,6 +67,8 @@ export function ColumnChart<K extends string>({
   height?: number
   /** A headline beside the title, typically the period total. */
   summary?: React.ReactNode
+  /** Where "View all" leads: the full analytics behind this chart. */
+  viewAll?: string
 }) {
   const [box, measured] = useWidth()
   // Before the first measure the plot is laid out at a nominal width and kept invisible, so nothing jumps.
@@ -110,6 +116,11 @@ export function ColumnChart<K extends string>({
             {asTable ? <ChartColumn className="size-3.5" /> : <Table2 className="size-3.5" />}
             {asTable ? "Chart" : "Table"}
           </button>
+          {viewAll && (
+            <Link to={viewAll} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium hover:bg-muted">
+              View all <ChevronRight className="size-3.5" />
+            </Link>
+          )}
         </div>
       </figcaption>
 

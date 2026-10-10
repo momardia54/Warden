@@ -3,9 +3,12 @@ import { DEFAULT_STATUSES, defaultStatusKey, findStatus, type StatusSet } from "
 import { applyAppBody, applyLicenseBody } from "./api-input.server"
 import { authenticate, type ApiKeyRow } from "./api-keys.server"
 import { CORS, fail, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
-import { serializeActivation, serializeActivity, serializeApp, serializeFile, serializeLicense, serializeStatus } from "./api-serializers.server"
+import { serializeActivation, serializeActivity, serializeApp, serializeBlock, serializeFile, serializeLicense, serializeStatus } from "./api-serializers.server"
 import { readRange, TRAFFIC_RANGES } from "../lib/analytics"
 import { trafficReport, type TrafficScope } from "./analytics.server"
+import { apiWithinLimit } from "./guard.server"
+import { createBlock, deleteBlock, listBlocks } from "./ip-blocks.server"
+import { getProtection, saveProtection } from "./protection.server"
 import { appDefaults, createApp, deleteApp, findApp, getAppSummary, listApps, updateApp, versionsInUse, type App, type AppInput } from "./apps.server"
 import { deleteFile, getFile, listFiles, statusSetForOwner, storeFile, updateFile, type FileOwner } from "./files.server"
 import {
@@ -440,6 +443,36 @@ async function analyticsRoute({ env, url }: Context): Promise<Response> {
   return reply(await trafficReport(env, scope, readRange(daysParam)))
 }
 
+// ---- IP blocklist -------------------------------------------------------------------
+
+async function ipBlockRoute(ctx: Context, rest: string[]): Promise<Response> {
+  const { env, request } = ctx
+  if (rest.length === 0 && request.method === "GET") return reply({ data: (await listBlocks(env)).map(serializeBlock) })
+  if (rest.length === 0 && request.method === "POST") {
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    const body = await readJson(request)
+    if (body instanceof Response) return body
+    const ip = typeof body.ip === "string" ? body.ip : ""
+    const reason = typeof body.reason === "string" ? body.reason : ""
+    let expiresAt: number | null = null
+    if (body.expires_at !== undefined && body.expires_at !== null) {
+      const parsed = typeof body.expires_at === "string" ? Date.parse(body.expires_at) : NaN
+      if (Number.isNaN(parsed)) return fail(422, "invalid_expires_at", "expires_at must be an ISO 8601 date and time, or null for a block until removed.")
+      expiresAt = parsed
+    }
+    const created = await createBlock(env, { value: ip, reason, expires_at: expiresAt })
+    if ("error" in created) return fail(created.code === "exists" ? 409 : 422, created.code === "exists" ? "already_blocked" : "invalid_ip", created.error)
+    return reply(serializeBlock(created.block), 201)
+  }
+  if (rest.length === 1 && request.method === "DELETE") {
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    return (await deleteBlock(env, rest[0])) ? reply({ deleted: true, id: rest[0] }) : fail(404, "not_found", "No block with this id.")
+  }
+  return fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")
+}
+
 // ---- entry point ------------------------------------------------------------------
 
 export async function handleApi(request: Request, env: Env, execution: ExecutionContext): Promise<Response> {
@@ -450,6 +483,11 @@ export async function handleApi(request: Request, env: Env, execution: Execution
 
   const key = await authenticate(request, env, execution)
   if (!key) return fail(401, "unauthorized", "Send a valid API key as Authorization: Bearer wk_...")
+  if (!(await apiWithinLimit(request, env, key.prefix))) {
+    const limited = fail(429, "rate_limited", "Too many requests with this API key. Try again in a minute.")
+    limited.headers.set("retry-after", "60")
+    return limited
+  }
   const ctx: Context = { env, request, url, origin: url.origin, key }
 
   const [resource, ...rest] = path.split("/").filter(Boolean)
@@ -459,6 +497,18 @@ export async function handleApi(request: Request, env: Env, execution: Execution
     return reply({ total: stats.total, in_force: stats.inForce, not_in_force: stats.notInForce, expiring_within_14_days: stats.endingSoon, not_checked_for_3_days: stats.silent, by_status: stats.byStatus })
   }
   if (resource === "analytics" && rest.length === 0 && request.method === "GET") return analyticsRoute(ctx)
+  if (resource === "ip-blocks") return ipBlockRoute(ctx, rest)
+  if (resource === "protection" && rest.length === 0) {
+    if (request.method === "GET") return reply(await getProtection(env))
+    if (request.method === "PATCH") {
+      const denied = need(ctx, "full")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const saved = await saveProtection(env, body)
+      return "error" in saved ? fail(422, "invalid_settings", saved.error) : reply(saved.settings)
+    }
+  }
   if (resource === "licenses") return licenseRoute(ctx, rest)
   if (resource === "apps") return appRoute(ctx, rest)
   if (resource === "statuses" && rest.length === 0 && request.method === "GET") return reply({ data: DEFAULT_STATUSES.map(serializeStatus) })

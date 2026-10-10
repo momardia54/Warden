@@ -33,7 +33,7 @@ export type License = {
   sites_used?: number
 }
 
-export type Activity = { id: number; at: number; event: "check" | "change" | "download"; status: string | null; domain: string | null; detail: string }
+export type Activity = { id: number; at: number; event: "check" | "change" | "download"; status: string | null; domain: string | null; detail: string; /** Caller of a check or a download. */ ip: string | null }
 
 export type Activation = {
   domain: string
@@ -42,6 +42,8 @@ export type Activation = {
   check_count: number
   /** The version the site last reported with its check, or null. */
   version: string | null
+  /** The address the site last checked from, or null. */
+  last_ip: string | null
 }
 
 export type LicenseInput = {
@@ -299,7 +301,7 @@ export async function deleteLicense(env: Env, id: string): Promise<void> {
 // ---- site activations -----------------------------------------------------------
 
 export async function listActivations(env: Env, licenseId: string): Promise<Activation[]> {
-  return (await env.DB.prepare("SELECT domain, first_seen_at, last_seen_at, check_count, version FROM activations WHERE license_id = ? ORDER BY first_seen_at").bind(licenseId).all<Activation>()).results
+  return (await env.DB.prepare("SELECT domain, first_seen_at, last_seen_at, check_count, version, last_ip FROM activations WHERE license_id = ? ORDER BY first_seen_at").bind(licenseId).all<Activation>()).results
 }
 
 /**
@@ -307,19 +309,19 @@ export async function listActivations(env: Env, licenseId: string): Promise<Acti
  * while the licence is below its site limit; the limit is enforced in the INSERT itself. `version` is the version the
  * site reported; a check without one keeps the version recorded before.
  */
-export async function recordActivation(env: Env, license: Pick<License, "id" | "max_sites">, domain: string, now: number, version: string | null = null): Promise<void> {
-  const updated = await env.DB.prepare("UPDATE activations SET last_seen_at = ?, check_count = check_count + 1, version = COALESCE(?, version) WHERE license_id = ? AND domain = ?")
-    .bind(now, version, license.id, domain)
+export async function recordActivation(env: Env, license: Pick<License, "id" | "max_sites">, domain: string, now: number, version: string | null = null, ip: string | null = null): Promise<void> {
+  const updated = await env.DB.prepare("UPDATE activations SET last_seen_at = ?, check_count = check_count + 1, version = COALESCE(?, version), last_ip = COALESCE(?, last_ip) WHERE license_id = ? AND domain = ?")
+    .bind(now, version, ip, license.id, domain)
     .run()
   if (updated.meta.changes > 0) return
   if (license.max_sites === null) {
-    await env.DB.prepare("INSERT OR IGNORE INTO activations (license_id, domain, first_seen_at, last_seen_at, check_count, version) VALUES (?, ?, ?, ?, 1, ?)").bind(license.id, domain, now, now, version).run()
+    await env.DB.prepare("INSERT OR IGNORE INTO activations (license_id, domain, first_seen_at, last_seen_at, check_count, version, last_ip) VALUES (?, ?, ?, ?, 1, ?, ?)").bind(license.id, domain, now, now, version, ip).run()
     return
   }
   await env.DB.prepare(
-    `INSERT OR IGNORE INTO activations (license_id, domain, first_seen_at, last_seen_at, check_count, version)
-     SELECT ?, ?, ?, ?, 1, ? WHERE (SELECT COUNT(*) FROM activations WHERE license_id = ?) < ?`
-  ).bind(license.id, domain, now, now, version, license.id, license.max_sites).run()
+    `INSERT OR IGNORE INTO activations (license_id, domain, first_seen_at, last_seen_at, check_count, version, last_ip)
+     SELECT ?, ?, ?, ?, 1, ?, ? WHERE (SELECT COUNT(*) FROM activations WHERE license_id = ?) < ?`
+  ).bind(license.id, domain, now, now, version, ip, license.id, license.max_sites).run()
 }
 
 /** Frees a site slot. The site can register again on its next check, if the licence has room. */
@@ -334,7 +336,7 @@ export async function releaseActivation(env: Env, license: License, domain: stri
 // ---- activity and statistics ----------------------------------------------------
 
 export async function recentActivity(env: Env, id: string, limit = 50): Promise<Activity[]> {
-  const res = await env.DB.prepare("SELECT id, at, event, status, domain, detail FROM activity WHERE license_id = ? ORDER BY at DESC, id DESC LIMIT ?").bind(id, limit).all<Activity>()
+  const res = await env.DB.prepare("SELECT id, at, event, status, domain, detail, ip FROM activity WHERE license_id = ? ORDER BY at DESC, id DESC LIMIT ?").bind(id, limit).all<Activity>()
   return res.results
 }
 
@@ -379,13 +381,13 @@ export async function attentionLists(env: Env, limit = 8, now = Date.now()): Pro
   return { expiring: expiring.slice(0, limit), silent: silent.slice(0, limit) }
 }
 
-export type RecentEvent = { id: number; at: number; event: Activity["event"]; status: string | null; domain: string | null; detail: string; license_id: string; name: string; app_id: string | null }
+export type RecentEvent = { id: number; at: number; event: Activity["event"]; status: string | null; domain: string | null; detail: string; ip: string | null; license_id: string; name: string; app_id: string | null }
 
 /** The latest activity across all licences, newest first, optionally of one kind. */
 export async function recentEvents(env: Env, limit = 15, event?: Activity["event"]): Promise<RecentEvent[]> {
   const where = event ? "WHERE a.event = ?" : ""
   const res = await env.DB.prepare(
-    `SELECT a.id, a.at, a.event, a.status, a.domain, a.detail, l.id AS license_id, l.name, l.app_id FROM activity a JOIN licenses l ON l.id = a.license_id ${where} ORDER BY a.at DESC, a.id DESC LIMIT ?`
+    `SELECT a.id, a.at, a.event, a.status, a.domain, a.detail, a.ip, l.id AS license_id, l.name, l.app_id FROM activity a JOIN licenses l ON l.id = a.license_id ${where} ORDER BY a.at DESC, a.id DESC LIMIT ?`
   )
     .bind(...(event ? [event, limit] : [limit]))
     .all<RecentEvent>()
@@ -404,7 +406,7 @@ export async function searchLicenses(env: Env, query: string, limit = 8): Promis
   const byFields = await queryLicenses(env, { q, limit })
   const like = `%${q.replace(/[%_\\]/g, "\\$&")}%`
   const bySite = (
-    await env.DB.prepare(`SELECT license_id, domain FROM activations WHERE domain LIKE ? ESCAPE '\\' ORDER BY last_seen_at DESC LIMIT ?`).bind(like, limit).all<{ license_id: string; domain: string }>()
+    await env.DB.prepare(`SELECT license_id, domain FROM activations WHERE domain LIKE ? ESCAPE '\\' OR last_ip LIKE ? ESCAPE '\\' ORDER BY last_seen_at DESC LIMIT ?`).bind(like, like, limit).all<{ license_id: string; domain: string }>()
   ).results
   const hits: SearchHit[] = byFields.map((l) => ({ id: l.id, name: l.name, customer_name: l.customer_name, license_key: l.license_key, app_name: l.app_name ?? null, status: l.status, expires_at: l.expires_at, app_id: l.app_id, matched_site: null }))
   for (const site of bySite) {
@@ -420,6 +422,8 @@ export const CHECK_RETENTION_DAYS = 90
 
 export async function pruneActivity(env: Env, now = Date.now()): Promise<void> {
   await env.DB.prepare("DELETE FROM activity WHERE event = 'check' AND at < ?").bind(now - CHECK_RETENTION_DAYS * 86_400_000).run()
+  // Downloads stay on record, without the caller's address after the same period.
+  await env.DB.prepare("UPDATE activity SET ip = NULL WHERE event = 'download' AND ip IS NOT NULL AND at < ?").bind(now - CHECK_RETENTION_DAYS * 86_400_000).run()
   await env.DB.prepare("DELETE FROM login_attempts WHERE created_at < ?").bind(now - 86_400_000).run()
   await env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now).run()
 }

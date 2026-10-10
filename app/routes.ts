@@ -21,6 +21,7 @@ export default [
     route("apps/new", "routes/apps.new.tsx"),
     route("apps/:appId", "routes/apps.$appId.tsx"),
     route("apps/:appId/edit", "routes/apps.$appId.edit.tsx"),
+    route("protection", "routes/protection.tsx"),
     route("api-keys", "routes/api-keys.tsx"),
   ]),
 ] satisfies RouteConfig

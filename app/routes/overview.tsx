@@ -91,12 +91,10 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             height={150}
             summary={
               <span className="tabular-nums">
-                {checks.toLocaleString("en-GB")} checks{refused > 0 ? `, ${refused.toLocaleString("en-GB")} refused` : ""}.{" "}
-                <Link to="/analytics" className="text-foreground underline underline-offset-2">
-                  Analytics
-                </Link>
+                {checks.toLocaleString("en-GB")} checks{refused > 0 ? `, ${refused.toLocaleString("en-GB")} refused` : ""}
               </span>
             }
+            viewAll="/analytics"
           />
         </section>
 

@@ -1,16 +1,20 @@
+import { useState } from "react"
 import { Link, useNavigation, useSearchParams } from "react-router"
+import { ChevronDown, ChevronUp, X } from "lucide-react"
 import type { Route } from "./+types/analytics"
 import { ColumnChart } from "#/components/column-chart"
+import { IpAddress } from "#/components/ip-address"
 import { Fact, FactStrip } from "#/components/fact-strip"
 import { PageHeader } from "#/components/page-header"
 import { PageTitle } from "#/components/page-title"
 import { Ago } from "#/components/time"
 import { NativeSelect } from "#/components/ui/native-select"
-import { compactNumber, readRange, TRAFFIC_RANGES } from "#/lib/analytics"
+import { compactNumber, LIST_LIMIT, LIST_PREVIEW, readRange, TRAFFIC_RANGES } from "#/lib/analytics"
 import { cn } from "#/lib/utils"
 import { trafficReport, type TrafficScope } from "~/server/analytics.server"
 import { requireAuth } from "~/server/auth.server"
 import { listApps } from "~/server/apps.server"
+import { getLicense } from "~/server/licenses.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Analytics | Warden" }]
 
@@ -22,17 +26,24 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const apps = (await listApps(env)).map((a) => ({ id: a.id, name: a.name }))
   const appParam = url.searchParams.get("app") ?? ""
   const app = appParam === "none" ? "none" : (apps.find((a) => a.id === appParam)?.id ?? "")
-  const scope: TrafficScope = app === "none" ? { standalone: true } : app ? { app } : {}
-  return { report: await trafficReport(env, scope, days), apps, app }
+  // A licence (from "View all" on a licence's chart) takes precedence over the app filter.
+  const licenseParam = url.searchParams.get("license")
+  const license = licenseParam ? await getLicense(env, licenseParam) : null
+  const scope: TrafficScope = license ? { license: license.id } : app === "none" ? { standalone: true } : app ? { app } : {}
+  return { report: await trafficReport(env, scope, days), apps, app, license: license ? { id: license.id, name: license.name } : null }
 }
 
 const percent = (part: number, whole: number) => (whole === 0 ? "0%" : `${Math.round((part / whole) * 100)}%`)
 
 export default function Analytics({ loaderData }: Route.ComponentProps) {
-  const { report, apps, app } = loaderData
+  const { report, apps, app, license } = loaderData
   const { totals, series } = report
   const [, setParams] = useSearchParams()
   const loading = useNavigation().state === "loading"
+  // Ranked lists show their first rows; "View all" shows every row the report holds.
+  const [expanded, setExpanded] = useState({ licenses: false, files: false, ips: false })
+  const toggle = (list: keyof typeof expanded) => setExpanded((e) => ({ ...e, [list]: !e[list] }))
+  const preview = <T,>(rows: T[], list: keyof typeof expanded) => (expanded[list] ? rows : rows.slice(0, LIST_PREVIEW))
 
   function update(key: string, value: string) {
     setParams(
@@ -66,17 +77,29 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
               </button>
             ))}
           </div>
-          <div className="w-52">
-            <NativeSelect value={app} onChange={(e) => update("app", e.target.value)} aria-label="Filter by app">
-              <option value="">All apps and licences</option>
-              <option value="none">Standalone licences</option>
-              {apps.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </div>
+          {license ? (
+            <span className="inline-flex items-center gap-1 rounded-md border bg-muted/50 py-1 pr-1 pl-3 text-sm">
+              Licence:{" "}
+              <Link to={`/licenses/${license.id}`} className="font-medium hover:underline">
+                {license.name}
+              </Link>
+              <button type="button" onClick={() => update("license", "")} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Show every licence">
+                <X className="size-3.5" />
+              </button>
+            </span>
+          ) : (
+            <div className="w-52">
+              <NativeSelect value={app} onChange={(e) => update("app", e.target.value)} aria-label="Filter by app">
+                <option value="">All apps and licences</option>
+                <option value="none">Standalone licences</option>
+                {apps.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </div>
+          )}
         </div>
 
         {/* While another period loads, the current figures stay in place, dimmed. */}
@@ -144,7 +167,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
             </section>
 
             <section className="space-y-3">
-              <h2 className="font-semibold">Most checked licences</h2>
+              <ListHeading title="Most checked licences" count={report.licenses.length} expanded={expanded.licenses} onToggle={() => toggle("licenses")} />
               {report.licenses.length === 0 ? (
                 <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No licence was checked in this period.</p>
               ) : (
@@ -158,7 +181,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {report.licenses.map((l) => (
+                      {preview(report.licenses, "licenses").map((l) => (
                         <tr key={l.id}>
                           <td className="max-w-0 px-4 py-2">
                             <Link to={`/licenses/${l.id}?tab=activity`} className="block truncate font-medium hover:underline">
@@ -180,12 +203,12 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
           </div>
 
           <section className="space-y-3">
-            <h2 className="font-semibold">Most downloaded files</h2>
+            <ListHeading title="Most downloaded files" count={report.files.length} expanded={expanded.files} onToggle={() => toggle("files")} />
             {report.files.length === 0 ? (
               <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No file was downloaded in this period.</p>
             ) : (
               <ul className="divide-y rounded-lg border bg-card">
-                {report.files.map((f) => (
+                {preview(report.files, "files").map((f) => (
                   <li key={f.name} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
                     <span className="truncate font-mono text-xs">{f.name}</span>
                     <span className="text-muted-foreground tabular-nums">{f.downloads.toLocaleString("en-GB")}</span>
@@ -195,11 +218,93 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
             )}
           </section>
 
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <section className="space-y-3">
+              <ListHeading title="Top addresses" count={report.ips.length} expanded={expanded.ips} onToggle={() => toggle("ips")} />
+              {report.ips.length === 0 ? (
+                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No address recorded in this period. Addresses are recorded since this version of Warden.</p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border bg-card">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 text-xs text-muted-foreground">
+                      <tr>
+                        <th className="px-4 py-2 text-left font-medium">Address</th>
+                        <th className="px-3 py-2 text-right font-medium">Checks</th>
+                        <th className="px-3 py-2 text-right font-medium">Refused</th>
+                        <th className="px-3 py-2 text-right font-medium">Downloads</th>
+                        <th className="px-4 py-2 text-right font-medium">Licences</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y tabular-nums">
+                      {preview(report.ips, "ips").map((row) => (
+                        <tr key={row.ip}>
+                          <td className="max-w-0 min-w-40 px-4 py-2">
+                            <IpAddress ip={row.ip} blocked={row.blocked} />
+                          </td>
+                          <td className="px-3 py-2 text-right">{compactNumber(row.checks)}</td>
+                          <td className={cn("px-3 py-2 text-right", row.refused > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{compactNumber(row.refused)}</td>
+                          <td className="px-3 py-2 text-right">{compactNumber(row.downloads)}</td>
+                          <td className="px-4 py-2 text-right">{row.licenses}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">An address that checks many licences, or gets many refusals, is worth a look. Click an address to block it.</p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="font-semibold">Refused before any licence was read</h2>
+              {totals.blocked === null || totals.rate_limited === null ? (
+                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">These requests belong to no licence, so they are counted for the whole installation only. Clear the filter to see them.</p>
+              ) : (
+                <dl className="divide-y rounded-lg border bg-card text-sm">
+                  <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
+                    <dt>
+                      <Link to="/protection" className="hover:underline">
+                        From a blocked address
+                      </Link>
+                    </dt>
+                    <dd className="tabular-nums">{totals.blocked.toLocaleString("en-GB")}</dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
+                    <dt>Over a rate limit</dt>
+                    <dd className="tabular-nums">{totals.rate_limited.toLocaleString("en-GB")}</dd>
+                  </div>
+                </dl>
+              )}
+              <p className="text-xs text-muted-foreground">Approximate counts of checks and downloads refused with 403 (blocked) or 429 (too many requests).</p>
+            </section>
+          </div>
+
           <p className="text-xs text-muted-foreground">
             Checks are kept for 90 days. A check counts as valid if its status lets sites run under the statuses in use today.
           </p>
         </div>
       </div>
     </>
+  )
+}
+
+/** A list's title with "View all (n)" when it holds more rows than the preview shows. */
+function ListHeading({ title, count, expanded, onToggle }: { title: string; count: number; expanded: boolean; onToggle: () => void }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <h2 className="font-semibold">{title}</h2>
+      {count > LIST_PREVIEW && (
+        <button type="button" onClick={onToggle} aria-expanded={expanded} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium hover:bg-muted">
+          {expanded ? (
+            <>
+              Show fewer <ChevronUp className="size-3.5" />
+            </>
+          ) : (
+            <>
+              View all {count >= LIST_LIMIT ? `top ${LIST_LIMIT}` : count} <ChevronDown className="size-3.5" />
+            </>
+          )}
+        </button>
+      )}
+    </div>
   )
 }

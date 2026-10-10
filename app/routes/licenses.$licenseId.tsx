@@ -4,6 +4,7 @@ import { ArrowDownToLine, CalendarPlus, Check, ChevronDown, MoreHorizontal, Penc
 import type { App } from "~/server/apps.server"
 import type { Route } from "./+types/licenses.$licenseId"
 import { ColumnChart } from "#/components/column-chart"
+import { IpAddress } from "#/components/ip-address"
 import { ConfirmAction } from "#/components/confirm-action"
 import { Fact, FactStrip } from "#/components/fact-strip"
 import { FilesSection } from "#/components/files-section"
@@ -27,6 +28,7 @@ import { DEFAULT_COLOR, DEFAULT_STATUSES, effectiveStatusKey, findStatus, splitS
 import { daysUntil, describeExpiry, EXPIRING_WINDOW_DAYS } from "#/lib/views"
 import { cn } from "#/lib/utils"
 import { dailyTraffic } from "~/server/analytics.server"
+import { blockedAmong } from "~/server/ip-blocks.server"
 import { requireAuth } from "~/server/auth.server"
 import { applyFileForm, listFiles, storageConfigured } from "~/server/files.server"
 import { formatSites } from "#/components/licenses-table"
@@ -55,9 +57,11 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   const now = Date.now()
   const downloadable = [...files, ...sharedFiles].filter((f) => f.withdrawn_at === null && evaluateFileAccess(license, { statuses: splitStatusKeys(f.statuses, set), check_domain: false }, null, now, true, set).allowed)
   const latest = latestRelease(downloadable.sort((a, b) => b.uploaded_at - a.uploaded_at))
+  const blockedIps = await blockedAmong(env, [...activity.map((a) => a.ip), ...sites.map((s) => s.last_ip)])
   return {
     license,
     activity,
+    blockedIps,
     traffic: traffic.series,
     files,
     sharedFiles,
@@ -111,7 +115,7 @@ type LoaderData = Route.ComponentProps["loaderData"]
 const TABS = ["overview", "sites", "releases", "activity", "statuses"] as const
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, origin, checkUrl } = loaderData
+  const { license, activity, blockedIps, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
   const statuses = useStatusSetForLicense(license)
   const [tab, setTab] = useRouteTab([...TABS])
@@ -295,6 +299,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                       <TableRow>
                         <TableHead>Site</TableHead>
                         <TableHead>Version</TableHead>
+                        <TableHead className="hidden lg:table-cell">Address</TableHead>
                         <TableHead className="hidden md:table-cell">First seen</TableHead>
                         <TableHead>Last check</TableHead>
                         <TableHead className="hidden text-right sm:table-cell">Checks</TableHead>
@@ -314,6 +319,9 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
                             ) : (
                               <span className="text-xs text-muted-foreground">Not reported</span>
                             )}
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell">
+                            <IpAddress ip={site.last_ip} blocked={site.last_ip ? blockedIps.includes(site.last_ip) : false} />
                           </TableCell>
                           <TableCell className="hidden text-muted-foreground md:table-cell">
                             <Ago ts={site.first_seen_at} />
@@ -352,7 +360,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
             />
           )}
 
-          {tab === "activity" && <ActivityTab activity={activity} traffic={traffic} statuses={statuses} />}
+          {tab === "activity" && <ActivityTab licenseId={license.id} activity={activity} blockedIps={blockedIps} traffic={traffic} statuses={statuses} />}
 
           {tab === "statuses" &&
             (license.app_id ? (
@@ -477,7 +485,7 @@ const EVENT_FILTERS = [
   { id: "download", label: "Downloads" },
 ] as const
 
-function ActivityTab({ activity, traffic, statuses }: { activity: LoaderData["activity"]; traffic: LoaderData["traffic"]; statuses: ReturnType<typeof useStatusSetForLicense> }) {
+function ActivityTab({ licenseId, activity, blockedIps, traffic, statuses }: { licenseId: string; activity: LoaderData["activity"]; blockedIps: string[]; traffic: LoaderData["traffic"]; statuses: ReturnType<typeof useStatusSetForLicense> }) {
   const [filter, setFilter] = useState<(typeof EVENT_FILTERS)[number]["id"]>("all")
   const shown = filter === "all" ? activity : activity.filter((a) => a.event === filter)
   const checks = traffic.reduce((n, d) => n + d.valid + d.refused, 0)
@@ -493,6 +501,7 @@ function ActivityTab({ activity, traffic, statuses }: { activity: LoaderData["ac
           ]}
           height={140}
           summary={<span className="tabular-nums">{checks.toLocaleString("en-GB")} checks</span>}
+          viewAll={`/analytics?license=${licenseId}`}
         />
       </section>
       <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Show">
@@ -535,8 +544,9 @@ function ActivityTab({ activity, traffic, statuses }: { activity: LoaderData["ac
                     a.detail
                   )}
                 </span>
-                <span className="text-xs whitespace-nowrap text-muted-foreground">
+                <span className="flex flex-col items-end gap-0.5 text-xs whitespace-nowrap text-muted-foreground">
                   <Ago ts={a.at} />
+                  {a.event !== "change" && a.ip && <IpAddress ip={a.ip} blocked={blockedIps.includes(a.ip)} />}
                 </span>
               </li>
             ))}

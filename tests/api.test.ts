@@ -1,4 +1,6 @@
 import { test } from "node:test"
+import { clearBlockCache } from "../app/server/ip-blocks.server.ts"
+import { clearProtectionCache } from "../app/server/protection.server.ts"
 import assert from "node:assert/strict"
 import { makeBucket, makeCtx, makeDb } from "./helpers/d1.ts"
 import type { Scope } from "../app/lib/license.ts"
@@ -12,6 +14,9 @@ const DAY = 86_400_000
 const ORIGIN = "https://w.example"
 
 async function setup() {
+  // Each test gets a fresh database, so the per-instance caches of the protection settings and the blocklist go too.
+  clearProtectionCache()
+  clearBlockCache()
   const env = { DB: makeDb().DB, FILES: makeBucket().bucket } as unknown as Env
   const { ctx, settle } = makeCtx()
   const keys = {
@@ -234,4 +239,35 @@ test("API: app files and site activations", async () => {
   assert.equal((await call("DELETE", `/licenses/${lic.id}/activations/a.com`, keys.manage)).json.released, true)
   assert.equal((await call("DELETE", `/licenses/${lic.id}/activations/a.com`, keys.manage)).status, 404)
   assert.equal(await check("b.com"), "active")
+})
+
+test("IP blocklist endpoints and the API rate limit", async () => {
+  const { env, keys, call } = await setup()
+  assert.equal((await call("POST", "/ip-blocks", keys.read, { ip: "203.0.113.5" })).status, 403)
+  const made = await call("POST", "/ip-blocks", keys.manage, { ip: "203.0.113.9/24", reason: "abuse", expires_at: new Date(Date.now() + 86_400_000).toISOString() })
+  assert.equal(made.status, 201)
+  assert.equal(made.json.ip, "203.0.113.0/24")
+  assert.equal((await call("POST", "/ip-blocks", keys.manage, { ip: "203.0.113.0/24" })).json.error.code, "already_blocked")
+  assert.equal((await call("POST", "/ip-blocks", keys.manage, { ip: "nope" })).json.error.code, "invalid_ip")
+  assert.equal((await call("POST", "/ip-blocks", keys.manage, { ip: "198.51.100.1", expires_at: "soon" })).json.error.code, "invalid_expires_at")
+  assert.deepEqual((await call("GET", "/ip-blocks", keys.read)).json.data.map((b: { ip: string }) => b.ip), ["203.0.113.0/24"])
+  assert.equal((await call("DELETE", `/ip-blocks/${made.json.id}`, keys.manage)).json.deleted, true)
+  assert.equal((await call("DELETE", `/ip-blocks/${made.json.id}`, keys.manage)).status, 404)
+
+  Object.assign(env, { RATE_LIMIT_600: { limit: async () => ({ success: false }) } }) // the default API limit
+
+  const limited = await call("GET", "/me", keys.read)
+  assert.equal(limited.status, 429)
+  assert.equal(limited.headers.get("retry-after"), "60")
+})
+
+test("protection settings through the API", async () => {
+  const { keys, call } = await setup()
+  assert.equal((await call("GET", "/protection", keys.read)).json.limits.check_ip, 120)
+  assert.equal((await call("PATCH", "/protection", keys.manage, { limits: { check_ip: 300 } })).status, 403)
+  const saved = await call("PATCH", "/protection", keys.full, { limits: { check_ip: 300 }, rules: { refused_checks: { enabled: true } } })
+  assert.equal(saved.status, 200)
+  assert.equal(saved.json.limits.check_ip, 300)
+  assert.equal(saved.json.rules.refused_checks.enabled, true)
+  assert.equal((await call("PATCH", "/protection", keys.full, { limits: { check_ip: 7 } })).json.error.code, "invalid_settings")
 })

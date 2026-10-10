@@ -53,13 +53,50 @@ export function openApiSpec(origin: string) {
       title: "Warden API",
       version: "0.1.0",
       description:
-        "Create and manage licences from your own code. Authenticate with an API key created in the dashboard (API keys page): `Authorization: Bearer wk_...`. Scopes: `read` (GET), `manage` (also create, edit, status, renew), `full` (also delete and regenerate keys).",
+        "Create and manage licences from your own code. Authenticate with an API key created in the dashboard (API keys page): `Authorization: Bearer wk_...`. Scopes: `read` (GET), `manage` (also create, edit, status, renew), `full` (also delete and regenerate keys). Each key is rate limited (600 requests per minute by default); over the limit the API answers `429` with `Retry-After`.",
     },
     servers: [{ url: `${origin}/api/v1` }],
     security: secured,
     paths: {
       "/me": { get: { summary: "Who the key belongs to", responses: { 200: { description: "Key name and scope" }, 401: err } } },
       "/stats": { get: { summary: "Licence statistics", responses: { 200: { description: "{ total, in_force, not_in_force, expiring_within_14_days, not_checked_for_3_days, by_status }" }, 401: err } } },
+      "/ip-blocks": {
+        get: {
+          summary: "Blocked IP addresses and ranges",
+          responses: { 200: { description: "{ data: [{ id, ip, source, reason, created_at, expires_at, hits, last_hit_at }] }. `ip` is an address or a CIDR range; `source` is manual or auto (created by a protection rule); `hits` is approximate." }, 401: err },
+        },
+        post: {
+          summary: "Block an IP address or range (permission: manage)",
+          description: "Checks and downloads from the address are refused with 403 before any licence is read. The dashboard and the API are not affected. A block applies within 30 seconds everywhere.",
+          requestBody: body({
+            type: "object",
+            required: ["ip"],
+            properties: {
+              ip: { type: "string", description: "IPv4 or IPv6 address, or a CIDR range (at most /8 for IPv4, /16 for IPv6)", example: "203.0.113.0/24" },
+              reason: { type: "string", maxLength: 200, description: "Internal note" },
+              expires_at: { type: ["string", "null"], format: "date-time", description: "End of the block; null or absent = until removed" },
+            },
+          }),
+          responses: { 201: { description: "The block" }, 403: err, 409: { description: "Already blocked (`already_blocked`)" }, 422: err },
+        },
+      },
+      "/protection": {
+        get: {
+          summary: "Protection settings: rate limits, automatic blocking rules, never-block list",
+          responses: { 200: { description: "{ limits: { check_ip, check_key, download_ip, api_key }, rules: { unknown_keys, refused_checks, many_licenses, rate_limited: { enabled, count, minutes, block_hours } }, never_block: string[] }" }, 401: err },
+        },
+        patch: {
+          summary: "Change protection settings (permission: full)",
+          description:
+            "Send only what changes. Limits are requests per minute: 0 (off), 30, 60, 120, 300, 600 or 1200. Rules: `count` 2 to 10000, `minutes` 5, 10, 30, 60, 360 or 1440, `block_hours` 1, 6, 24, 168, 720 or 0 (until removed). `never_block` replaces the whole list. Changes apply within 30 seconds.",
+          requestBody: body({ type: "object", example: { limits: { check_ip: 300 }, rules: { refused_checks: { enabled: true, count: 100 } } } }),
+          responses: { 200: { description: "The complete settings" }, 403: err, 422: err },
+        },
+      },
+      "/ip-blocks/{id}": {
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        delete: { summary: "Remove a block (permission: manage)", responses: { 200: { description: "{ deleted: true, id }" }, 403: err, 404: err } },
+      },
       "/analytics": {
         get: {
           summary: "Traffic analytics",
@@ -71,7 +108,7 @@ export function openApiSpec(origin: string) {
             { name: "license", in: "query", description: "Only this licence (id or key). Takes precedence over `app`.", schema: { type: "string" } },
           ],
           responses: {
-            200: { description: "{ days, from, to, series: [{ date, valid, refused, sites, downloads }], totals: { checks, valid, refused, sites, new_sites, downloads, refused_downloads }, refusals: [{ key, label, checks }], licenses: [{ id, name, app_name, checks, refused, last_check_at }], files: [{ name, downloads }] }" },
+            200: { description: "{ days, from, to, series: [{ date, valid, refused, sites, downloads }], totals: { checks, valid, refused, sites, new_sites, downloads, refused_downloads, blocked, rate_limited }, refusals: [{ key, label, checks }], licenses: [{ id, name, app_name, checks, refused, last_check_at }], files: [{ name, downloads }], ips: [{ ip, checks, refused, downloads, licenses, blocked }] }. Lists hold at most 100 rows. `blocked` and `rate_limited` count requests refused before any licence was read (approximate); they are null when the report is filtered" },
             401: err,
             404: err,
             422: err,
@@ -147,7 +184,7 @@ export function openApiSpec(origin: string) {
       },
       "/licenses/{id}/activations": {
         parameters: [idParam],
-        get: { summary: "Sites (domains) registered for the licence", responses: { 200: { description: "{ max_sites, data: Activation[] }" }, 404: err } },
+        get: { summary: "Sites (domains) registered for the licence", responses: { 200: { description: "{ max_sites, data: [{ domain, version, first_seen_at, last_seen_at, check_count, last_ip }] }" }, 404: err } },
       },
       "/licenses/{id}/activations/{domain}": {
         parameters: [idParam, { name: "domain", in: "path", required: true, schema: { type: "string" } }],
@@ -206,7 +243,7 @@ export function openApiSpec(origin: string) {
         patch: { summary: "Update a shared file's release rule or metadata (permission: manage)", requestBody: body({ $ref: "#/components/schemas/FileChanges" }), responses: { 200: ok("The file", "File"), 403: err, 404: err, 422: err } },
         delete: { summary: "Delete a shared file (permission: manage)", responses: { 200: { description: "{ deleted: true, id }" }, 404: err } },
       },
-      "/licenses/{id}/activity": { parameters: [idParam], get: { summary: "Recent checks and changes", parameters: [{ name: "limit", in: "query", schema: { type: "integer", maximum: 200, default: 50 } }], responses: { 200: { description: "{ data: Activity[] }" }, 404: err } } },
+      "/licenses/{id}/activity": { parameters: [idParam], get: { summary: "Recent checks, downloads and changes", parameters: [{ name: "limit", in: "query", schema: { type: "integer", maximum: 200, default: 50 } }], responses: { 200: { description: "{ data: [{ at, event, status, domain, ip, detail }] }. `ip` is the caller of a check or a download (null for changes, and after 90 days)." }, 404: err } } },
     },
     components: {
       securitySchemes: { bearer: { type: "http", scheme: "bearer", description: "API key, wk_..." } },

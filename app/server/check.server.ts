@@ -1,4 +1,6 @@
 import { buildCheckResponse, KEY_PATTERN, normalizeDomain, type CheckResponse } from "../lib/license"
+import { clientIp, reportUnknownKey } from "./guard.server"
+import { applyRules } from "./protection.server"
 import { compareVersions, isChannel, latestRelease, readReportedVersion, type Channel } from "../lib/releases"
 import { DEFAULT_STATUSES } from "../lib/statuses"
 import { releaseSummary, visibleFiles } from "./download.server"
@@ -64,18 +66,24 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
   const body = JSON.stringify(result)
 
   if (license) {
-    ctx.waitUntil(recordCheck(env, license, result.status, domain, version, now).catch((error) => console.error("Failed to record check:", error)))
-  }
+    const ip = clientIp(request)
+    ctx.waitUntil(
+      recordCheck(env, license, result.status, domain, version, ip, now)
+        // The rules read the check just recorded.
+        .then(() => applyRules(env, ip, { kind: "check", refused: !result.valid }, now))
+        .catch((error) => console.error("Failed to record check:", error))
+    )
+  } else reportUnknownKey(env, ctx, request)
   const headers: Record<string, string> = { ...CORS, "content-type": "application/json; charset=utf-8" }
   if (license) headers["x-warden-signature"] = await hmacHex(license.license_key, body)
   return new Response(body, { status: license ? 200 : 404, headers })
 }
 
-async function recordCheck(env: Env, license: License, status: string, domain: string | null, version: string | null, now: number) {
+async function recordCheck(env: Env, license: License, status: string, domain: string | null, version: string | null, ip: string | null, now: number) {
   // A site refused for its domain or the site limit is not registered.
-  if (domain && status !== "domain_mismatch" && status !== "site_limit_reached") await recordActivation(env, license, domain, now, version)
+  if (domain && status !== "domain_mismatch" && status !== "site_limit_reached") await recordActivation(env, license, domain, now, version, ip)
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET last_check_at = ?, last_check_domain = ?, check_count = check_count + 1 WHERE id = ?").bind(now, domain, license.id),
-    env.DB.prepare("INSERT INTO activity (license_id, at, event, status, domain, detail) VALUES (?, ?, 'check', ?, ?, ?)").bind(license.id, now, status, domain, version ? `Version ${version}` : ""),
+    env.DB.prepare("INSERT INTO activity (license_id, at, event, status, domain, detail, ip) VALUES (?, ?, 'check', ?, ?, ?, ?)").bind(license.id, now, status, domain, version ? `Version ${version}` : "", ip),
   ])
 }

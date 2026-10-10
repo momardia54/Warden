@@ -26,11 +26,30 @@ export type TrafficDay = {
   downloads: number
 }
 
-export type TrafficTotals = { checks: number; valid: number; refused: number; sites: number; new_sites: number; downloads: number; refused_downloads: number }
+export type TrafficTotals = {
+  checks: number
+  valid: number
+  refused: number
+  sites: number
+  new_sites: number
+  downloads: number
+  refused_downloads: number
+  /**
+   * Checks and downloads refused before any licence was read: from a blocked address, or over a rate limit.
+   * Approximate. They belong to no licence, so they are only reported for the whole installation (null otherwise).
+   */
+  blocked: number | null
+  rate_limited: number | null
+}
 
 export type RefusalReason = { key: string; label: string; checks: number }
 export type LicenseTraffic = { id: string; name: string; app_name: string | null; checks: number; refused: number; last_check_at: number | null }
 export type FileTraffic = { name: string; downloads: number }
+export type IpTraffic = { ip: string; checks: number; refused: number; downloads: number; licenses: number; /** Covered by an active block. */ blocked: boolean }
+
+/** Ranked lists hold at most this many rows; the page shows the first few and "View all" shows the rest. */
+export const LIST_LIMIT = 100
+export const LIST_PREVIEW = 8
 
 export type TrafficReport = {
   days: number
@@ -42,6 +61,7 @@ export type TrafficReport = {
   refusals: RefusalReason[]
   licenses: LicenseTraffic[]
   files: FileTraffic[]
+  ips: IpTraffic[]
 }
 
 /** Start of the UTC day that contains `at`. */

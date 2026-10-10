@@ -21,12 +21,16 @@ It is not visitor analytics for your customers' websites: Warden only sees the c
 | Checks per day | Valid and refused checks, stacked |
 | Active sites per day, downloads per day | One column per day |
 | Why checks were refused | Refused checks by reason: the status reported (for example *Suspended* or *Expired*), *Wrong domain* or *Site limit reached* |
-| Most checked licences | The eight licences with the most checks, with their refused checks |
-| Most downloaded files | The eight files downloaded most often |
+| Most checked licences | The licences with the most checks, with their refused checks |
+| Most downloaded files | The files downloaded most often |
+| Top addresses | Checks, refused checks, downloads and licences per caller IP address. Click an address to block it ([protection.md](protection.md)) |
+| Refused before any licence was read | Requests from a blocked address and requests over a rate limit (whole installation only, approximate) |
+
+Lists show their first eight rows; **View all** shows up to 100. The charts on the overview, an app and a licence have **View all**, which opens this page filtered on them.
 
 Hover a day (or focus a chart and use the arrow keys) to read its values. **Table** switches any chart to a table of every day.
 
-The overview shows the checks of the last 30 days across all licences, and each licence shows its own on its **Activity** tab. An app's menu links to the page filtered on that app.
+The overview shows the checks of the last 30 days across all licences, each app shows its own on its page, and each licence on its **Activity** tab.
 
 ## How the figures are computed
 
@@ -34,7 +38,7 @@ The overview shows the checks of the last 30 days across all licences, and each 
 - A check is **valid** if the status recorded with it lets sites run, read against the licence's statuses as they are today. If you later change whether a status lets sites run, its past checks are counted the new way.
 - A site refused for its domain or for the site limit is not registered, so it does not count as an active site.
 - Checks are deleted after 90 days by the daily scheduled job, which is why no period goes further back. Downloads and changes are kept.
-- Nothing is pre-aggregated: the figures are read from the activity log each time a page is opened. D1 bills rows read. A site checking about twice a day adds about 60 check rows per 30 days. The overview chart reads those rows once (300 sites: about 18,000 rows per load). The Analytics page reads them about four times (300 sites over 90 days: about 220,000 rows). The D1 free plan allows 5 million rows read per day.
+- Nothing is pre-aggregated: the figures are read from the activity log each time a page is opened. D1 bills rows read. A site checking about twice a day adds about 60 check rows per 30 days. The overview chart reads those rows once (300 sites: about 18,000 rows per load). The Analytics page reads them about six times (300 sites over 90 days: about 330,000 rows). The D1 free plan allows 5 million rows read per day.
 
 ## API
 
@@ -45,6 +49,8 @@ The overview shows the checks of the last 30 days across all licences, and each 
 | `days` | `7`, `30` (default) or `90` |
 | `app` | An app id or slug, or `none` for standalone licences |
 | `license` | A licence id or key (takes precedence over `app`) |
+
+The report also has `ips` (top addresses) and, unfiltered, `totals.blocked` and `totals.rate_limited`.
 
 ```json
 {

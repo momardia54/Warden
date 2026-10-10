@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Link, redirect, type ShouldRevalidateFunctionArgs } from "react-router"
 import { ArrowDownToLine, ChartColumn, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
 import type { Route } from "./+types/apps.$appId"
+import { ColumnChart } from "#/components/column-chart"
 import { ConfirmAction } from "#/components/confirm-action"
 import { Fact, FactStrip } from "#/components/fact-strip"
 import { FilesSection } from "#/components/files-section"
@@ -15,6 +16,7 @@ import { Button } from "#/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "#/components/ui/dropdown-menu"
 import { StatusSection } from "#/components/status-section"
 import { DEFAULT_STATUSES, statusLabel } from "#/lib/statuses"
+import { dailyTraffic } from "~/server/analytics.server"
 import { requireAuth } from "~/server/auth.server"
 import { deleteApp, getApp, getAppSummary, versionsInUse } from "~/server/apps.server"
 import { applyFileForm, listFiles, storageConfigured } from "~/server/files.server"
@@ -29,14 +31,15 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   const app = await getAppSummary(env, params.appId)
   if (!app) throw new Response("App not found", { status: 404 })
   const custom = await hasCustomSet(env, { app: app.id })
-  const [licenses, files, statuses, usage, versions] = await Promise.all([
+  const [licenses, files, statuses, usage, versions, traffic] = await Promise.all([
     queryLicenses(env, { appId: app.id, limit: 1000 }),
     listFiles(env, { app }),
     getStatusSetForApp(env, app.id),
     custom ? statusCounts(env, { app: app.id }) : Promise.resolve({}),
     versionsInUse(env, app.id),
+    dailyTraffic(env, { app: app.id }, 30, Date.now(), "checks"),
   ])
-  return { app, licenses, files, statuses, custom, usage, versions, filesConfigured: storageConfigured(env) }
+  return { app, licenses, files, statuses, custom, usage, versions, traffic: traffic.series, filesConfigured: storageConfigured(env) }
 }
 
 export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {
@@ -66,7 +69,8 @@ const TABS = ["licences", "releases", "statuses"]
 
 export default function AppPage({ loaderData, actionData }: Route.ComponentProps) {
   const actionError = actionData && "error" in actionData ? actionData.error : null
-  const { app, licenses, files, statuses, custom, usage, versions, filesConfigured } = loaderData
+  const { app, licenses, files, statuses, custom, usage, versions, traffic, filesConfigured } = loaderData
+  const checks = traffic.reduce((n, d) => n + d.valid + d.refused, 0)
   const [tab, setTab] = useRouteTab(TABS)
   const [deleting, setDeleting] = useState(false)
   const defaults = [
@@ -150,6 +154,21 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
             help="Sites that reported a version older than the latest release with their check (?version=). Sites that never report a version are not counted."
           />
         </FactStrip>
+
+        <section className="rounded-lg border bg-card p-4">
+          <ColumnChart
+            title="Checks, last 30 days"
+            description={`Checks from the sites of every ${app.name} licence.`}
+            data={traffic}
+            series={[
+              { key: "valid", label: "Valid", color: "var(--chart-1)" },
+              { key: "refused", label: "Refused", color: "var(--chart-2)" },
+            ]}
+            height={140}
+            summary={<span className="tabular-nums">{checks.toLocaleString("en-GB")} checks</span>}
+            viewAll={`/analytics?app=${app.id}`}
+          />
+        </section>
 
         <p className="text-sm text-muted-foreground">
           New licences {defaults}
