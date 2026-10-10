@@ -1,3 +1,5 @@
+import { VERSION } from "../lib/version"
+
 /** OpenAPI 3.1 description of the API, served at /api/v1/openapi.json. */
 export function openApiSpec(origin: string) {
   const idParam = { name: "id", in: "path", required: true, description: "Licence id (lic_...) or the licence key (WRD-...).", schema: { type: "string" } }
@@ -101,7 +103,7 @@ export function openApiSpec(origin: string) {
     openapi: "3.1.0",
     info: {
       title: "Warden API",
-      version: "0.1.0",
+      version: VERSION,
       description:
         "Create and manage licences from your own code. Authenticate with an API key created in the dashboard (API keys page): `Authorization: Bearer wk_...`. Scopes: `read` (GET), `manage` (also create, edit, status, renew), `full` (also delete and regenerate keys). Each key is rate limited (600 requests per minute by default); over the limit the API answers `429` with `Retry-After`.",
     },

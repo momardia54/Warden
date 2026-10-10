@@ -1,4 +1,5 @@
 import { Boxes, ChartColumn, Plug, ShieldBan, KeyRound, Braces, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, Search, ShieldCheck, Sun } from "lucide-react"
+import { VERSION } from "#/lib/version"
 import { Kbd } from "#/components/command-menu"
 import { NavLink, useFetcher, useLocation } from "react-router"
 import { useTheme } from "next-themes"
@@ -18,6 +19,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuLabel,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
@@ -139,6 +141,8 @@ export function AppSidebar({ username, onSearch, ...props }: { username: string;
                   <LogOut />
                   Log out
                 </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Warden {VERSION}</DropdownMenuLabel>
               </DropdownMenuContent>
             </DropdownMenu>
           </SidebarMenuItem>
