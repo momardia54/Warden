@@ -46,8 +46,8 @@ export default function EditLicense({ loaderData, actionData }: Route.ComponentP
   return (
     <>
       <PageHeader crumbs={[{ label: "Licences", to: "/licenses" }, { label: license.name, to: `/licenses/${license.id}` }, { label: "Edit" }]} />
-      <div className="p-4 pt-0">
-        <h1 className="mb-6 text-2xl font-bold">Edit licence</h1>
+      <div className="max-w-6xl p-4 pt-0 lg:px-6">
+        <h1 className="mb-6 text-2xl font-semibold tracking-tight">Edit licence</h1>
         <LicenseForm values={values} apps={apps} licenseId={license.id} error={actionData?.error} submitLabel="Save changes" cancelTo={`/licenses/${license.id}`} />
       </div>
     </>

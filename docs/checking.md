@@ -12,18 +12,23 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 
 | `status` | `valid` | Meaning |
 |---|---|---|
-| a status key, such as `active` or `completed` | true | The status lets sites run, its expiry rule has not triggered, and the domain is allowed |
+| a status key, such as `active` or `completed` | true | The status is valid, its expiry rule has not triggered, and the domain is allowed |
 | a status key, such as `pending`, `suspended`, `disabled` or `expired` | false | The status does not let sites run. Which statuses exist, and which let sites run, is configured per app and per licence ([statuses.md](statuses.md)) |
 | `domain_mismatch` | false | The site sent a domain that is not allowed for the licence, or no domain although the licence has a site limit |
 | `site_limit_reached` | false | The licence is already used on its maximum number of sites, and this domain is not one of them |
 | `unknown` | false | No such key (HTTP 404) |
+| `blocked` | false | The caller's IP address is blocked (HTTP 403, unsigned: no licence was read). See [protection.md](protection.md) |
+
+A check can also receive **HTTP 429** (`"status": "rate_limited"`, no `valid` field, `Retry-After: 60`) when it goes over a rate limit. That is not a verdict on the licence: keep the last answer and try again later.
+
+Send the installed version as well (`&version=1.3.0`) and the response includes an `update` block: the newest release the licence can download and whether it is newer. See [releases.md](releases.md).
 
 `status` is the key of the licence's status among the statuses that apply to it. The table above shows the defaults; you can add, rename and remove statuses, so decide by `valid` rather than by a fixed list of keys. `message` is the licence's public message, or the message of its status, meant to be shown to the site's owner.
 
 ## Rules of thumb for the site
 
 1. **Check about every 12 hours**, not on every page view. Store the response (WordPress: a transient or option) with the time you got it.
-2. **Fail open on errors.** If the request times out, fails, or returns a 5xx or something that is not the JSON above, keep the last known response. Only change behaviour on a response you could read and verify. A Warden outage must never lock a client out.
+2. **Fail open on errors.** If the request times out, fails, returns 429 or a 5xx, or something that is not the JSON above, keep the last known response. Only change behaviour on a response you could read and verify. A Warden outage must never lock a client out.
 3. **Verify the signature** before trusting a response (below).
 4. **Always send `domain`** so domain-locked licences work.
 5. Decide what "not valid" does: a notice in the admin area, a maintenance page, disabling a feature. That part is yours.

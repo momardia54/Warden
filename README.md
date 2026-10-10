@@ -12,7 +12,7 @@ and control its status, its sites and its downloads from a dashboard or an API.
 <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/momardia54/Warden"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
 </p>
 
-> **Status: pre-1.0 (0.1.x).** It works and is tested, but the API and data model may still change before 1.0.0. See [Roadmap.md](Roadmap.md) and [Security.md](Security.md).
+> **Status: pre-1.0 (0.2.0).** It works and is tested, but the API and data model may still change before 1.0.0; every change is listed in [CHANGELOG.md](CHANGELOG.md). Versioning and the plan to 1.0.0: [Roadmap.md](Roadmap.md). Security model: [Security.md](Security.md).
 
 ![Warden overview](docs/screenshots/overview.jpg)
 
@@ -33,22 +33,28 @@ and control its status, its sites and its downloads from a dashboard or an API.
 ## How it works
 
 1. You issue a licence in Warden, from the dashboard or the API, for a standalone project or under an app. Warden gives it a **licence key** and a **check URL**.
-2. The customer's site calls the check URL with its domain (for example every 12 hours) and reads the response: `valid`, `status`, `message`.
-3. You change the licence status in the dashboard, or by API. The next time the site checks, it sees the new status and acts on it.
+2. The customer's site calls the check URL with its domain and its installed version (for example every 12 hours) and reads the response: `valid`, `status`, `message`, and whether an update is waiting.
+3. You change the licence status, or publish a new release, in the dashboard or by API. The next time the site checks, it sees the change and acts on it.
 
 Warden **creates and manages** licences. **Enforcement lives in the site's code**, so you decide what an invalid licence does: show a notice, switch a feature off, show a maintenance page. [docs/checking.md](docs/checking.md) has PHP and JavaScript examples, including how to verify the signed response.
 
 ## Features
 
+- **Releases and updates**: upload a build with a version and every site that sends its version with its check is told an update is waiting, with the release notes, a SHA-256 checksum and a ready download link. Stable and beta channels, withdraw a bad release in one click, and see which version each site runs and how many are behind ([docs/releases.md](docs/releases.md))
+- **Publishing from GitHub**: connect GitHub once (Warden creates its own GitHub App in two clicks), pick a repository for an app or a licence, and every version tag you push is downloaded as a zip, repacked with a fixed folder name and published as a release. Private repositories included, no token or webhook to copy; a token-and-webhook mode remains for single repositories ([docs/repositories.md](docs/repositories.md))
 - **Apps**: a product sold to many customers, with defaults for new licences (status, duration, maximum sites, message), its own licence list and releases shared by all of its licences ([docs/apps.md](docs/apps.md))
 - **Site limit**: a licence can be limited to N sites; sites register on their first check and you can release them
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence, with a customer name and email
-- **Configurable statuses** at app level and licence level: everything starts with a built-in set (pending, active, completed, suspended, disabled, expired). An app can customise its own, shared by all of its licences, and a standalone licence can customise its own. Each status says whether sites can run, what it becomes when the expiry date passes, its colour (any colour, with presets) and its message to sites ([docs/statuses.md](docs/statuses.md))
+- **Configurable statuses** at app level and licence level: everything starts with a built-in set (pending, active, completed, suspended, disabled, expired). An app can customise its own, shared by all of its licences, and a standalone licence can customise its own. Each status says whether it is valid, what it becomes when the expiry date passes, its colour (any colour, with presets) and its message to sites ([docs/statuses.md](docs/statuses.md))
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
 - **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
 - Activity log per licence: every check (which domain, which result) and every change
-- Overview: active count, licences expiring soon, active licences whose site stopped checking in
-- **Files per licence** (stored in R2), each with a release rule: the licence statuses in which it can be downloaded. Use it to ship updates while a licence is in effect, to release a final build when the client has paid in full, or to serve a notice while a licence is suspended ([docs/files.md](docs/files.md))
+- **Protection**: client IP address of every check and download, an IP blocklist (addresses and CIDR ranges), rate limits per IP address, licence key and API key, and blocking rules (invalid licence keys, invalid checks, licences per IP address, rate limit violations) with an allowlist, all configured in the dashboard ([docs/protection.md](docs/protection.md))
+- **Analytics**: valid and invalid checks per day, invalid checks by reason, active sites, downloads, and top licences, files and IP addresses, over 7, 30 or 90 days, for everything or one app ([docs/analytics.md](docs/analytics.md))
+- **Overview** with a *Needs attention* queue: licences expiring soon (extend them in one click) and valid licences with no recent check, plus apps with outdated sites
+- **Quick search** (Ctrl+K or Cmd+K) across licences, customers, keys, site domains and apps
+- **Licence list** with saved views in the address (valid, invalid, expiring, no recent check), filters, sorting and **CSV export**
+- **Files per licence** (stored in R2), each with a release rule: the licence statuses in which it can be downloaded. Use it to ship updates while a licence is valid, to release a final build when the client has paid in full, or to serve a notice while a licence is suspended ([docs/files.md](docs/files.md))
 - **Extend expiry** in one click (+30 days, +90 days, +1 year) and **regenerate key**
 - **API** with scoped keys, idempotent create, renew, status, search and paging, plus an OpenAPI description
 - Single admin login from Worker secrets, no third-party services, runs on the Workers and D1 free plans
@@ -56,17 +62,21 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | | |
 |---|---|
 | ![Apps](docs/screenshots/apps.jpg) | ![App page](docs/screenshots/app.jpg) |
-| Apps with licence counts, sites and latest version | An app: releases shared by its licences, and its licences |
+| Apps with licence counts, valid licences, sites and outdated sites | An app: licences, sites, latest release and checks of the last 30 days |
+| ![Releases](docs/screenshots/releases.jpg) | ![Edit a release](docs/screenshots/edit-file.jpg) |
+| Releases of an app: latest, beta and withdrawn | Editing a release: version, channel, release notes and availability |
 | ![Licences](docs/screenshots/licences.jpg) | ![Licence page](docs/screenshots/licence.jpg) |
-| Licences of all apps, with app and status filters | Licence key, check URL and details |
-| ![Sites and files](docs/screenshots/sites-and-files.jpg) | ![Edit a file's release rule](docs/screenshots/edit-file.jpg) |
-| Registered sites, and the files a licence can download | Changing the statuses a file is available in |
+| Licences of all apps, with views, filters and sorting | A licence: check result, expiry, sites and last check |
+| ![Sites](docs/screenshots/sites-and-files.jpg) | ![Analytics](docs/screenshots/analytics.jpg) |
+| Registered sites, the version each one runs and its address | Analytics: valid and invalid checks per day |
 | ![App statuses](docs/screenshots/app-statuses.jpg) | ![Edit a status](docs/screenshots/edit-status.jpg) |
-| An app with its own statuses | Editing a status: colour picker, sites, expiry rule, message |
-| ![Creating an app](docs/screenshots/new-app.jpg) | |
-| Statuses can be customised while creating an app or a licence | |
-| ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
-| A standalone licence: default statuses, customisable (a licence in an app uses its app's) | Issuing a licence with the app's defaults |
+| An app with its own statuses | Editing a status: colour, expiry rule, valid status and message |
+| ![Protection](docs/screenshots/protection.jpg) | ![Integrations](docs/screenshots/integrations.jpg) |
+| Protection: blocking rules with threshold, time window and block duration | Integrations: connecting GitHub |
+| ![Creating an app](docs/screenshots/new-app.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
+| Creating an app with defaults for new licences | Issuing a licence with the app's defaults |
+| ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![API keys](docs/screenshots/api.jpg) |
+| A standalone licence: default statuses, customisable | API keys with their scope |
 
 ## The check URL
 
@@ -78,13 +88,23 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 { "name": "Harbor Studio website", "valid": true, "status": "active", "message": "", "expires_at": "2027-03-31T23:59:59.999Z", "checked_at": "2026-10-04T16:17:30.248Z" }
 ```
 
-`valid` is `true` only when the licence's status lets sites run (by default Active and Completed), its expiry rule has not triggered, and the domain is allowed. `status` is the licence's status key, or `domain_mismatch`, `site_limit_reached` or `unknown` (HTTP 404). Full details and verification code: [docs/checking.md](docs/checking.md).
+`valid` is `true` only when the licence's status is valid (by default Active and Completed), its expiry rule has not triggered, and the domain is allowed. `status` is the licence's status key, or `domain_mismatch`, `site_limit_reached` or `unknown` (HTTP 404). Full details and verification code: [docs/checking.md](docs/checking.md).
 
 Recommended in the site: check about every 12 hours, act only on a response you could read and verify, and **keep the last known state on network errors or 5xx**, so a Warden outage never locks a client out.
 
-## Files
+## Files and releases
 
-Attach files to a licence in the dashboard or by API. Each file has a **release rule**: the licence statuses in which it can be downloaded, and whether the site's domain must match.
+Attach files to a licence or an app in the dashboard or by API. A file with a version is a **release**, offered to sites as an update ([docs/releases.md](docs/releases.md)).
+
+```
+GET https://<your-worker>/check/<licence key>?domain=client-site.org&version=1.3.0
+```
+
+```json
+{ "valid": true, "status": "active", "update": { "current": "1.3.0", "available": true, "latest": { "version": "1.4.0", "changelog": "Faster gallery.", "sha256": "9f86d0...", "download_url": "https://<your-worker>/download/WRD-.../fil_...?domain=client-site.org" } } }
+```
+
+Every file, release or not, has a **release rule**: the licence statuses in which it can be downloaded, and whether the site's domain must match.
 
 | Example | Statuses | Domain check |
 |---|---|---|
@@ -94,10 +114,10 @@ Attach files to a licence in the dashboard or by API. Each file has a **release 
 
 ```
 GET https://<your-worker>/download/<licence key>                         # status and files, with availability
-GET https://<your-worker>/download/<licence key>/<file id>?domain=site   # the file, or a JSON refusal (HTTP 403)
+GET https://<your-worker>/download/<licence key>/<file id>?domain=site   # the file, or a JSON error (HTTP 403)
 ```
 
-When the last payment of a project arrives, set the licence to **Completed**: it stays valid permanently and a file released in Completed becomes available. Every download and refusal is logged. Details and examples: [docs/files.md](docs/files.md).
+When the last payment of a project arrives, set the licence to **Completed**: it stays valid permanently and a file released in Completed becomes available. Every download and denied download is logged. Details and examples: [docs/files.md](docs/files.md).
 
 ## The API
 
@@ -121,7 +141,7 @@ curl           "https://<worker>/api/v1/licenses?status=expired"   -H "Authoriza
 | `manage` | also create, edit, set status, renew |
 | `full` | also delete and regenerate keys |
 
-Endpoints: `GET /me`, `GET /stats`, `GET /statuses`, `GET|POST|DELETE /apps/{app}/statuses` and `/licenses/{id}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`. Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
+Endpoints: `GET /apps/{app}/versions`, `GET /me`, `GET /stats`, `GET /statuses`, `GET|POST|DELETE /apps/{app}/statuses` and `/licenses/{id}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`, `GET|PUT|DELETE /apps/{app}/source` and `/licenses/{id}/source` (with `/imports`), `GET /integrations/github` (with `/repositories`). Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
 
 ## Run and deploy
 
@@ -158,7 +178,8 @@ React Router 7 (SSR) on Cloudflare Workers, Cloudflare D1 (data) and R2 (files),
 workers/app.ts              entry: migrations, /api/v1, /check/<key>, dashboard
 app/server/check.server.ts  the check endpoint and its signature
 app/server/download.server.ts  gated file downloads
-app/server/files.server.ts  file storage in R2
+app/server/files.server.ts  file storage in R2, checksums, releases
+app/lib/releases.ts         versions, channels, the latest release
 app/server/api.server.ts    API: keys, routes, validation
 app/server/licenses.server.ts   licence logic shared by dashboard and API
 app/lib/license.ts          statuses, key format, domain rules, the response

@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { Outlet, useLoaderData } from "react-router"
 import { ShieldAlert } from "lucide-react"
 import type { Route } from "./+types/app"
@@ -6,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert"
 import { SidebarInset, SidebarProvider } from "#/components/ui/sidebar"
 import { NavigationProgress } from "#/components/navigation-progress"
 import { StatusProvider } from "#/components/status-context"
+import { CommandMenu, useCommandShortcut } from "#/components/command-menu"
 import { requireAuth, securityWarnings } from "~/server/auth.server"
 import { loadStatusSets } from "~/server/statuses.server"
 
@@ -25,12 +27,15 @@ export function shouldRevalidate({ formAction }: { formAction?: string }) {
 
 export default function AppLayout() {
   const { username, warnings, statusSets } = useLoaderData<typeof loader>()
+  const [searching, setSearching] = useState(false)
+  useCommandShortcut(setSearching)
 
   return (
     <StatusProvider value={statusSets}>
       <SidebarProvider>
         <NavigationProgress />
-        <AppSidebar username={username} />
+        <AppSidebar username={username} onSearch={() => setSearching(true)} />
+        <CommandMenu open={searching} onOpenChange={setSearching} />
         <SidebarInset>
           {warnings.length > 0 && (
             <Alert variant="destructive" className="mx-4 mt-4 w-auto">

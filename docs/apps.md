@@ -2,6 +2,8 @@
 
 An **app** is a product you license to many customers, for example a plugin or a theme. Licences can belong to an app. A licence without an app is a **standalone** licence, for a single customer or a custom project.
 
+![An app page](screenshots/app.jpg)
+
 | | Standalone licence | Licence under an app |
 |---|---|---|
 | Starts with | The values you enter | The app's defaults (duration, status, maximum sites, public message) |
@@ -47,7 +49,7 @@ A licence can limit how many different sites (domains) may use it. Each site reg
 
 1. The customer's site checks the licence with its domain: `GET /check/<key>?domain=harborstudio.com`.
 2. If the licence has room, the domain is registered and the check succeeds.
-3. When the limit is reached, a new domain is refused with `site_limit_reached`. Domains that are already registered keep working.
+3. When the limit is reached, a check from a new domain is invalid, with `site_limit_reached`. Domains that are already registered keep working.
 4. On the licence page, **Release site** frees a slot, for example when the customer moves to a new domain. The old site can register again if there is room.
 
 A licence with a site limit requires the domain in every check (and download). A licence without a limit does not.
@@ -61,7 +63,9 @@ The site limit relies on the domain the site reports, so it is a licensing contr
 Files uploaded to an app are shared by all of its licences: upload a version once and every customer can download it, subject to each file's release rule (the licence statuses in which it is available, see [files.md](files.md)).
 
 - A licence's download list (`GET /download/<key>`) contains its own files and the app's files, marked with their `source`.
-- The `latest` field points to the highest version among the files available to that licence, so a site can check for updates with one request.
+- Releases can also be published from a GitHub repository: connect it on the app's Releases tab and every version tag is published as a release ([repositories.md](repositories.md)).
+- The `latest` field points to the newest release among the files available to that licence. A site that sends its version with its check is told directly whether an update is waiting ([releases.md](releases.md)).
+- The versions the app's sites report are shown on the app page and returned by `GET /api/v1/apps/{app}/versions`.
 - Downloads are counted per file and written to the activity log of the licence that downloaded them.
 - A file shared by an app is visible only to licences of that app.
 

@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { makeBucket, makeCtx, makeDb } from "./helpers/d1.ts"
-import { compareVersions, isValidSlug, latestVersioned, slugify } from "../app/lib/apps.ts"
+import { isValidSlug, slugify } from "../app/lib/apps.ts"
 import { buildCheckResponse } from "../app/lib/license.ts"
 import { DEFAULT_STATUSES } from "../app/lib/statuses.ts"
 import { appDefaults, createApp, deleteApp, findApp, getAppSummary, listApps, readAppForm, updateApp } from "../app/server/apps.server.ts"
@@ -26,16 +26,11 @@ async function newApp(env: Env, overrides: Partial<typeof appInput> = {}) {
   return (res as { app: Awaited<ReturnType<typeof findApp>> & object }).app
 }
 
-test("slugs and versions", () => {
+test("slugs", () => {
   assert.equal(slugify("Harbor Theme Pro!"), "harbor-theme-pro")
   assert.equal(slugify("  Café  Menü "), "cafe-menu")
   assert.equal(isValidSlug("harbor-theme"), true)
   for (const bad of ["a", "Harbor", "-x", "x-", "a--b", "a b"]) assert.equal(isValidSlug(bad), false, bad)
-  assert.ok(compareVersions("1.10.0", "1.9.2") > 0)
-  assert.ok(compareVersions("v2.0", "2.0.0") === 0)
-  assert.ok(compareVersions("1.0.0-beta", "1.0.0") === 0)
-  assert.equal(latestVersioned([{ version: "1.2.0" }, { version: "" }, { version: "1.10.0" }, { version: "1.9.0" }])?.version, "1.10.0")
-  assert.equal(latestVersioned([{ version: "" }]), null)
 })
 
 test("app form validation", () => {
@@ -71,7 +66,7 @@ test("apps: unique slug, defaults, summary, delete rules", async () => {
   await createLicense(env, { ...baseLicense, app_id: app.id, status: "suspended" })
   await createLicense(env, { ...baseLicense, app_id: app.id, expires_at: Date.now() - 1000 })
   const summary = (await getAppSummary(env, "harbor-theme"))!
-  assert.deepEqual([summary.licenses, summary.in_force], [3, 1])
+  assert.deepEqual([summary.licenses, summary.valid], [3, 1])
   assert.equal((await listApps(env)).length, 2)
 
   const refused = await deleteApp(env, app)

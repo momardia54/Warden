@@ -2,7 +2,11 @@ import { createRequestHandler } from "react-router"
 import { handleApi } from "../app/server/api.server"
 import { handleCheck } from "../app/server/check.server"
 import { handleDownload } from "../app/server/download.server"
+import { guardPublic } from "../app/server/guard.server"
+import { pruneBlocks } from "../app/server/ip-blocks.server"
+import { pruneIpEvents } from "../app/server/protection.server"
 import { pruneActivity } from "../app/server/licenses.server"
+import { handleAppWebhook, handleWebhook, pruneImports } from "../app/server/sources.server"
 import { withDashboardHeaders } from "../app/server/headers.server"
 import { initRequestCache } from "../app/server/request-cache.server"
 import { ensureMigrated, migrationFailureResponse, type Migration } from "../app/server/migrate.server"
@@ -42,10 +46,15 @@ export default {
 
     // Public endpoint that authenticates with the licence key in the address.
     const check = url.pathname.match(/^\/check\/([A-Za-z0-9-]{10,40})\/?$/)
-    if (check) return handleCheck(request, env, ctx, check[1].toUpperCase())
+    if (check) return (await guardPublic(request, env, ctx, "check", check[1].toUpperCase())) ?? handleCheck(request, env, ctx, check[1].toUpperCase())
 
     const download = url.pathname.match(/^\/download\/([A-Za-z0-9-]{10,40})(?:\/(fil_[a-z0-9]+))?\/?$/)
-    if (download) return handleDownload(request, env, ctx, download[1].toUpperCase(), download[2] ?? null)
+    if (download) return (await guardPublic(request, env, ctx, "download", download[1].toUpperCase())) ?? handleDownload(request, env, ctx, download[1].toUpperCase(), download[2] ?? null)
+
+    // Webhooks of connected repositories, authenticated by their signature: the GitHub App's, and per-source ones.
+    if (url.pathname === "/hooks/github-app") return handleAppWebhook(request, env, ctx)
+    const hook = url.pathname.match(/^\/hooks\/([a-z]+)\/(src_[a-z0-9]+)\/?$/)
+    if (hook) return handleWebhook(request, env, ctx, hook[1], hook[2])
 
     const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))))
     // A per-request copy of env: it is the key of the request-scoped cache (see request-cache.server.ts).
@@ -58,5 +67,8 @@ export default {
   async scheduled(_controller, env, ctx) {
     await ensureMigrated(env.DB, migrations)
     ctx.waitUntil(pruneActivity(env).catch((error) => console.error("Warden prune failed:", error)))
+    ctx.waitUntil(pruneBlocks(env).catch((error) => console.error("Warden block clean-up failed:", error)))
+    ctx.waitUntil(pruneIpEvents(env).catch((error) => console.error("Warden event clean-up failed:", error)))
+    ctx.waitUntil(pruneImports(env).catch((error) => console.error("Warden import clean-up failed:", error)))
   },
 } satisfies ExportedHandler<Env>

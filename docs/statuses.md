@@ -2,6 +2,8 @@
 
 Every licence has a **status**. The status decides what a site is told when it checks the licence, and which files it can download. Warden starts with a built-in set of statuses, and you can customise them **for an app** or **for a standalone licence**: rename them, change what they mean, remove the ones you do not need and add your own.
 
+![An app with its own statuses](screenshots/app-statuses.jpg)
+
 ## Where statuses come from
 
 | The licence is | It uses |
@@ -25,10 +27,10 @@ You can customise statuses **when you create** an app or a standalone licence: t
 
 ## The default statuses
 
-| Status | Sites can run | Expiry date | Meaning |
+| Status | Valid | Expiry date | Meaning |
 |---|---|---|---|
-| Pending | No | Does not apply | Created but not in effect yet, for example before the first payment |
-| Active | Yes | Becomes Expired | In effect. This is the default for new licences |
+| Pending | No | Does not apply | Issued but not valid yet, for example until the first payment |
+| Active | Yes | Becomes Expired | Valid. The default for new licences |
 | Completed | Yes | Does not apply | Paid in full. Permanent |
 | Suspended | No | Does not apply | Temporarily on hold, for example for a late payment |
 | Disabled | No | Does not apply | Permanently switched off |
@@ -44,7 +46,7 @@ Once customised, these are ordinary statuses: you can delete any of them, includ
 | **Identifier** (`key`) | Stored on licences and used in the API. Lowercase letters, digits and underscores, starting with a letter, up to 32 characters. Generated from the label. **It cannot be changed after the status is created**; rename the label instead. `unknown`, `domain_mismatch` and `site_limit_reached` are reserved for check results |
 | **Description** | Explains the status to you. Shown in the status menu |
 | **Colour** (`color`) | The badge colour, any hex colour such as `#16a34a`. The editor offers a colour picker and presets for green, teal, blue, purple, pink, amber, red and grey |
-| **Sites can run under this status** (`grants_access`) | When on, the check response says `valid: true`. When off, sites are told the licence is not valid and decide what to do |
+| **Valid status** (`grants_access`) | When on, checks return `valid: true`. When off, checks return `valid: false` and the site applies its own handling |
 | **When the expiry date passes** (`on_expiry`) | The status a licence takes on, as seen by sites, once its expiry date has passed. Active becomes Expired by default. Choose "Nothing" for statuses the expiry date should not affect, such as a paid-in-full status |
 | **Message to sites** (`check_message`) | Returned in the check response when the licence has no public message of its own |
 | **Default for new licences** | New licences start with this status. Exactly one per set |

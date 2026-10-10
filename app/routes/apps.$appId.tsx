@@ -1,23 +1,32 @@
-import { Link, redirect } from "react-router"
-import { Pencil, Plus, Trash2 } from "lucide-react"
+import { useState } from "react"
+import { Link, redirect, type ShouldRevalidateFunctionArgs } from "react-router"
+import { ArrowDownToLine, ChartColumn, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
 import type { Route } from "./+types/apps.$appId"
+import { ColumnChart } from "#/components/column-chart"
 import { ConfirmAction } from "#/components/confirm-action"
+import { Fact, FactStrip } from "#/components/fact-strip"
 import { FilesSection } from "#/components/files-section"
-import { HelpTip } from "#/components/help-tip"
+import { ReleaseSource } from "#/components/release-source"
 import { LicensesTable } from "#/components/licenses-table"
 import { PageHeader } from "#/components/page-header"
-import { StatCard } from "#/components/stat-card"
+import { PageTitle } from "#/components/page-title"
+import { onlyTabChanged, RouteTabs, useRouteTab } from "#/components/route-tabs"
+import { VersionAdoption } from "#/components/version-adoption"
 import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert"
 import { Button } from "#/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "#/components/ui/dropdown-menu"
 import { StatusSection } from "#/components/status-section"
 import { DEFAULT_STATUSES, statusLabel } from "#/lib/statuses"
+import { dailyTraffic } from "~/server/analytics.server"
 import { requireAuth } from "~/server/auth.server"
-import { deleteApp, getApp, getAppSummary } from "~/server/apps.server"
-import { deleteFile, getFile, listFiles, storageConfigured, updateFile } from "~/server/files.server"
+import { deleteApp, getApp, getAppSummary, versionsInUse } from "~/server/apps.server"
+import { applyFileForm, listFiles, storageConfigured } from "~/server/files.server"
+import { applySourceForm, getSource, listImports, publicSource } from "~/server/sources.server"
+import { getGitHubApp } from "~/server/github-app.server"
 import { applyStatusForm, getStatusSetForApp, hasCustomSet, statusCounts } from "~/server/statuses.server"
 import { queryLicenses } from "~/server/licenses.server"
 
-export const meta: Route.MetaFunction = () => [{ title: "App | Warden" }]
+export const meta: Route.MetaFunction = ({ data }) => [{ title: `${data?.app.name ?? "App"} | Warden` }]
 
 export async function loader({ request, context, params }: Route.LoaderArgs) {
   const env = context.cloudflare.env
@@ -25,13 +34,21 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   const app = await getAppSummary(env, params.appId)
   if (!app) throw new Response("App not found", { status: 404 })
   const custom = await hasCustomSet(env, { app: app.id })
-  const [licenses, files, statuses, usage] = await Promise.all([
+  const [licenses, files, statuses, usage, versions, traffic] = await Promise.all([
     queryLicenses(env, { appId: app.id, limit: 1000 }),
     listFiles(env, { app }),
     getStatusSetForApp(env, app.id),
     custom ? statusCounts(env, { app: app.id }) : Promise.resolve({}),
+    versionsInUse(env, app.id),
+    dailyTraffic(env, { app: app.id }, 30, Date.now(), "checks"),
   ])
-  return { app, licenses, files, statuses, custom, usage, filesConfigured: storageConfigured(env) }
+  const source = await getSource(env, { app })
+  const [sourceView, imports] = source ? await Promise.all([publicSource(env, source, new URL(request.url).origin), listImports(env, source.id, 10)]) : [null, []]
+  return { app, licenses, files, statuses, custom, usage, versions, traffic: traffic.series, filesConfigured: storageConfigured(env), source: sourceView, imports, githubApp: (await getGitHubApp(env)) !== null }
+}
+
+export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {
+  return onlyTabChanged(args) ? false : args.defaultShouldRevalidate
 }
 
 export async function action({ request, context, params }: Route.ActionArgs) {
@@ -43,33 +60,36 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const intent = String(form.get("intent"))
 
   if (intent.endsWith("-status") || intent.endsWith("-statuses")) return applyStatusForm(env, { app: app.id }, form)
-  if (intent === "update-file") {
-    const file = await getFile(env, { app }, String(form.get("fileId")))
-    if (file) await updateFile(env, { app }, file, { statuses: String(form.get("statuses") ?? ""), checkDomain: form.get("check_domain") === "true", version: String(form.get("version") ?? "") })
-  } else if (intent === "delete-file") {
-    const file = await getFile(env, { app }, String(form.get("fileId")))
-    if (file) await deleteFile(env, { app }, file)
-  } else if (intent === "delete") {
+  const fileResult = await applyFileForm(env, { app }, form)
+  if (fileResult) return fileResult
+  const sourceResult = await applySourceForm(env, context.cloudflare.ctx, { app }, form)
+  if (sourceResult) return sourceResult
+  if (intent === "delete") {
     const result = await deleteApp(env, app)
     if ("error" in result) return { error: result.error }
     return redirect("/apps")
   }
-  return null
+  return { ok: true as const }
 }
+
+const TABS = ["licences", "releases", "statuses"]
 
 export default function AppPage({ loaderData, actionData }: Route.ComponentProps) {
   const actionError = actionData && "error" in actionData ? actionData.error : null
-  const { app, licenses, files, statuses, custom, usage, filesConfigured } = loaderData
+  const { app, licenses, files, statuses, custom, usage, versions, traffic, filesConfigured, source, imports, githubApp } = loaderData
+  const checks = traffic.reduce((n, d) => n + d.valid + d.invalid, 0)
+  const [tab, setTab] = useRouteTab(TABS)
+  const [deleting, setDeleting] = useState(false)
   const defaults = [
-    statusLabel(statuses, app.default_status),
-    app.default_duration_days ? `${app.default_duration_days} days` : "no expiry",
-    app.default_max_sites ? `${app.default_max_sites} site${app.default_max_sites === 1 ? "" : "s"}` : "unlimited sites",
-  ].join(" · ")
+    `start as ${statusLabel(statuses, app.default_status)}`,
+    app.default_duration_days ? `valid ${app.default_duration_days} days` : "no expiry",
+    app.default_max_sites ? `${app.default_max_sites} site${app.default_max_sites === 1 ? "" : "s"} each` : "unlimited sites",
+  ].join(", ")
 
   return (
     <>
       <PageHeader crumbs={[{ label: "Apps", to: "/apps" }, { label: app.name }]} />
-      <div className="max-w-5xl space-y-6 p-4 pt-0">
+      <div className="max-w-6xl space-y-6 p-4 pt-0 lg:px-6">
         {actionError && (
           <Alert variant="destructive">
             <AlertTitle>The app was not deleted</AlertTitle>
@@ -77,69 +97,134 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
           </Alert>
         )}
 
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold">{app.name}</h1>
-            <p className="text-sm text-muted-foreground">
-              <code>{app.slug}</code>
-              {app.description ? ` · ${app.description}` : ""}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild>
-              <Link to={`/licenses/new?app=${app.id}`}>
-                <Plus /> Issue licence
-              </Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link to={`/apps/${app.id}/edit`}>
-                <Pencil /> Edit
-              </Link>
-            </Button>
-          </div>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard title="Licences" value={app.licenses} />
-          <StatCard title="In force" value={app.in_force} help="Licences that are currently valid for sites: Completed, or Active and not past their expiry date." />
-          <StatCard title="Sites in use" value={app.sites} help="Total number of sites (domains) registered across all licences of this app." />
-          <StatCard title="Latest version" value={app.latest_version ? `v${app.latest_version}` : "None"} help="The highest version among the app's released files." />
-        </div>
-
-        <p className="text-sm text-muted-foreground">
-          Defaults for new licences: <span className="text-foreground">{defaults}</span>
-          {app.default_message ? <> · public message set</> : null}{" "}
-          <HelpTip>New licences issued under this app start with these values. You can change them per licence.</HelpTip>
-        </p>
-
-        <FilesSection
-          title="Releases"
-          description="Files shared by every licence of this app, for example plugin or theme versions. Each file is released by licence status. Licences see them on their own page and through their download link."
-          uploadPath={`/apps/${app.id}/files`}
-          files={files}
-          statuses={statuses}
-          configured={filesConfigured}
+        <PageTitle
+          title={app.name}
+          description={
+            <>
+              <span className="font-mono text-xs">{app.slug}</span>
+              {app.description ? <span>, {app.description}</span> : null}
+            </>
+          }
+          actions={
+            <>
+              <Button asChild>
+                <Link to={`/licenses/new?app=${app.id}`}>
+                  <Plus /> Issue licence
+                </Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link to={`/apps/${app.id}/edit`}>
+                  <Pencil /> Edit
+                </Link>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" aria-label="More actions">
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem asChild>
+                    <a href={`/licenses/export.csv?app=${app.id}`}>
+                      <ArrowDownToLine /> Export licences as CSV
+                    </a>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to={`/analytics?app=${app.id}`}>
+                      <ChartColumn /> Traffic analytics
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onClick={() => setDeleting(true)}>
+                    <Trash2 /> Delete app
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          }
         />
 
-        <StatusSection owner="app" statuses={statuses} fallback={DEFAULT_STATUSES} custom={custom} usage={usage} actionPath={`/apps/${app.id}`} inheritedFrom="the default statuses" />
+        <FactStrip>
+          <Fact label="Licences" value={app.licenses} detail={`${app.valid} valid`} help="Valid licences are those for which a check currently returns valid: true." />
+          <Fact label="Sites" value={app.sites} detail="Registered across all licences" help="Each site registers on its first check with a domain." />
+          <Fact
+            label="Latest release"
+            value={app.latest_version ? <span className="font-mono">{app.latest_version}</span> : "None"}
+            detail={app.latest_version ? "Highest stable version" : "Upload a build with a version"}
+            help="The highest stable version among the app's current releases. Withdrawn and beta releases are not counted."
+          />
+          <Fact
+            label="Outdated sites"
+            value={versions.outdated}
+            detail={versions.sites > 0 ? `of ${versions.sites} sites` : "No site yet"}
+            tone={versions.outdated > 0 ? "warning" : "default"}
+            help="Sites that reported a version older than the latest release with their check (?version=). Sites that never report a version are not counted."
+          />
+        </FactStrip>
 
-        <section className="space-y-2">
-          <h2 className="font-semibold">Licences</h2>
-          <LicensesTable licenses={licenses} showApp={false} empty="No licence has been issued under this app yet." />
+        <section className="rounded-lg border bg-card p-4">
+          <ColumnChart
+            title="Licence checks, last 30 days"
+            description={`Checks from customer sites across all ${app.name} licences.`}
+            data={traffic}
+            series={[
+              { key: "valid", label: "Valid", color: "var(--chart-1)" },
+              { key: "invalid", label: "Invalid", color: "var(--chart-2)" },
+            ]}
+            height={140}
+            summary={<span className="tabular-nums">{checks.toLocaleString("en-GB")} checks</span>}
+            viewAll={`/analytics?app=${app.id}`}
+          />
         </section>
+
+        <p className="text-sm text-muted-foreground">
+          New licences {defaults}
+          {app.default_message ? ", with a public message" : ""}.{" "}
+          <Link className="text-foreground underline-offset-2 hover:underline" to={`/apps/${app.id}/edit`}>
+            Change defaults
+          </Link>
+        </p>
+
+        <div className="space-y-5">
+          <RouteTabs
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { id: "licences", label: "Licences", count: app.licenses },
+              { id: "releases", label: "Releases", count: files.length },
+              { id: "statuses", label: "Statuses", count: statuses.length },
+            ]}
+          />
+
+          {tab === "licences" && <LicensesTable licenses={licenses} showApp={false} empty="No licence has been issued under this app yet." />}
+
+          {tab === "releases" && (
+            <div className="space-y-8">
+              {versions.sites > 0 && <VersionAdoption versions={versions} />}
+              {filesConfigured && <ReleaseSource source={source} imports={imports} statuses={statuses} ownerLabel="app" githubApp={githubApp} />}
+              <FilesSection
+                ownerLabel="app"
+                description="Builds and files shared by every licence of this app. Each file is downloadable while a licence has one of its release statuses. A file with a version is a release, offered to sites as an update."
+                uploadPath={`/apps/${app.id}/files`}
+                files={files}
+                statuses={statuses}
+                configured={filesConfigured}
+              />
+            </div>
+          )}
+
+          {tab === "statuses" && <StatusSection owner="app" statuses={statuses} fallback={DEFAULT_STATUSES} custom={custom} usage={usage} actionPath={`/apps/${app.id}`} inheritedFrom="the default statuses" />}
+        </div>
 
         <ConfirmAction
           intent="delete"
-          trigger={
-            <Button variant="outline" className="text-destructive">
-              <Trash2 /> Delete app
-            </Button>
-          }
+          open={deleting}
+          onOpenChange={setDeleting}
           title="Delete this app?"
           description={
             app.licenses > 0
               ? `This app still has ${app.licenses} licence${app.licenses === 1 ? "" : "s"}. Delete them or move them to another app first; the app cannot be deleted until then.`
-              : "The app and its released files are deleted. This cannot be undone."
+              : "The app and its files are deleted. This cannot be undone."
           }
           confirm="Delete app"
         />

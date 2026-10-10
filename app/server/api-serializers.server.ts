@@ -1,3 +1,4 @@
+import type { IpBlock } from "./ip-blocks.server"
 import { evaluateFileAccess } from "../lib/files"
 import { parseDomains } from "../lib/license"
 import { effectiveStatusKey, grantsAccess, type StatusDef, type StatusSet } from "../lib/statuses"
@@ -46,7 +47,9 @@ export function serializeApp(a: AppSummary) {
     default_message: a.default_message,
     notes: a.notes,
     licenses: a.licenses,
-    licenses_in_force: a.in_force,
+    licenses_valid: a.valid,
+    /** Deprecated alias of licenses_valid. */
+    licenses_in_force: a.valid,
     sites: a.sites,
     files: a.files,
     latest_version: a.latest_version,
@@ -65,12 +68,17 @@ export function serializeFile(f: LicenseFile, license: License | null, origin: s
     id: f.id,
     name: f.name,
     version: f.version,
+    channel: f.channel,
+    changelog: f.changelog,
     notes: f.notes,
     size: f.size,
     content_type: f.content_type,
+    sha256: f.sha256 || null,
+    withdrawn: f.withdrawn_at !== null,
+    withdrawn_at: iso(f.withdrawn_at),
     statuses: rule.statuses,
     check_domain: rule.check_domain,
-    ...(license ? { available: evaluateFileAccess(license, rule, null, Date.now(), true, set).allowed, download_url: `${origin}/download/${license.license_key}/${f.id}` } : {}),
+    ...(license ? { available: f.withdrawn_at === null && evaluateFileAccess(license, rule, null, Date.now(), true, set).allowed, download_url: `${origin}/download/${license.license_key}/${f.id}` } : {}),
     uploaded_at: iso(f.uploaded_at),
     download_count: f.download_count,
     last_download_at: iso(f.last_download_at),
@@ -88,6 +96,10 @@ export const serializeStatus = (s: StatusDef) => ({
   is_default: s.is_default,
 })
 
-export const serializeActivity = (a: Activity) => ({ at: iso(a.at), event: a.event, status: a.status, domain: a.domain, detail: a.detail })
+export const serializeActivity = (a: Activity) => ({ at: iso(a.at), event: a.event, status: a.status, domain: a.domain, ip: a.ip, detail: a.detail })
 
-export const serializeActivation = (a: Activation) => ({ domain: a.domain, first_seen_at: iso(a.first_seen_at), last_seen_at: iso(a.last_seen_at), check_count: a.check_count })
+export const serializeActivation = (a: Activation) => ({ domain: a.domain, version: a.version, first_seen_at: iso(a.first_seen_at), last_seen_at: iso(a.last_seen_at), check_count: a.check_count, last_ip: a.last_ip })
+
+export const serializeBlock = (b: IpBlock) => ({
+  id: b.id, ip: b.value, source: b.source, reason: b.reason, created_at: iso(b.created_at), expires_at: iso(b.expires_at), hits: b.hits, last_hit_at: iso(b.last_hit_at),
+})

@@ -2,21 +2,28 @@ import { KEY_PATTERN } from "../lib/license"
 import { DEFAULT_STATUSES, defaultStatusKey, findStatus, type StatusSet } from "../lib/statuses"
 import { applyAppBody, applyLicenseBody } from "./api-input.server"
 import { authenticate, type ApiKeyRow } from "./api-keys.server"
-import { CORS, fail, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
-import { serializeActivation, serializeActivity, serializeApp, serializeFile, serializeLicense, serializeStatus } from "./api-serializers.server"
-import { appDefaults, createApp, deleteApp, findApp, getAppSummary, listApps, updateApp, type App, type AppInput } from "./apps.server"
+import { CORS, fail, iso, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
+import { serializeActivation, serializeActivity, serializeApp, serializeBlock, serializeFile, serializeLicense, serializeStatus } from "./api-serializers.server"
+import { readRange, TRAFFIC_RANGES } from "../lib/analytics"
+import { trafficReport, type TrafficScope } from "./analytics.server"
+import { apiWithinLimit } from "./guard.server"
+import { createBlock, deleteBlock, listBlocks } from "./ip-blocks.server"
+import { getProtection, saveProtection } from "./protection.server"
+import { appDefaults, createApp, deleteApp, findApp, getAppSummary, listApps, updateApp, versionsInUse, type App, type AppInput } from "./apps.server"
 import { deleteFile, getFile, listFiles, statusSetForOwner, storeFile, updateFile, type FileOwner } from "./files.server"
 import {
   createLicense, deleteLicense, extendLicense, getLicense, getLicenseByKey, getLicenseByRef, listActivations, overviewStats, queryLicenses, recentActivity,
   regenerateKey, releaseActivation, renewUntil, setStatus, updateLicense, type License, type LicenseInput,
 } from "./licenses.server"
+import { getGitHubApp, listAppRepositories, listInstallations, publicGitHubApp } from "./github-app.server"
 import { openApiSpec } from "./openapi.server"
+import { deleteSource, getImport, getSource, listImports, publicSource, regenerateWebhookSecret, retryImport, saveSource, startImport, type SourceImport } from "./sources.server"
 import {
   createStatus, customizeStatuses, deleteStatus, getStatusSetForApp, getStatusSetForLicense, hasCustomSet, loadStatusSets, readStatusInput, resetStatuses, setForLicense,
   setStatusOrder, statusSource, updateStatus, type StatusInput, type StatusScope,
 } from "./statuses.server"
 
-type Context = { env: Env; request: Request; url: URL; origin: string; key: ApiKeyRow }
+type Context = { env: Env; request: Request; url: URL; origin: string; key: ApiKeyRow; execution: ExecutionContext }
 
 const need = (ctx: Context, scope: "read" | "manage" | "full") => requirePermission(ctx.key.scope, scope)
 
@@ -152,6 +159,7 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
   }
 
   if (sub === "files") return filesRoute(ctx, { license }, extra)
+  if (sub === "source") return sourceRoute(ctx, { license }, rest)
   if (sub === "statuses") {
     // A licence in an app uses the app's statuses: they can be read here but are changed on the app.
     if (license.app_id) {
@@ -233,6 +241,8 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
       checkDomain: q.get("check_domain") !== "false",
       version: q.get("version") ?? "",
       notes: q.get("notes") ?? "",
+      channel: q.get("channel") ?? undefined,
+      changelog: q.get("changelog") ?? "",
       contentType: request.headers.get("content-type"),
       size: Number(request.headers.get("content-length")),
       body: request.body,
@@ -256,10 +266,90 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
       checkDomain: typeof body.check_domain === "boolean" ? body.check_domain : undefined,
       version: typeof body.version === "string" ? body.version : undefined,
       notes: typeof body.notes === "string" ? body.notes : undefined,
+      channel: typeof body.channel === "string" ? body.channel : undefined,
+      changelog: typeof body.changelog === "string" ? body.changelog : undefined,
+      withdrawn: typeof body.withdrawn === "boolean" ? body.withdrawn : undefined,
     })
     return "error" in updated ? fail(updated.status, "invalid_file", updated.error) : reply(shape(updated.file))
   }
   return fail(405, "method_not_allowed", "Use GET or PUT on /files, and PATCH or DELETE on /files/{fileId}.")
+}
+
+// ---- release source ---------------------------------------------------------------
+
+const serializeImport = (i: SourceImport) => ({
+  id: i.id, tag: i.ref, version: i.version || null, commit: i.commit_sha || null, state: i.state, detail: i.detail, file_id: i.file_id,
+  started_at: iso(i.started_at), finished_at: iso(i.finished_at),
+})
+
+/**
+ * The repository connected to a licence or an app. Paths relative to .../source:
+ *   GET /  PUT /  DELETE /  POST /regenerate-secret  GET /imports  POST /imports  POST /imports/{id}/retry
+ */
+async function sourceRoute(ctx: Context, owner: FileOwner, segments: string[]): Promise<Response> {
+  const { env, request, origin } = ctx
+  const method = request.method
+  const [sub, importId, action] = segments
+  const shape = async (source: NonNullable<Awaited<ReturnType<typeof getSource>>>) => {
+    const view = await publicSource(env, source, origin)
+    const { webhook_secret, app_id, license_id, statuses: _statuses, status_keys, created_at, updated_at, last_delivery_at, ...rest } = view
+    return {
+      ...rest, app: app_id, license: license_id, statuses: status_keys,
+      // The secret lets a caller start imports, so only keys that can change the source see it.
+      webhook_secret: ctx.key.scope === "read" ? undefined : webhook_secret,
+      created_at: iso(created_at), updated_at: iso(updated_at), last_delivery_at: iso(last_delivery_at),
+    }
+  }
+
+  if (!sub && method === "PUT") {
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    const body = await readJson(request)
+    if (body instanceof Response) return body
+    const saved = await saveSource(env, owner, body)
+    return "error" in saved ? fail(saved.status, "invalid_source", saved.error) : reply(await shape(saved.source), saved.created ? 201 : 200)
+  }
+  const source = await getSource(env, owner)
+  if (!source) return fail(404, "source_not_found", "No repository is connected. Connect one with PUT.")
+
+  if (!sub) {
+    if (method === "GET") return reply(await shape(source))
+    if (method === "DELETE") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      await deleteSource(env, source)
+      return reply({ deleted: true, id: source.id })
+    }
+    return fail(405, "method_not_allowed", "Use GET, PUT or DELETE.")
+  }
+  if (sub === "regenerate-secret" && !importId) {
+    if (method !== "POST") return fail(405, "method_not_allowed", "Use POST.")
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    await regenerateWebhookSecret(env, source)
+    return reply(await shape((await getSource(env, owner))!))
+  }
+  if (sub === "imports") {
+    if (!importId && method === "GET") return reply({ data: (await listImports(env, source.id, 100)).map(serializeImport) })
+    if (!importId && method === "POST") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const tag = trimmed(body.tag, 200)
+      if (!tag) return fail(422, "invalid_tag", "tag is required, for example v1.4.0.")
+      return reply(serializeImport(await startImport(env, ctx.execution, source, tag)), 202)
+    }
+    if (importId && action === "retry" && method === "POST") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      const row = await getImport(env, source.id, importId)
+      if (!row) return fail(404, "import_not_found", "No import with this id.")
+      const retried = await retryImport(env, ctx.execution, source, row)
+      return "error" in retried ? fail(retried.status, "cannot_retry", retried.error) : reply(serializeImport(retried), 202)
+    }
+  }
+  return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
 }
 
 // ---- statuses ---------------------------------------------------------------------
@@ -404,8 +494,64 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
     return fail(405, "method_not_allowed", "Use GET or POST.")
   }
   if (sub === "files") return filesRoute(ctx, { app }, rest[0])
+  if (sub === "source") return sourceRoute(ctx, { app }, rest)
+  if (sub === "versions" && rest.length === 0) {
+    if (method !== "GET") return fail(405, "method_not_allowed", "Use GET.")
+    return reply(await versionsInUse(env, app.id))
+  }
   if (sub === "statuses") return statusRoute(ctx, { app: app.id }, await getStatusSetForApp(env, app.id), rest)
   return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
+}
+
+// ---- analytics ----------------------------------------------------------------------
+
+async function analyticsRoute({ env, url }: Context): Promise<Response> {
+  const daysParam = url.searchParams.get("days")
+  if (daysParam !== null && !(TRAFFIC_RANGES as readonly number[]).includes(Number(daysParam))) return fail(422, "invalid_days", `days must be one of ${TRAFFIC_RANGES.join(", ")}.`)
+  const appRef = url.searchParams.get("app")
+  const licenseRef = url.searchParams.get("license")
+  let scope: TrafficScope = {}
+  if (licenseRef) {
+    const license = await findLicense(env, licenseRef)
+    if (!license) return fail(404, "not_found", `No licence matches "${licenseRef}".`)
+    scope = { license: license.id }
+  } else if (appRef === "none") scope = { standalone: true }
+  else if (appRef) {
+    const app = await findApp(env, appRef)
+    if (!app) return fail(404, "not_found", `No app matches "${appRef}".`)
+    scope = { app: app.id }
+  }
+  return reply(await trafficReport(env, scope, readRange(daysParam)))
+}
+
+// ---- IP blocklist -------------------------------------------------------------------
+
+async function ipBlockRoute(ctx: Context, rest: string[]): Promise<Response> {
+  const { env, request } = ctx
+  if (rest.length === 0 && request.method === "GET") return reply({ data: (await listBlocks(env)).map(serializeBlock) })
+  if (rest.length === 0 && request.method === "POST") {
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    const body = await readJson(request)
+    if (body instanceof Response) return body
+    const ip = typeof body.ip === "string" ? body.ip : ""
+    const reason = typeof body.reason === "string" ? body.reason : ""
+    let expiresAt: number | null = null
+    if (body.expires_at !== undefined && body.expires_at !== null) {
+      const parsed = typeof body.expires_at === "string" ? Date.parse(body.expires_at) : NaN
+      if (Number.isNaN(parsed)) return fail(422, "invalid_expires_at", "expires_at must be an ISO 8601 date and time, or null for a permanent block.")
+      expiresAt = parsed
+    }
+    const created = await createBlock(env, { value: ip, reason, expires_at: expiresAt })
+    if ("error" in created) return fail(created.code === "exists" ? 409 : 422, created.code === "exists" ? "already_blocked" : "invalid_ip", created.error)
+    return reply(serializeBlock(created.block), 201)
+  }
+  if (rest.length === 1 && request.method === "DELETE") {
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    return (await deleteBlock(env, rest[0])) ? reply({ deleted: true, id: rest[0] }) : fail(404, "not_found", "No block with this id.")
+  }
+  return fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")
 }
 
 // ---- entry point ------------------------------------------------------------------
@@ -418,13 +564,45 @@ export async function handleApi(request: Request, env: Env, execution: Execution
 
   const key = await authenticate(request, env, execution)
   if (!key) return fail(401, "unauthorized", "Send a valid API key as Authorization: Bearer wk_...")
-  const ctx: Context = { env, request, url, origin: url.origin, key }
+  if (!(await apiWithinLimit(request, env, key.prefix))) {
+    const limited = fail(429, "rate_limited", "Too many requests with this API key. Try again in a minute.")
+    limited.headers.set("retry-after", "60")
+    return limited
+  }
+  const ctx: Context = { env, request, url, origin: url.origin, key, execution }
 
   const [resource, ...rest] = path.split("/").filter(Boolean)
   if (resource === "me" && request.method === "GET") return reply({ name: key.name, scope: key.scope, prefix: key.prefix })
   if (resource === "stats" && request.method === "GET") {
     const stats = await overviewStats(env)
-    return reply({ total: stats.total, in_force: stats.inForce, not_in_force: stats.notInForce, expiring_within_14_days: stats.endingSoon, not_checked_for_3_days: stats.silent, by_status: stats.byStatus })
+    return reply({ total: stats.total, valid: stats.valid, invalid: stats.invalid, in_force: stats.valid, not_in_force: stats.invalid, expiring_within_14_days: stats.endingSoon, not_checked_for_3_days: stats.silent, by_status: stats.byStatus })
+  }
+  if (resource === "analytics" && rest.length === 0 && request.method === "GET") return analyticsRoute(ctx)
+  if (resource === "ip-blocks") return ipBlockRoute(ctx, rest)
+  if (resource === "protection" && rest.length === 0) {
+    if (request.method === "GET") return reply(await getProtection(env))
+    if (request.method === "PATCH") {
+      const denied = need(ctx, "full")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const saved = await saveProtection(env, body)
+      return "error" in saved ? fail(422, "invalid_settings", saved.error) : reply(saved.settings)
+    }
+  }
+  if (resource === "integrations" && rest[0] === "github" && request.method === "GET") {
+    const app = await getGitHubApp(env)
+    if (rest.length === 1) {
+      if (!app) return reply({ connected: false, app: null, installations: [] })
+      const installations = await listInstallations(app)
+      if ("error" in installations) return fail(installations.status, "github_unavailable", installations.error)
+      return reply({ connected: true, app: { ...publicGitHubApp(app), created_at: iso(app.created_at), last_delivery_at: iso(app.last_delivery_at ?? null) }, installations })
+    }
+    if (rest.length === 2 && rest[1] === "repositories") {
+      if (!app) return fail(404, "github_not_connected", "No GitHub App is connected. Create one under Integrations in the dashboard.")
+      const repositories = await listAppRepositories(app)
+      return "error" in repositories ? fail(repositories.status, "github_unavailable", repositories.error) : reply({ data: repositories })
+    }
   }
   if (resource === "licenses") return licenseRoute(ctx, rest)
   if (resource === "apps") return appRoute(ctx, rest)

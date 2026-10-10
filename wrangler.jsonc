@@ -17,6 +17,18 @@
 	// Files attached to licences (updates, final releases). No bucket_name on purpose: like the database,
 	// Wrangler creates "<worker-name>-files" on deploy. R2 must be activated once in the Cloudflare dashboard.
 	"r2_buckets": [{ "binding": "FILES" }],
+	// Rate limits (Workers rate limiting). One binding per requests-per-minute value; the dashboard (Protection,
+	// Rate limits) picks which value applies to checks per address, checks per key, downloads and API requests.
+	// Counters are approximate and kept per Cloudflare location. Keys include the install's host name, so two installs
+	// on one account never share counts even with the same namespace_id.
+	"ratelimits": [
+		{ "name": "RATE_LIMIT_30", "namespace_id": "4101", "simple": { "limit": 30, "period": 60 } },
+		{ "name": "RATE_LIMIT_60", "namespace_id": "4102", "simple": { "limit": 60, "period": 60 } },
+		{ "name": "RATE_LIMIT_120", "namespace_id": "4103", "simple": { "limit": 120, "period": 60 } },
+		{ "name": "RATE_LIMIT_300", "namespace_id": "4104", "simple": { "limit": 300, "period": 60 } },
+		{ "name": "RATE_LIMIT_600", "namespace_id": "4105", "simple": { "limit": 600, "period": 60 } },
+		{ "name": "RATE_LIMIT_1200", "namespace_id": "4106", "simple": { "limit": 1200, "period": 60 } }
+	],
 	// Daily housekeeping: deletes old check history.
 	"triggers": { "crons": ["17 3 * * *"] }
 }

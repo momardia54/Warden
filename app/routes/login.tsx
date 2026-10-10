@@ -163,8 +163,8 @@ export default function Login() {
       <div className="w-full max-w-md space-y-8">
         <div className="text-center">
           <img src="/favicon.svg" alt="" className="mx-auto mb-4 size-12 rounded-xl" />
-          <h1 className="text-3xl font-bold">Welcome Back</h1>
-          <p className="mt-2 text-muted-foreground">Sign in to manage your licences</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Sign in to Warden</h1>
+          <p className="mt-2 text-muted-foreground">Your licences, sites and releases in one place.</p>
         </div>
 
         <Form method="post" className="space-y-6">

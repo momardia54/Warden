@@ -10,7 +10,7 @@ import { findStatus, type StatusSet } from "#/lib/statuses"
 type Props = {
   /** What the statuses belong to, used in the text: "app" or "licence". */
   owner: "app" | "licence"
-  /** The statuses in effect for the owner. */
+  /** The statuses that apply to the owner. */
   statuses: StatusSet
   /** The statuses the owner falls back to when it has none of its own: the built-in defaults. */
   fallback: StatusSet

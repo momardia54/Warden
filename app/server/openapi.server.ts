@@ -1,3 +1,5 @@
+import { VERSION } from "../lib/version"
+
 /** OpenAPI 3.1 description of the API, served at /api/v1/openapi.json. */
 export function openApiSpec(origin: string) {
   const idParam = { name: "id", in: "path", required: true, description: "Licence id (lic_...) or the licence key (WRD-...).", schema: { type: "string" } }
@@ -6,6 +8,63 @@ export function openApiSpec(origin: string) {
   const body = (schema: object) => ({ required: true, content: { "application/json": { schema } } })
   const secured = [{ bearer: [] }]
   const appParam = { name: "app", in: "path", required: true, description: "App id (app_...) or slug.", schema: { type: "string" } }
+
+  // A repository connected to an app or a licence (docs/repositories.md). Both owners have the same endpoints.
+  const sourceDoc = "{ id, connection (app | token), provider, repository, trigger, package_folder, statuses, check_domain, has_token, enabled, webhook_url, webhook_secret, app, license, created_at, updated_at, last_delivery_at }. webhook_secret is omitted for read keys; the access token is never returned."
+  const importDoc = "{ id, tag, version, commit, state (pending | imported | skipped | failed), detail, file_id, started_at, finished_at }"
+  const sourcePaths = (prefix: string, param: Record<string, unknown>) => ({
+    [`${prefix}/source`]: {
+      parameters: [param],
+      get: { summary: "The connected repository", responses: { 200: { description: sourceDoc }, 404: { description: "No repository is connected" } } },
+      put: {
+        summary: "Connect or edit the repository (permission: manage). Fields left out keep their value; the repository is checked with the provider first.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  connection: { type: "string", enum: ["app", "token"], description: "app: through the install's GitHub App; token: an optional access token and a webhook of its own. Default for a new source: app when the GitHub App is connected and no token is sent." },
+                  provider: { type: "string", enum: ["github"], default: "github" },
+                  repository: { type: "string", description: "owner/name or its github.com address" },
+                  trigger: { type: "string", enum: ["tag"], default: "tag" },
+                  package_folder: { type: "string", description: "Top-level folder inside the published zip. Defaults to the repository name." },
+                  statuses: { description: "Release rule of published releases: comma separated status keys or an array" },
+                  check_domain: { type: "boolean", default: true },
+                  token: { type: "string", description: "Access token for a private repository; empty string removes it" },
+                  enabled: { type: "boolean", default: true },
+                },
+              },
+            },
+          },
+        },
+        responses: { 200: { description: sourceDoc }, 201: { description: sourceDoc }, 403: { description: "Permission denied" }, 422: { description: "Invalid settings, or the repository cannot be read" } },
+      },
+      delete: { summary: "Disconnect the repository (permission: manage). Published releases stay.", responses: { 200: { description: "{ deleted: true, id }" }, 404: { description: "No repository is connected" } } },
+    },
+    [`${prefix}/source/regenerate-secret`]: { parameters: [param], post: { summary: "Replace the webhook secret (permission: manage)", responses: { 200: { description: sourceDoc } } } },
+    [`${prefix}/source/imports`]: {
+      parameters: [param],
+      get: { summary: "Latest tags and their state, newest first", responses: { 200: { description: `{ data: [${importDoc}] }` } } },
+      post: {
+        summary: "Publish an existing tag (permission: manage). Runs in the background; poll the list for the result.",
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["tag"], properties: { tag: { type: "string", example: "v1.4.0" } } } } } },
+        responses: { 202: { description: importDoc } },
+      },
+    },
+    [`${prefix}/source/imports/{importId}/retry`]: {
+      parameters: [param, { name: "importId", in: "path", required: true, schema: { type: "string" } }],
+      post: { summary: "Retry a failed or skipped tag (permission: manage)", responses: { 202: { description: importDoc }, 404: { description: "Unknown import" }, 409: { description: "In progress or already published" } } },
+    },
+  })
+  /** Query parameters of an upload that describe the file as a release. */
+  const releaseParams = [
+    { name: "version", in: "query", description: "Makes the file a release, offered as an update. Numbers separated by dots with an optional suffix: 1.4.0, 2.0.0-beta.1", schema: { type: "string", maxLength: 40 } },
+    { name: "channel", in: "query", description: "Beta releases are offered only to sites that check with channel=beta", schema: { enum: ["stable", "beta"], default: "stable" } },
+    { name: "changelog", in: "query", description: "Public release notes, returned to sites with the release. Can also be set afterwards with PATCH", schema: { type: "string", maxLength: 10000 } },
+    { name: "notes", in: "query", description: "Internal notes, never sent to sites", schema: { type: "string" } },
+  ]
 
   /** The endpoints that manage the statuses of an app or of a licence. */
   const statusPaths = (base: string, params: object[], owner: string) => ({
@@ -44,21 +103,76 @@ export function openApiSpec(origin: string) {
     openapi: "3.1.0",
     info: {
       title: "Warden API",
-      version: "0.1.0",
+      version: VERSION,
       description:
-        "Create and manage licences from your own code. Authenticate with an API key created in the dashboard (API keys page): `Authorization: Bearer wk_...`. Scopes: `read` (GET), `manage` (also create, edit, status, renew), `full` (also delete and regenerate keys).",
+        "Create and manage licences from your own code. Authenticate with an API key created in the dashboard (API keys page): `Authorization: Bearer wk_...`. Scopes: `read` (GET), `manage` (also create, edit, status, renew), `full` (also delete and regenerate keys). Each key is rate limited (600 requests per minute by default); over the limit the API answers `429` with `Retry-After`.",
     },
     servers: [{ url: `${origin}/api/v1` }],
     security: secured,
     paths: {
       "/me": { get: { summary: "Who the key belongs to", responses: { 200: { description: "Key name and scope" }, 401: err } } },
-      "/stats": { get: { summary: "Licence statistics", responses: { 200: { description: "{ total, in_force, not_in_force, expiring_within_14_days, not_checked_for_3_days, by_status }" }, 401: err } } },
+      "/stats": { get: { summary: "Licence statistics", responses: { 200: { description: "{ total, valid, invalid, expiring_within_14_days, not_checked_for_3_days, by_status }; in_force and not_in_force are deprecated aliases of valid and invalid" }, 401: err } } },
+      "/ip-blocks": {
+        get: {
+          summary: "Blocked IP addresses and ranges",
+          responses: { 200: { description: "{ data: [{ id, ip, source, reason, created_at, expires_at, hits, last_hit_at }] }. `ip` is an address or a CIDR range; `source` is manual or auto (created by a protection rule); `hits` is approximate." }, 401: err },
+        },
+        post: {
+          summary: "Block an IP address or range (permission: manage)",
+          description: "Checks and downloads from the address receive 403 before any licence is read. The dashboard and the API are not affected. Takes effect within 30 seconds.",
+          requestBody: body({
+            type: "object",
+            required: ["ip"],
+            properties: {
+              ip: { type: "string", description: "IPv4 or IPv6 address, or a CIDR range (at most /8 for IPv4, /16 for IPv6)", example: "203.0.113.0/24" },
+              reason: { type: "string", maxLength: 200, description: "Internal note" },
+              expires_at: { type: ["string", "null"], format: "date-time", description: "End of the block; null or absent for a permanent block" },
+            },
+          }),
+          responses: { 201: { description: "The block" }, 403: err, 409: { description: "Already blocked (`already_blocked`)" }, 422: err },
+        },
+      },
+      "/protection": {
+        get: {
+          summary: "Protection settings: rate limits, automatic blocking rules, never-block list",
+          responses: { 200: { description: "{ limits: { check_ip, check_key, download_ip, api_key }, rules: { invalid_keys, invalid_checks, licenses_per_ip, rate_limit_violations: { enabled, count, minutes, block_hours } }, never_block: string[] }" }, 401: err },
+        },
+        patch: {
+          summary: "Change protection settings (permission: full)",
+          description:
+            "Send only what changes. Limits are requests per minute: 0 (off), 30, 60, 120, 300, 600 or 1200. Rules: `count` 2 to 10000, `minutes` 5, 10, 30, 60, 360 or 1440, `block_hours` 1, 6, 24, 168, 720 or 0 (permanent). `never_block` (the allowlist) replaces the whole list. Changes apply within 30 seconds.",
+          requestBody: body({ type: "object", example: { limits: { check_ip: 300 }, rules: { invalid_checks: { enabled: true, count: 100 } } } }),
+          responses: { 200: { description: "The complete settings" }, 403: err, 422: err },
+        },
+      },
+      "/ip-blocks/{id}": {
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        delete: { summary: "Remove a block (permission: manage)", responses: { 200: { description: "{ deleted: true, id }" }, 403: err, 404: err } },
+      },
+      "/analytics": {
+        get: {
+          summary: "Traffic analytics",
+          description:
+            "Checks and downloads per UTC day over a period, with totals, invalid checks by reason, and top licences, files and IP addresses. Validity is evaluated against the current status configuration. Check history is retained for 90 days.",
+          parameters: [
+            { name: "days", in: "query", description: "Length of the period, ending today", schema: { type: "integer", enum: [7, 30, 90], default: 30 } },
+            { name: "app", in: "query", description: "Only the licences of this app (id or slug), or `none` for standalone licences", schema: { type: "string" } },
+            { name: "license", in: "query", description: "Only this licence (id or key). Takes precedence over `app`.", schema: { type: "string" } },
+          ],
+          responses: {
+            200: { description: "{ days, from, to, series: [{ date, valid, invalid, sites, downloads }], totals: { checks, valid, invalid, sites, new_sites, downloads, denied_downloads, blocked, rate_limited }, reasons: [{ key, label, checks }], licenses: [{ id, name, app_name, checks, invalid, last_check_at }], files: [{ name, downloads }], ips: [{ ip, checks, invalid, downloads, licenses, blocked }] }. Lists hold at most 100 rows. `blocked` and `rate_limited` count requests rejected before licence validation (approximate); they are null when the report is filtered" },
+            401: err,
+            404: err,
+            422: err,
+          },
+        },
+      },
       "/licenses": {
         get: {
           summary: "List licences",
           description: "Newest first. Pass `before` = the `next` value of the previous page to continue.",
           parameters: [
-            { name: "status", in: "query", schema: { enum: ["pending", "active", "completed", "suspended", "disabled", "expired"] } },
+            { name: "status", in: "query", description: "A status key, matched on the status reported to sites (an expiry rule that has triggered counts)", schema: { type: "string", example: "active" } },
             { name: "q", in: "query", description: "Search name, customer, key, domains, external_ref and app name", schema: { type: "string" } },
             { name: "app", in: "query", description: "Only licences of this app (id or slug)", schema: { type: "string" } },
             { name: "external_ref", in: "query", schema: { type: "string" } },
@@ -82,7 +196,7 @@ export function openApiSpec(origin: string) {
       },
       "/licenses/{id}/status": {
         parameters: [idParam],
-        post: { summary: "Set the status", requestBody: body({ type: "object", required: ["status"], properties: { status: { enum: ["pending", "active", "completed", "suspended", "disabled"] } } }), responses: { 200: ok("Updated"), 403: err, 404: err, 422: err } },
+        post: { summary: "Set the status", requestBody: body({ type: "object", required: ["status"], properties: { status: { type: "string", description: "A status key of the statuses that apply to the licence" } } }), responses: { 200: ok("Updated"), 403: err, 404: err, 422: err } },
       },
       "/licenses/{id}/renew": {
         parameters: [idParam],
@@ -105,25 +219,24 @@ export function openApiSpec(origin: string) {
             { name: "name", in: "query", required: true, description: "Download file name", schema: { type: "string" } },
             { name: "statuses", in: "query", description: "Comma separated licence statuses in which the file is available", schema: { type: "string", default: "active,completed", example: "active,completed" } },
             { name: "check_domain", in: "query", description: "Require the requesting domain to match the licence's allowed domains", schema: { type: "boolean", default: true } },
-            { name: "version", in: "query", schema: { type: "string" } },
-            { name: "notes", in: "query", schema: { type: "string" } },
+            ...releaseParams,
           ],
           requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
-          responses: { 201: { description: "The file" }, 403: err, 413: err, 422: err, 501: err },
+          responses: { 201: ok("The file", "File"), 403: err, 413: err, 422: err, 501: err },
         },
       },
       "/licenses/{id}/files/{fileId}": {
         parameters: [idParam, { name: "fileId", in: "path", required: true, schema: { type: "string" } }],
         patch: {
           summary: "Update a file's release rule or metadata (permission: manage)",
-          requestBody: body({ type: "object", properties: { statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" }, version: { type: "string" }, notes: { type: "string" } } }),
-          responses: { 200: { description: "The file" }, 403: err, 404: err, 422: err },
+          requestBody: body({ $ref: "#/components/schemas/FileChanges" }),
+          responses: { 200: ok("The file", "File"), 403: err, 404: err, 422: err },
         },
         delete: { summary: "Delete a file (permission: manage)", responses: { 200: { description: "{ deleted: true, id }" }, 404: err } },
       },
       "/licenses/{id}/activations": {
         parameters: [idParam],
-        get: { summary: "Sites (domains) registered for the licence", responses: { 200: { description: "{ max_sites, data: Activation[] }" }, 404: err } },
+        get: { summary: "Sites (domains) registered for the licence", responses: { 200: { description: "{ max_sites, data: [{ domain, version, first_seen_at, last_seen_at, check_count, last_ip }] }" }, 404: err } },
       },
       "/licenses/{id}/activations/{domain}": {
         parameters: [idParam, { name: "domain", in: "path", required: true, schema: { type: "string" } }],
@@ -163,19 +276,37 @@ export function openApiSpec(origin: string) {
             { name: "name", in: "query", required: true, schema: { type: "string" } },
             { name: "statuses", in: "query", schema: { type: "string", default: "active,completed" } },
             { name: "check_domain", in: "query", schema: { type: "boolean", default: true } },
-            { name: "version", in: "query", schema: { type: "string" } },
-            { name: "notes", in: "query", schema: { type: "string" } },
+            ...releaseParams,
           ],
           requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
-          responses: { 201: { description: "The file" }, 403: err, 413: err, 422: err, 501: err },
+          responses: { 201: ok("The file", "File"), 403: err, 413: err, 422: err, 501: err },
+        },
+      },
+      "/integrations/github": {
+        get: {
+          summary: "The install's GitHub App (created in the dashboard under Integrations)",
+          responses: { 200: { description: "{ connected, app: { app_id, slug, name, owner, html_url, created_at, last_delivery_at } | null, installations: [{ id, account, account_type, repository_selection, html_url }] }" }, 502: err },
+        },
+      },
+      "/integrations/github/repositories": {
+        get: { summary: "Repositories the GitHub App can access", responses: { 200: { description: "{ data: [{ id, full_name, private, account }] }" }, 404: err, 502: err } },
+      },
+      ...sourcePaths("/apps/{app}", appParam),
+      ...sourcePaths("/licenses/{id}", idParam),
+      "/apps/{app}/versions": {
+        parameters: [appParam],
+        get: {
+          summary: "Versions the sites of the app run",
+          description: "Built from the version each site reports with its check (`?version=`). `outdated` counts sites on a version older than `latest_version`, the highest stable release.",
+          responses: { 200: { description: "{ latest_version, sites, outdated, data: [{ version, sites, outdated }] }" }, 404: err },
         },
       },
       "/apps/{app}/files/{fileId}": {
         parameters: [appParam, { name: "fileId", in: "path", required: true, schema: { type: "string" } }],
-        patch: { summary: "Update a shared file's release rule or metadata (permission: manage)", requestBody: body({ type: "object", properties: { statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" }, version: { type: "string" }, notes: { type: "string" } } }), responses: { 200: { description: "The file" }, 403: err, 404: err, 422: err } },
+        patch: { summary: "Update a shared file's release rule or metadata (permission: manage)", requestBody: body({ $ref: "#/components/schemas/FileChanges" }), responses: { 200: ok("The file", "File"), 403: err, 404: err, 422: err } },
         delete: { summary: "Delete a shared file (permission: manage)", responses: { 200: { description: "{ deleted: true, id }" }, 404: err } },
       },
-      "/licenses/{id}/activity": { parameters: [idParam], get: { summary: "Recent checks and changes", parameters: [{ name: "limit", in: "query", schema: { type: "integer", maximum: 200, default: 50 } }], responses: { 200: { description: "{ data: Activity[] }" }, 404: err } } },
+      "/licenses/{id}/activity": { parameters: [idParam], get: { summary: "Recent checks, downloads and changes", parameters: [{ name: "limit", in: "query", schema: { type: "integer", maximum: 200, default: 50 } }], responses: { 200: { description: "{ data: [{ at, event, status, domain, ip, detail }] }. `ip` is the caller of a check or a download (null for changes, and after 90 days)." }, 404: err } } },
     },
     components: {
       securitySchemes: { bearer: { type: "http", scheme: "bearer", description: "API key, wk_..." } },
@@ -211,6 +342,28 @@ export function openApiSpec(origin: string) {
             is_default: { type: "boolean", description: "New licences start with this status. Exactly one status of a set is the default" },
           },
         },
+        File: {
+          type: "object",
+          properties: {
+            id: { type: "string" }, name: { type: "string" },
+            version: { type: "string", description: "Empty for an attachment. A file with a version is a release" },
+            channel: { enum: ["stable", "beta"] }, changelog: { type: "string", description: "Public release notes" }, notes: { type: "string", description: "Internal" },
+            size: { type: "integer" }, content_type: { type: "string" }, sha256: { type: ["string", "null"], description: "Hex SHA-256 of the file. null for files uploaded before checksums were recorded" },
+            withdrawn: { type: "boolean", description: "A withdrawn release is not offered and cannot be downloaded (HTTP 410)" }, withdrawn_at: { type: ["string", "null"] },
+            statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" },
+            available: { type: "boolean", description: "Licence files only: downloadable now, ignoring the domain check" }, download_url: { type: "string", description: "Licence files only" },
+            uploaded_at: { type: "string" }, download_count: { type: "integer" }, last_download_at: { type: ["string", "null"] },
+          },
+        },
+        FileChanges: {
+          type: "object",
+          properties: {
+            statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" },
+            version: { type: "string", description: "Empty string turns a release into an attachment" }, channel: { enum: ["stable", "beta"] },
+            changelog: { type: "string", maxLength: 10000 }, notes: { type: "string", maxLength: 500 },
+            withdrawn: { type: "boolean", description: "true withdraws the release, false restores it" },
+          },
+        },
         AppInput: {
           type: "object",
           properties: {
@@ -229,7 +382,7 @@ export function openApiSpec(origin: string) {
           properties: {
             id: { type: "string" }, name: { type: "string" }, customer_name: { type: "string" }, customer_email: { type: "string" }, app: { type: ["object", "null"], properties: { id: { type: "string" }, slug: { type: "string" }, name: { type: "string" } } }, max_sites: { type: ["integer", "null"] }, sites_used: { type: "integer" }, key: { type: "string" }, check_url: { type: "string" },
             status: { type: "string", description: "The status reported to sites: the stored status, or the status its expiry rule points to once the expiry date has passed" },
-            stored_status: { type: "string" }, valid: { type: "boolean", description: "true for active and completed" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
+            stored_status: { type: "string" }, valid: { type: "boolean", description: "true when the reported status is valid (grants_access; by default Active and Completed)" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
             message: { type: "string" }, notes: { type: "string" }, external_ref: { type: ["string", "null"] },
             created_at: { type: "string" }, updated_at: { type: "string" }, last_check_at: { type: ["string", "null"] }, last_check_domain: { type: ["string", "null"] }, check_count: { type: "integer" },
           },
