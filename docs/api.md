@@ -235,17 +235,24 @@ An app is a product you license to many customers. See [apps.md](apps.md) for th
 
 ### Release source
 
-A GitHub repository connected to an app or a licence publishes each version tag as a release. Endpoints under `/apps/{app}/source` and `/licenses/{id}/source`:
+A GitHub repository connected to an app or a licence publishes each version tag as a release, through the install's GitHub App or with an access token and a webhook of its own. Endpoints under `/apps/{app}/source` and `/licenses/{id}/source`:
 
 | Method and path | Scope | Description |
 |---|---|---|
 | `GET .../source` | read | The connected repository; `webhook_secret` only for `manage` and `full` keys, the access token never (`has_token`) |
-| `PUT .../source` | manage | Connect or edit: `provider`, `repository`, `trigger`, `package_folder`, `statuses`, `check_domain`, `token`, `enabled` (201 when connected, 200 when edited) |
+| `PUT .../source` | manage | Connect or edit: `connection` (`app` or `token`), `provider`, `repository`, `trigger`, `package_folder`, `statuses`, `check_domain`, `token`, `enabled` (201 when connected, 200 when edited). A new source uses `app` when the GitHub App is connected and no token is sent |
 | `DELETE .../source` | manage | Disconnect; published releases stay |
 | `POST .../source/regenerate-secret` | manage | Replace the webhook secret |
 | `GET .../source/imports` | read | Latest tags: `{ id, tag, version, commit, state, detail, file_id, started_at, finished_at }`, `state` is `pending`, `imported`, `skipped` or `failed` |
 | `POST .../source/imports` | manage | Publish an existing tag: `{ "tag": "v1.4.0" }` (202; runs in the background) |
 | `POST .../source/imports/{id}/retry` | manage | Retry a failed or skipped tag |
+
+The GitHub App (created in the dashboard under Integrations):
+
+| Method and path | Scope | Description |
+|---|---|---|
+| `GET /integrations/github` | read | `{ connected, app, installations }`, without the app's key or secrets |
+| `GET /integrations/github/repositories` | read | `{ data: [{ id, full_name, private, account }] }`: the repositories the app can access |
 
 Details, including the webhook setup: [repositories.md](repositories.md).
 

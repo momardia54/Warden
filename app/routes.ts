@@ -10,6 +10,7 @@ export default [
   // Resource routes of the dashboard (JSON and CSV).
   route("search", "routes/search.tsx"),
   route("licenses/export.csv", "routes/licenses.export.tsx"),
+  route("integrations/github/:step", "routes/integrations.github.tsx"),
   layout("routes/app.tsx", [
     route("overview", "routes/overview.tsx"),
     route("licenses", "routes/licenses.tsx"),
@@ -22,6 +23,7 @@ export default [
     route("apps/:appId", "routes/apps.$appId.tsx"),
     route("apps/:appId/edit", "routes/apps.$appId.edit.tsx"),
     route("protection", "routes/protection.tsx"),
+    route("integrations", "routes/integrations.tsx"),
     route("api-keys", "routes/api-keys.tsx"),
   ]),
 ] satisfies RouteConfig

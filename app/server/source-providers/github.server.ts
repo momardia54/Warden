@@ -41,7 +41,7 @@ export const github: SourceProvider = {
 
     // GitHub sends JSON, or a form field named payload when the webhook's content type is form-encoded.
     const text = (request.headers.get("content-type") ?? "").includes("application/x-www-form-urlencoded") ? (new URLSearchParams(body).get("payload") ?? "") : body
-    let payload: { ref?: unknown; deleted?: unknown; after?: unknown }
+    let payload: { ref?: unknown; deleted?: unknown; after?: unknown; repository?: { id?: unknown; full_name?: unknown } }
     try {
       payload = JSON.parse(text)
     } catch {
@@ -51,14 +51,16 @@ export const github: SourceProvider = {
     if (!ref.startsWith("refs/tags/")) return { kind: "ignored", reason: "Branch pushes publish nothing; push a tag to publish a release." }
     if (payload.deleted === true) return { kind: "ignored", reason: "A deleted tag publishes nothing." }
     const commit = typeof payload.after === "string" && /^[0-9a-f]{40}$/.test(payload.after) ? payload.after : ""
-    return { kind: "tag", tag: ref.slice("refs/tags/".length), commit }
+    const repositoryId = typeof payload.repository?.id === "number" ? payload.repository.id : null
+    const repository = typeof payload.repository?.full_name === "string" ? payload.repository.full_name : ""
+    return { kind: "tag", tag: ref.slice("refs/tags/".length), commit, repository_id: repositoryId, repository }
   },
 
   async checkAccess(source) {
     const response = await fetch(`${API}/repos/${repoPath(source)}`, { headers: headers(source) })
     if (!response.ok) return failure(response, `the repository ${source.repository}`)
-    const repo = (await response.json()) as { private?: boolean }
-    return { ok: true, private: repo.private === true }
+    const repo = (await response.json()) as { private?: boolean; id?: number }
+    return { ok: true, private: repo.private === true, id: typeof repo.id === "number" ? repo.id : null }
   },
 
   async resolveCommit(source, ref) {

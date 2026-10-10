@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useFetcher, useRevalidator } from "react-router"
+import { Link, useFetcher, useRevalidator } from "react-router"
 import { Check, Copy, ExternalLink, GitBranch, MoreHorizontal, Pause, Play, RefreshCw, Settings2, Tag, Unplug, Webhook } from "lucide-react"
 import { ConfirmAction } from "#/components/confirm-action"
 import { FieldLabel, HelpTip } from "#/components/help-tip"
@@ -12,6 +12,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
 import { defaultReleaseStatuses } from "#/lib/files"
+import type { AppRepository } from "#/lib/github-app"
 import { IMPORT_STATE_LABELS, packageFileName, packageFolderError, PROVIDER_INFO, PROVIDERS, TRIGGER_INFO, TRIGGERS, type ImportState, type ProviderKey, type TriggerKey } from "#/lib/sources"
 import { describeStatusKeys, type StatusSet } from "#/lib/statuses"
 
@@ -20,6 +21,8 @@ export type SourceView = {
   id: string
   provider: ProviderKey
   repository: string
+  /** app: through the install's GitHub App; token: an optional access token and a webhook of its own. */
+  connection: "app" | "token"
   trigger: TriggerKey
   package_folder: string
   status_keys: string[]
@@ -58,7 +61,20 @@ const FOLDER_HELP =
  * The repository connected to an app or a licence. New tags are downloaded, repacked and published as releases.
  * Posts its intents to the current route (save-source, delete-source, regenerate-source-secret, import-tag, retry-import).
  */
-export function ReleaseSource({ source, imports, statuses, ownerLabel }: { source: SourceView | null; imports: ImportView[]; statuses: StatusSet; ownerLabel: "app" | "licence" }) {
+export function ReleaseSource({
+  source,
+  imports,
+  statuses,
+  ownerLabel,
+  githubApp,
+}: {
+  source: SourceView | null
+  imports: ImportView[]
+  statuses: StatusSet
+  ownerLabel: "app" | "licence"
+  /** Whether the install has a GitHub App (Integrations), which makes repositories selectable without a token. */
+  githubApp: boolean
+}) {
   const [editing, setEditing] = useState(false)
   const [setup, setSetup] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -66,12 +82,12 @@ export function ReleaseSource({ source, imports, statuses, ownerLabel }: { sourc
   const action = useFetcher<ActionResult>()
   const revalidator = useRevalidator()
 
-  // Open the webhook instructions right after a repository is connected.
+  // Open the webhook instructions right after a repository is connected with a token (the GitHub App needs none).
   const previous = useRef(source?.id ?? null)
   useEffect(() => {
     if (source && previous.current === null) {
       setEditing(false)
-      setSetup(true)
+      if (source.connection === "token") setSetup(true)
     }
     previous.current = source?.id ?? null
   }, [source?.id])
@@ -94,12 +110,20 @@ export function ReleaseSource({ source, imports, statuses, ownerLabel }: { sourc
             <p className="max-w-prose text-sm text-muted-foreground">
               Connect a GitHub repository to this {ownerLabel}. Each new version tag is downloaded as a zip, packaged with a fixed folder name and published as a release.
             </p>
+            {!githubApp && (
+              <p className="text-xs text-muted-foreground">
+                <Link to="/integrations" className="text-foreground underline underline-offset-2">
+                  Connect GitHub
+                </Link>{" "}
+                once to pick repositories from a list, private ones included, without tokens or webhooks.
+              </p>
+            )}
           </div>
         </div>
         <Button variant="outline" onClick={() => setEditing(true)}>
           <GitBranch /> Connect repository
         </Button>
-        <SourceDialog open={editing} onOpenChange={setEditing} source={null} statuses={statuses} />
+        <SourceDialog open={editing} onOpenChange={setEditing} source={null} statuses={statuses} githubApp={githubApp} />
       </section>
     )
   }
@@ -117,7 +141,7 @@ export function ReleaseSource({ source, imports, statuses, ownerLabel }: { sourc
             <a href={repoUrl} target="_blank" rel="noreferrer" className="font-mono text-sm font-medium break-all underline-offset-2 hover:underline">
               {source.repository}
             </a>
-            <Badge variant="outline">{provider.label}</Badge>
+            <Badge variant="outline">{source.connection === "app" ? `${provider.label} App` : provider.label}</Badge>
             {!source.enabled && <Badge variant="warning">Paused</Badge>}
             {source.has_token && <Badge variant="secondary">Access token saved</Badge>}
           </div>
@@ -131,6 +155,8 @@ export function ReleaseSource({ source, imports, statuses, ownerLabel }: { sourc
               <>
                 Last webhook delivery <Ago ts={source.last_delivery_at} />.
               </>
+            ) : source.connection === "app" ? (
+              "Push a tag to publish a release."
             ) : (
               <span className="text-amber-700 dark:text-amber-400">No webhook delivery received yet. Add the webhook in GitHub to publish new tags automatically.</span>
             )}
@@ -147,9 +173,11 @@ export function ReleaseSource({ source, imports, statuses, ownerLabel }: { sourc
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-60">
-              <DropdownMenuItem onClick={() => setSetup(true)}>
-                <Webhook /> Webhook setup
-              </DropdownMenuItem>
+              {source.connection === "token" && (
+                <DropdownMenuItem onClick={() => setSetup(true)}>
+                  <Webhook /> Webhook setup
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setEditing(true)}>
                 <Settings2 /> Edit settings
               </DropdownMenuItem>
@@ -207,7 +235,7 @@ export function ReleaseSource({ source, imports, statuses, ownerLabel }: { sourc
         </div>
       )}
 
-      <SourceDialog open={editing} onOpenChange={setEditing} source={source} statuses={statuses} />
+      <SourceDialog open={editing} onOpenChange={setEditing} source={source} statuses={statuses} githubApp={githubApp} />
       <WebhookDialog open={setup} onOpenChange={setSetup} source={source} />
       <PublishTagDialog open={publishing} onOpenChange={setPublishing} />
       <ConfirmAction
@@ -215,15 +243,34 @@ export function ReleaseSource({ source, imports, statuses, ownerLabel }: { sourc
         open={disconnecting}
         onOpenChange={setDisconnecting}
         title="Disconnect this repository?"
-        description="New tags are no longer published. Releases already published stay available. Remove the webhook in GitHub as well."
+        description={
+          source.connection === "app"
+            ? "New tags are no longer published. Releases already published stay available."
+            : "New tags are no longer published. Releases already published stay available. Remove the webhook in GitHub as well."
+        }
         confirm="Disconnect"
       />
     </section>
   )
 }
 
-function SourceDialog({ open, onOpenChange, source, statuses: statusSet }: { open: boolean; onOpenChange: (open: boolean) => void; source: SourceView | null; statuses: StatusSet }) {
+function SourceDialog({
+  open,
+  onOpenChange,
+  source,
+  statuses: statusSet,
+  githubApp,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  source: SourceView | null
+  statuses: StatusSet
+  githubApp: boolean
+}) {
   const save = useFetcher<ActionResult>()
+  const repos = useFetcher<{ repositories?: AppRepository[]; error?: string }>()
+  const [connection, setConnection] = useState<"app" | "token">("token")
+  const [filter, setFilter] = useState("")
   const [provider, setProvider] = useState<ProviderKey>("github")
   const [repository, setRepository] = useState("")
   const [token, setToken] = useState("")
@@ -237,6 +284,8 @@ function SourceDialog({ open, onOpenChange, source, statuses: statusSet }: { ope
 
   useEffect(() => {
     if (!open) return
+    setConnection(source?.connection ?? (githubApp ? "app" : "token"))
+    setFilter("")
     setProvider(source?.provider ?? "github")
     setRepository(source?.repository ?? "")
     setToken("")
@@ -253,6 +302,17 @@ function SourceDialog({ open, onOpenChange, source, statuses: statusSet }: { ope
   useEffect(() => {
     if (submitted && save.state === "idle" && save.data?.ok) onOpenChange(false)
   }, [submitted, save.state, save.data, onOpenChange])
+
+  // The repositories the GitHub App can access, for app mode.
+  useEffect(() => {
+    // Loaded on every opening, so repositories added to the installation on GitHub appear without a page reload.
+    if (open && connection === "app") repos.load("/integrations/github/repositories")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, connection])
+  const available = repos.data?.repositories ?? []
+  const needle = filter.trim().toLowerCase()
+  const shown = available.filter((r) => !needle || r.full_name.toLowerCase().includes(needle) || r.full_name === repository)
+  const accounts = [...new Set(shown.map((r) => r.account))]
 
   // Suggest the repository name as the folder until the folder is edited.
   const suggested =
@@ -288,31 +348,86 @@ function SourceDialog({ open, onOpenChange, source, statuses: statusSet }: { ope
             </div>
             <div className="space-y-1.5">
               <FieldLabel htmlFor="source-repository">Repository</FieldLabel>
-              <Input id="source-repository" value={repository} onChange={(e) => setRepository(e.target.value)} placeholder="harbor-studio/harbor-theme" className="font-mono" disabled={busy} />
-              <p className="text-xs text-muted-foreground">As {info.repositoryHint}.</p>
+              {connection === "app" ? (
+                <>
+                  {available.length > 12 && (
+                    <Input aria-label="Filter repositories" placeholder="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} disabled={busy} className="mb-1.5" />
+                  )}
+                  <NativeSelect
+                    id="source-repository"
+                    value={repository}
+                    onChange={(e) => setRepository(e.target.value)}
+                    disabled={busy || repos.state !== "idle" || Boolean(repos.data?.error)}
+                    className="font-mono"
+                  >
+                    <option value="">{repos.state !== "idle" ? "Loading repositories…" : available.length === 0 ? "No repository available" : "Choose a repository"}</option>
+                    {repository && !available.some((r) => r.full_name === repository) && <option value={repository}>{repository}</option>}
+                    {accounts.map((account) => (
+                      <optgroup key={account} label={account}>
+                        {shown
+                          .filter((r) => r.account === account)
+                          .map((r) => (
+                            <option key={r.id} value={r.full_name}>
+                              {r.full_name}
+                              {r.private ? " (private)" : ""}
+                            </option>
+                          ))}
+                      </optgroup>
+                    ))}
+                  </NativeSelect>
+                  {repos.data?.error ? (
+                    <p className="text-xs text-destructive">{repos.data.error}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Repositories the GitHub App can access. Missing one? Add it to the installation from{" "}
+                      <Link to="/integrations" className="text-foreground underline underline-offset-2">
+                        Integrations
+                      </Link>
+                      .
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Input id="source-repository" value={repository} onChange={(e) => setRepository(e.target.value)} placeholder="harbor-studio/harbor-theme" className="font-mono" disabled={busy} />
+                  <p className="text-xs text-muted-foreground">As {info.repositoryHint}.</p>
+                </>
+              )}
             </div>
           </div>
-          <div className="space-y-1.5">
-            <FieldLabel htmlFor="source-token" help={info.tokenHelp}>
-              Access token
-            </FieldLabel>
-            <Input
-              id="source-token"
-              type="password"
-              autoComplete="off"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={source?.has_token ? "Saved. Enter a new token to replace it." : "Only for a private repository"}
-              disabled={busy || removeToken}
-              className="font-mono"
-            />
-            {source?.has_token && (
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" className="size-4 accent-primary" checked={removeToken} onChange={(e) => setRemoveToken(e.target.checked)} disabled={busy} />
-                Remove the saved token
-              </label>
-            )}
-          </div>
+          {githubApp && provider === "github" && (
+            <button
+              type="button"
+              className="-mt-2 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => setConnection(connection === "app" ? "token" : "app")}
+              disabled={busy}
+            >
+              {connection === "app" ? "Connect with an access token and a webhook instead" : "Pick a repository through the GitHub App instead"}
+            </button>
+          )}
+          {connection === "token" && (
+            <div className="space-y-1.5">
+              <FieldLabel htmlFor="source-token" help={info.tokenHelp}>
+                Access token
+              </FieldLabel>
+              <Input
+                id="source-token"
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder={source?.has_token ? "Saved. Enter a new token to replace it." : "Only for a private repository"}
+                disabled={busy || removeToken}
+                className="font-mono"
+              />
+              {source?.has_token && (
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" className="size-4 accent-primary" checked={removeToken} onChange={(e) => setRemoveToken(e.target.checked)} disabled={busy} />
+                  Remove the saved token
+                </label>
+              )}
+            </div>
+          )}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <FieldLabel htmlFor="source-trigger" help={TRIGGER_INFO[trigger].help}>
@@ -376,6 +491,7 @@ function SourceDialog({ open, onOpenChange, source, statuses: statusSet }: { ope
               save.submit(
                 {
                   intent: "save-source",
+                  connection,
                   provider,
                   repository: repository.trim(),
                   token: token.trim(),

@@ -9,7 +9,8 @@ export function dashboardCsp(nonce: string): string {
     "connect-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
-    "form-action 'self'",
+    // github.com receives the GitHub App manifest (Integrations), the only form posted elsewhere.
+    "form-action 'self' https://github.com",
     "object-src 'none'",
   ].join("; ")
 }

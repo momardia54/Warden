@@ -11,13 +11,15 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 
 ### Added: publishing from a repository
 
+- **Integrations** page: *Create GitHub App* creates a GitHub App for the install through GitHub's app manifest flow (read access to contents and metadata, push events). Install it on accounts or organisations, then pick repositories from a list in the *Connect repository* dialog, private ones included, with no token or webhook to copy. Access tokens are requested per hour with the app's key; one webhook (`/hooks/github-app`) serves every repository, matched by repository id so renames are followed
 - Connect a **GitHub repository** to an app or a licence (*Releases* tab). Pushing a version tag (`v1.4.0`) publishes the repository at that tag as a release; a tag with a pre-release suffix goes to the beta channel, other tags are skipped
 - The zip from GitHub is **repacked with a fixed top-level folder** (the package folder, by default the repository name), so every release installs into the same folder. Only the zip headers are rewritten
-- Webhook deliveries are verified with a per-source secret; private repositories use a read-only access token, stored in D1 and never returned
+- Without the GitHub App, a repository can still be connected with an optional read-only access token and a webhook of its own, verified with a per-source secret
 - Recent tags with their state (in progress, published, skipped, failed) and the reason, **Retry**, **Publish a tag** for existing tags, pause and disconnect. A redelivered webhook publishes a tag once
 - Providers and triggers are a registry: further providers (for example GitLab) and triggers (for example a version header in a pushed file) can be added without a schema change
 - API: `GET|PUT|DELETE /apps/{app}/source`, `POST .../source/regenerate-secret`, `GET|POST .../source/imports`, `POST .../source/imports/{id}/retry`, and the same under `/licenses/{id}/source`. Webhook endpoint `POST /hooks/github/{source id}`
-- Migration 0011 (release sources and their imports)
+- API: `GET /integrations/github`, `GET /integrations/github/repositories`; `PUT .../source` accepts `connection` (`app` or `token`)
+- Migrations 0011 (release sources and their imports) and 0012 (GitHub App installation and repository id of a source)
 - docs/repositories.md
 
 ### Fixed

@@ -6,7 +6,7 @@ import { guardPublic } from "../app/server/guard.server"
 import { pruneBlocks } from "../app/server/ip-blocks.server"
 import { pruneIpEvents } from "../app/server/protection.server"
 import { pruneActivity } from "../app/server/licenses.server"
-import { handleWebhook, pruneImports } from "../app/server/sources.server"
+import { handleAppWebhook, handleWebhook, pruneImports } from "../app/server/sources.server"
 import { withDashboardHeaders } from "../app/server/headers.server"
 import { initRequestCache } from "../app/server/request-cache.server"
 import { ensureMigrated, migrationFailureResponse, type Migration } from "../app/server/migrate.server"
@@ -51,7 +51,8 @@ export default {
     const download = url.pathname.match(/^\/download\/([A-Za-z0-9-]{10,40})(?:\/(fil_[a-z0-9]+))?\/?$/)
     if (download) return (await guardPublic(request, env, ctx, "download", download[1].toUpperCase())) ?? handleDownload(request, env, ctx, download[1].toUpperCase(), download[2] ?? null)
 
-    // Webhooks of connected repositories, authenticated by their signature.
+    // Webhooks of connected repositories, authenticated by their signature: the GitHub App's, and per-source ones.
+    if (url.pathname === "/hooks/github-app") return handleAppWebhook(request, env, ctx)
     const hook = url.pathname.match(/^\/hooks\/([a-z]+)\/(src_[a-z0-9]+)\/?$/)
     if (hook) return handleWebhook(request, env, ctx, hook[1], hook[2])
 

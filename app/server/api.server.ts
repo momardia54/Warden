@@ -15,6 +15,7 @@ import {
   createLicense, deleteLicense, extendLicense, getLicense, getLicenseByKey, getLicenseByRef, listActivations, overviewStats, queryLicenses, recentActivity,
   regenerateKey, releaseActivation, renewUntil, setStatus, updateLicense, type License, type LicenseInput,
 } from "./licenses.server"
+import { getGitHubApp, listAppRepositories, listInstallations, publicGitHubApp } from "./github-app.server"
 import { openApiSpec } from "./openapi.server"
 import { deleteSource, getImport, getSource, listImports, publicSource, regenerateWebhookSecret, retryImport, saveSource, startImport, type SourceImport } from "./sources.server"
 import {
@@ -587,6 +588,20 @@ export async function handleApi(request: Request, env: Env, execution: Execution
       if (body instanceof Response) return body
       const saved = await saveProtection(env, body)
       return "error" in saved ? fail(422, "invalid_settings", saved.error) : reply(saved.settings)
+    }
+  }
+  if (resource === "integrations" && rest[0] === "github" && request.method === "GET") {
+    const app = await getGitHubApp(env)
+    if (rest.length === 1) {
+      if (!app) return reply({ connected: false, app: null, installations: [] })
+      const installations = await listInstallations(app)
+      if ("error" in installations) return fail(installations.status, "github_unavailable", installations.error)
+      return reply({ connected: true, app: { ...publicGitHubApp(app), created_at: iso(app.created_at), last_delivery_at: iso(app.last_delivery_at ?? null) }, installations })
+    }
+    if (rest.length === 2 && rest[1] === "repositories") {
+      if (!app) return fail(404, "github_not_connected", "No GitHub App is connected. Create one under Integrations in the dashboard.")
+      const repositories = await listAppRepositories(app)
+      return "error" in repositories ? fail(repositories.status, "github_unavailable", repositories.error) : reply({ data: repositories })
     }
   }
   if (resource === "licenses") return licenseRoute(ctx, rest)

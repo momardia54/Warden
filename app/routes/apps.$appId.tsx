@@ -22,6 +22,7 @@ import { requireAuth } from "~/server/auth.server"
 import { deleteApp, getApp, getAppSummary, versionsInUse } from "~/server/apps.server"
 import { applyFileForm, listFiles, storageConfigured } from "~/server/files.server"
 import { applySourceForm, getSource, listImports, publicSource } from "~/server/sources.server"
+import { getGitHubApp } from "~/server/github-app.server"
 import { applyStatusForm, getStatusSetForApp, hasCustomSet, statusCounts } from "~/server/statuses.server"
 import { queryLicenses } from "~/server/licenses.server"
 
@@ -43,7 +44,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   ])
   const source = await getSource(env, { app })
   const [sourceView, imports] = source ? await Promise.all([publicSource(env, source, new URL(request.url).origin), listImports(env, source.id, 10)]) : [null, []]
-  return { app, licenses, files, statuses, custom, usage, versions, traffic: traffic.series, filesConfigured: storageConfigured(env), source: sourceView, imports }
+  return { app, licenses, files, statuses, custom, usage, versions, traffic: traffic.series, filesConfigured: storageConfigured(env), source: sourceView, imports, githubApp: (await getGitHubApp(env)) !== null }
 }
 
 export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {
@@ -75,7 +76,7 @@ const TABS = ["licences", "releases", "statuses"]
 
 export default function AppPage({ loaderData, actionData }: Route.ComponentProps) {
   const actionError = actionData && "error" in actionData ? actionData.error : null
-  const { app, licenses, files, statuses, custom, usage, versions, traffic, filesConfigured, source, imports } = loaderData
+  const { app, licenses, files, statuses, custom, usage, versions, traffic, filesConfigured, source, imports, githubApp } = loaderData
   const checks = traffic.reduce((n, d) => n + d.valid + d.invalid, 0)
   const [tab, setTab] = useRouteTab(TABS)
   const [deleting, setDeleting] = useState(false)
@@ -200,7 +201,7 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
           {tab === "releases" && (
             <div className="space-y-8">
               {versions.sites > 0 && <VersionAdoption versions={versions} />}
-              {filesConfigured && <ReleaseSource source={source} imports={imports} statuses={statuses} ownerLabel="app" />}
+              {filesConfigured && <ReleaseSource source={source} imports={imports} statuses={statuses} ownerLabel="app" githubApp={githubApp} />}
               <FilesSection
                 ownerLabel="app"
                 description="Builds and files shared by every licence of this app. Each file is downloadable while a licence has one of its release statuses. A file with a version is a release, offered to sites as an update."

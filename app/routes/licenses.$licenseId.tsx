@@ -33,6 +33,7 @@ import { blockedAmong } from "~/server/ip-blocks.server"
 import { requireAuth } from "~/server/auth.server"
 import { applyFileForm, listFiles, storageConfigured } from "~/server/files.server"
 import { applySourceForm, getSource, listImports, publicSource } from "~/server/sources.server"
+import { getGitHubApp } from "~/server/github-app.server"
 import { formatSites } from "#/components/licenses-table"
 import { applyStatusForm, getStatusSetForLicense, hasCustomSet, statusCounts } from "~/server/statuses.server"
 import { deleteLicense, listActivations, releaseActivation, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
@@ -77,6 +78,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     filesConfigured: storageConfigured(env),
     source: sourceView,
     imports,
+    githubApp: (await getGitHubApp(env)) !== null,
     origin,
     checkUrl: `${origin}/check/${license.license_key}`,
   }
@@ -123,7 +125,7 @@ type LoaderData = Route.ComponentProps["loaderData"]
 const TABS = ["overview", "sites", "releases", "activity", "statuses"] as const
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, blockedIps, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, source, imports, origin, checkUrl } = loaderData
+  const { license, activity, blockedIps, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, source, imports, githubApp, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
   const statuses = useStatusSetForLicense(license)
   const [tab, setTab] = useRouteTab([...TABS])
@@ -352,7 +354,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
 
           {tab === "releases" && (
             <div className="space-y-8">
-              {filesConfigured && <ReleaseSource source={source} imports={imports} statuses={statuses} ownerLabel="licence" />}
+              {filesConfigured && <ReleaseSource source={source} imports={imports} statuses={statuses} ownerLabel="licence" githubApp={githubApp} />}
               <FilesSection
                 ownerLabel="licence"
                 description={

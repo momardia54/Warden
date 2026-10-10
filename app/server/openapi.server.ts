@@ -8,7 +8,7 @@ export function openApiSpec(origin: string) {
   const appParam = { name: "app", in: "path", required: true, description: "App id (app_...) or slug.", schema: { type: "string" } }
 
   // A repository connected to an app or a licence (docs/repositories.md). Both owners have the same endpoints.
-  const sourceDoc = "{ id, provider, repository, trigger, package_folder, statuses, check_domain, has_token, enabled, webhook_url, webhook_secret, app, license, created_at, updated_at, last_delivery_at }. webhook_secret is omitted for read keys; the access token is never returned."
+  const sourceDoc = "{ id, connection (app | token), provider, repository, trigger, package_folder, statuses, check_domain, has_token, enabled, webhook_url, webhook_secret, app, license, created_at, updated_at, last_delivery_at }. webhook_secret is omitted for read keys; the access token is never returned."
   const importDoc = "{ id, tag, version, commit, state (pending | imported | skipped | failed), detail, file_id, started_at, finished_at }"
   const sourcePaths = (prefix: string, param: Record<string, unknown>) => ({
     [`${prefix}/source`]: {
@@ -23,6 +23,7 @@ export function openApiSpec(origin: string) {
               schema: {
                 type: "object",
                 properties: {
+                  connection: { type: "string", enum: ["app", "token"], description: "app: through the install's GitHub App; token: an optional access token and a webhook of its own. Default for a new source: app when the GitHub App is connected and no token is sent." },
                   provider: { type: "string", enum: ["github"], default: "github" },
                   repository: { type: "string", description: "owner/name or its github.com address" },
                   trigger: { type: "string", enum: ["tag"], default: "tag" },
@@ -278,6 +279,15 @@ export function openApiSpec(origin: string) {
           requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
           responses: { 201: ok("The file", "File"), 403: err, 413: err, 422: err, 501: err },
         },
+      },
+      "/integrations/github": {
+        get: {
+          summary: "The install's GitHub App (created in the dashboard under Integrations)",
+          responses: { 200: { description: "{ connected, app: { app_id, slug, name, owner, html_url, created_at, last_delivery_at } | null, installations: [{ id, account, account_type, repository_selection, html_url }] }" }, 502: err },
+        },
+      },
+      "/integrations/github/repositories": {
+        get: { summary: "Repositories the GitHub App can access", responses: { 200: { description: "{ data: [{ id, full_name, private, account }] }" }, 404: err, 502: err } },
       },
       ...sourcePaths("/apps/{app}", appParam),
       ...sourcePaths("/licenses/{id}", idParam),
