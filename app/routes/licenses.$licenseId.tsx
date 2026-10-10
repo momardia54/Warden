@@ -3,6 +3,7 @@ import { Form, Link, redirect, useFetcher, useSearchParams, type ShouldRevalidat
 import { ArrowDownToLine, CalendarPlus, Check, ChevronDown, MoreHorizontal, Pencil, RefreshCw, Trash2 } from "lucide-react"
 import type { App } from "~/server/apps.server"
 import type { Route } from "./+types/licenses.$licenseId"
+import { ColumnChart } from "#/components/column-chart"
 import { ConfirmAction } from "#/components/confirm-action"
 import { Fact, FactStrip } from "#/components/fact-strip"
 import { FilesSection } from "#/components/files-section"
@@ -25,6 +26,7 @@ import { isOutdated, latestRelease } from "#/lib/releases"
 import { DEFAULT_COLOR, DEFAULT_STATUSES, effectiveStatusKey, findStatus, splitStatusKeys, statusLabel } from "#/lib/statuses"
 import { daysUntil, describeExpiry, EXPIRING_WINDOW_DAYS } from "#/lib/views"
 import { cn } from "#/lib/utils"
+import { dailyTraffic } from "~/server/analytics.server"
 import { requireAuth } from "~/server/auth.server"
 import { applyFileForm, listFiles, storageConfigured } from "~/server/files.server"
 import { formatSites } from "#/components/licenses-table"
@@ -39,7 +41,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   const license = await getLicense(env, params.licenseId)
   if (!license) throw new Response("Licence not found", { status: 404 })
   const origin = new URL(request.url).origin
-  const [activity, files, sharedFiles, sites, set, customStatuses, statusUsage] = await Promise.all([
+  const [activity, files, sharedFiles, sites, set, customStatuses, statusUsage, traffic] = await Promise.all([
     recentActivity(env, license.id, 100),
     listFiles(env, { license }),
     license.app_id ? listFiles(env, { app: { id: license.app_id } as App }) : Promise.resolve([]),
@@ -47,6 +49,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     getStatusSetForLicense(env, license),
     hasCustomSet(env, { license: license.id }),
     statusCounts(env, { license: license.id }),
+    dailyTraffic(env, { license: license.id }, 30, Date.now(), "checks"),
   ])
   // The release a site of this licence is offered now (the domain check aside): newest stable release it can download.
   const now = Date.now()
@@ -55,6 +58,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   return {
     license,
     activity,
+    traffic: traffic.series,
     files,
     sharedFiles,
     sites,
@@ -102,10 +106,12 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   return { ok: true as const }
 }
 
+type LoaderData = Route.ComponentProps["loaderData"]
+
 const TABS = ["overview", "sites", "releases", "activity", "statuses"] as const
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, origin, checkUrl } = loaderData
+  const { license, activity, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
   const statuses = useStatusSetForLicense(license)
   const [tab, setTab] = useRouteTab([...TABS])
@@ -346,7 +352,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
             />
           )}
 
-          {tab === "activity" && <ActivityTab activity={activity} statuses={statuses} />}
+          {tab === "activity" && <ActivityTab activity={activity} traffic={traffic} statuses={statuses} />}
 
           {tab === "statuses" &&
             (license.app_id ? (
@@ -471,11 +477,24 @@ const EVENT_FILTERS = [
   { id: "download", label: "Downloads" },
 ] as const
 
-function ActivityTab({ activity, statuses }: { activity: Route.ComponentProps["loaderData"]["activity"]; statuses: ReturnType<typeof useStatusSetForLicense> }) {
+function ActivityTab({ activity, traffic, statuses }: { activity: LoaderData["activity"]; traffic: LoaderData["traffic"]; statuses: ReturnType<typeof useStatusSetForLicense> }) {
   const [filter, setFilter] = useState<(typeof EVENT_FILTERS)[number]["id"]>("all")
   const shown = filter === "all" ? activity : activity.filter((a) => a.event === filter)
+  const checks = traffic.reduce((n, d) => n + d.valid + d.refused, 0)
   return (
     <div className="space-y-3">
+      <section className="mb-6 rounded-lg border bg-card p-4">
+        <ColumnChart
+          title="Checks, last 30 days"
+          data={traffic}
+          series={[
+            { key: "valid", label: "Valid", color: "var(--chart-1)" },
+            { key: "refused", label: "Refused", color: "var(--chart-2)" },
+          ]}
+          height={140}
+          summary={<span className="tabular-nums">{checks.toLocaleString("en-GB")} checks</span>}
+        />
+      </section>
       <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Show">
         {EVENT_FILTERS.map((f) => {
           const count = f.id === "all" ? activity.length : activity.filter((a) => a.event === f.id).length

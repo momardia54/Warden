@@ -16,6 +16,7 @@ export default [
     route("licenses/new", "routes/licenses.new.tsx"),
     route("licenses/:licenseId", "routes/licenses.$licenseId.tsx"),
     route("licenses/:licenseId/edit", "routes/licenses.$licenseId.edit.tsx"),
+    route("analytics", "routes/analytics.tsx"),
     route("apps", "routes/apps.tsx"),
     route("apps/new", "routes/apps.new.tsx"),
     route("apps/:appId", "routes/apps.$appId.tsx"),

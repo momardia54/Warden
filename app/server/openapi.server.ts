@@ -60,6 +60,24 @@ export function openApiSpec(origin: string) {
     paths: {
       "/me": { get: { summary: "Who the key belongs to", responses: { 200: { description: "Key name and scope" }, 401: err } } },
       "/stats": { get: { summary: "Licence statistics", responses: { 200: { description: "{ total, in_force, not_in_force, expiring_within_14_days, not_checked_for_3_days, by_status }" }, 401: err } } },
+      "/analytics": {
+        get: {
+          summary: "Traffic analytics",
+          description:
+            "Checks and downloads per UTC day over a period, with totals, refusal reasons, the most checked licences and the most downloaded files. A check is valid if its recorded status lets sites run under the statuses in use today. Checks are kept for 90 days.",
+          parameters: [
+            { name: "days", in: "query", description: "Length of the period, ending today", schema: { type: "integer", enum: [7, 30, 90], default: 30 } },
+            { name: "app", in: "query", description: "Only the licences of this app (id or slug), or `none` for standalone licences", schema: { type: "string" } },
+            { name: "license", in: "query", description: "Only this licence (id or key). Takes precedence over `app`.", schema: { type: "string" } },
+          ],
+          responses: {
+            200: { description: "{ days, from, to, series: [{ date, valid, refused, sites, downloads }], totals: { checks, valid, refused, sites, new_sites, downloads, refused_downloads }, refusals: [{ key, label, checks }], licenses: [{ id, name, app_name, checks, refused, last_check_at }], files: [{ name, downloads }] }" },
+            401: err,
+            404: err,
+            422: err,
+          },
+        },
+      },
       "/licenses": {
         get: {
           summary: "List licences",

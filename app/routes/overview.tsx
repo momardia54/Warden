@@ -1,6 +1,7 @@
 import { Link, useFetcher } from "react-router"
 import { ArrowDownToLine, CircleCheck, Plus, RefreshCw, SquarePen } from "lucide-react"
 import type { Route } from "./+types/overview"
+import { ColumnChart } from "#/components/column-chart"
 import { Fact, FactStrip } from "#/components/fact-strip"
 import { PageHeader } from "#/components/page-header"
 import { PageTitle } from "#/components/page-title"
@@ -12,6 +13,7 @@ import { useAllStatuses, useStatusLabel } from "#/components/status-context"
 import { DEFAULT_COLOR } from "#/lib/statuses"
 import { describeExpiry, EXPIRING_WINDOW_DAYS, SILENT_AFTER_DAYS, VIEW_LABELS } from "#/lib/views"
 import { cn } from "#/lib/utils"
+import { dailyTraffic } from "~/server/analytics.server"
 import { requireAuth } from "~/server/auth.server"
 import { listApps, outdatedSitesByApp } from "~/server/apps.server"
 import { attentionLists, overviewStats, recentEvents } from "~/server/licenses.server"
@@ -21,13 +23,15 @@ export const meta: Route.MetaFunction = () => [{ title: "Overview | Warden" }]
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env
   await requireAuth(request, env)
-  const [stats, attention, events, apps] = await Promise.all([overviewStats(env), attentionLists(env), recentEvents(env, 12), listApps(env)])
+  const [stats, attention, events, apps, traffic] = await Promise.all([overviewStats(env), attentionLists(env), recentEvents(env, 12), listApps(env), dailyTraffic(env, {}, 30, Date.now(), "checks")])
   const outdated = await outdatedSitesByApp(env, apps)
-  return { stats, attention, events, apps: apps.map((a) => ({ id: a.id, name: a.name, licenses: a.licenses, in_force: a.in_force, sites: a.sites, latest_version: a.latest_version, outdated: outdated[a.id] ?? 0 })) }
+  return { stats, attention, events, traffic: traffic.series, apps: apps.map((a) => ({ id: a.id, name: a.name, licenses: a.licenses, in_force: a.in_force, sites: a.sites, latest_version: a.latest_version, outdated: outdated[a.id] ?? 0 })) }
 }
 
 export default function Overview({ loaderData }: Route.ComponentProps) {
-  const { stats, attention, events, apps } = loaderData
+  const { stats, attention, events, apps, traffic } = loaderData
+  const checks = traffic.reduce((n, d) => n + d.valid + d.refused, 0)
+  const refused = traffic.reduce((n, d) => n + d.refused, 0)
   const statusLabel = useStatusLabel()
   const allStatuses = useAllStatuses()
   const byStatus = Object.entries(stats.byStatus).sort((a, b) => b[1] - a[1])
@@ -74,6 +78,27 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             help={`Licences in force whose site has not called the check URL for ${SILENT_AFTER_DAYS} days. The site may be offline, or the check may have been removed from its code.`}
           />
         </FactStrip>
+
+        <section className="rounded-lg border bg-card p-4">
+          <ColumnChart
+            title="Checks, last 30 days"
+            description="Calls of your check URLs from customers' sites."
+            data={traffic}
+            series={[
+              { key: "valid", label: "Valid", color: "var(--chart-1)" },
+              { key: "refused", label: "Refused", color: "var(--chart-2)" },
+            ]}
+            height={150}
+            summary={
+              <span className="tabular-nums">
+                {checks.toLocaleString("en-GB")} checks{refused > 0 ? `, ${refused.toLocaleString("en-GB")} refused` : ""}.{" "}
+                <Link to="/analytics" className="text-foreground underline underline-offset-2">
+                  Analytics
+                </Link>
+              </span>
+            }
+          />
+        </section>
 
         <div className="grid gap-8 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           <section className="space-y-3">

@@ -48,6 +48,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
 - **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
 - Activity log per licence: every check (which domain, which result) and every change
+- **Analytics**: checks per day (valid and refused), why checks were refused, active sites, downloads, the busiest licences and the most downloaded files, over 7, 30 or 90 days, for everything or one app ([docs/analytics.md](docs/analytics.md))
 - **Overview** with a *Needs attention* queue: licences expiring soon (extend them in one click) and licences in force whose site stopped checking in, plus apps with sites on an old version
 - **Quick search** (Ctrl+K or Cmd+K) across licences, customers, keys, site domains and apps
 - **Licence list** with saved views in the address (in force, not in force, expiring, silent), filters, sorting and **CSV export**
@@ -66,8 +67,8 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | Registered sites and the version each one runs | Changing the statuses a file is available in |
 | ![App statuses](docs/screenshots/app-statuses.jpg) | ![Edit a status](docs/screenshots/edit-status.jpg) |
 | An app with its own statuses | Editing a status: colour picker, sites, expiry rule, message |
-| ![Creating an app](docs/screenshots/new-app.jpg) | |
-| Statuses can be customised while creating an app or a licence | |
+| ![Creating an app](docs/screenshots/new-app.jpg) | ![Analytics](docs/screenshots/analytics.jpg) |
+| Statuses can be customised while creating an app or a licence | Analytics: checks per day, valid and refused |
 | ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
 | A standalone licence: default statuses, customisable (a licence in an app uses its app's) | Issuing a licence with the app's defaults |
 

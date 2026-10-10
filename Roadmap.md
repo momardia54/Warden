@@ -36,7 +36,7 @@ This is a plan, not a promise. Order can change.
 
 - Several admins and per-licence API keys
 - Plans within an app (for example 1 site, 5 sites, unlimited) as named templates for duration and site limit
-- Check statistics per licence over time
+- Long-term traffic history beyond the 90 days of checks kept (a daily summary table)
 - Official client snippets (PHP/WordPress, JavaScript) kept in this repository
 - Bulk actions in the licence list (change status, extend several licences at once)
 - Audit log for dashboard and API changes

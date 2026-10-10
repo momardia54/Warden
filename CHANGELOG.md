@@ -14,6 +14,15 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 - Migration 0007 (file channel, release notes, checksum, withdrawal; the version of each site)
 - docs/releases.md
 
+### Added: analytics
+
+- **Analytics** page: checks per day split into valid and refused, active sites and downloads per day, refusals by reason, most checked licences and most downloaded files, over 7, 30 or 90 days, for every licence, one app or the standalone licences
+- Checks of the last 30 days on the overview and on each licence's Activity tab
+- Charts can be read by hovering, with the keyboard, or as a table
+- API: `GET /analytics` (`days`, `app`, `license`)
+- Migration 0008: index on activity (event, at), so each figure reads only checks or only downloads
+- docs/analytics.md
+
 ### Added: dashboard
 
 - Licence and app pages rebuilt around a summary strip (what sites see, expiry, sites, last check; licences, sites, latest release, sites on an old version) and tabs that are kept in the address

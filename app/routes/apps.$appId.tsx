@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Link, redirect, type ShouldRevalidateFunctionArgs } from "react-router"
-import { ArrowDownToLine, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
+import { ArrowDownToLine, ChartColumn, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
 import type { Route } from "./+types/apps.$appId"
 import { ConfirmAction } from "#/components/confirm-action"
 import { Fact, FactStrip } from "#/components/fact-strip"
@@ -117,6 +117,11 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
                     <a href={`/licenses/export.csv?app=${app.id}`}>
                       <ArrowDownToLine /> Export licences as CSV
                     </a>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to={`/analytics?app=${app.id}`}>
+                      <ChartColumn /> Traffic analytics
+                    </Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem variant="destructive" onClick={() => setDeleting(true)}>

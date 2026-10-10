@@ -4,6 +4,8 @@ import { applyAppBody, applyLicenseBody } from "./api-input.server"
 import { authenticate, type ApiKeyRow } from "./api-keys.server"
 import { CORS, fail, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
 import { serializeActivation, serializeActivity, serializeApp, serializeFile, serializeLicense, serializeStatus } from "./api-serializers.server"
+import { readRange, TRAFFIC_RANGES } from "../lib/analytics"
+import { trafficReport, type TrafficScope } from "./analytics.server"
 import { appDefaults, createApp, deleteApp, findApp, getAppSummary, listApps, updateApp, versionsInUse, type App, type AppInput } from "./apps.server"
 import { deleteFile, getFile, listFiles, statusSetForOwner, storeFile, updateFile, type FileOwner } from "./files.server"
 import {
@@ -417,6 +419,27 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
   return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
 }
 
+// ---- analytics ----------------------------------------------------------------------
+
+async function analyticsRoute({ env, url }: Context): Promise<Response> {
+  const daysParam = url.searchParams.get("days")
+  if (daysParam !== null && !(TRAFFIC_RANGES as readonly number[]).includes(Number(daysParam))) return fail(422, "invalid_days", `days must be one of ${TRAFFIC_RANGES.join(", ")}.`)
+  const appRef = url.searchParams.get("app")
+  const licenseRef = url.searchParams.get("license")
+  let scope: TrafficScope = {}
+  if (licenseRef) {
+    const license = await findLicense(env, licenseRef)
+    if (!license) return fail(404, "not_found", `No licence matches "${licenseRef}".`)
+    scope = { license: license.id }
+  } else if (appRef === "none") scope = { standalone: true }
+  else if (appRef) {
+    const app = await findApp(env, appRef)
+    if (!app) return fail(404, "not_found", `No app matches "${appRef}".`)
+    scope = { app: app.id }
+  }
+  return reply(await trafficReport(env, scope, readRange(daysParam)))
+}
+
 // ---- entry point ------------------------------------------------------------------
 
 export async function handleApi(request: Request, env: Env, execution: ExecutionContext): Promise<Response> {
@@ -435,6 +458,7 @@ export async function handleApi(request: Request, env: Env, execution: Execution
     const stats = await overviewStats(env)
     return reply({ total: stats.total, in_force: stats.inForce, not_in_force: stats.notInForce, expiring_within_14_days: stats.endingSoon, not_checked_for_3_days: stats.silent, by_status: stats.byStatus })
   }
+  if (resource === "analytics" && rest.length === 0 && request.method === "GET") return analyticsRoute(ctx)
   if (resource === "licenses") return licenseRoute(ctx, rest)
   if (resource === "apps") return appRoute(ctx, rest)
   if (resource === "statuses" && rest.length === 0 && request.method === "GET") return reply({ data: DEFAULT_STATUSES.map(serializeStatus) })

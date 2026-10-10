@@ -1,4 +1,4 @@
-import { Boxes, KeyRound, Braces, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, Search, ShieldCheck, Sun } from "lucide-react"
+import { Boxes, ChartColumn, KeyRound, Braces, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, Search, ShieldCheck, Sun } from "lucide-react"
 import { Kbd } from "#/components/command-menu"
 import { NavLink, useFetcher, useLocation } from "react-router"
 import { useTheme } from "next-themes"
@@ -30,6 +30,7 @@ const NAV = [
   { title: "Overview", to: "/overview", icon: LayoutDashboard },
   { title: "Apps", to: "/apps", icon: Boxes },
   { title: "Licences", to: "/licenses", icon: KeyRound },
+  { title: "Analytics", to: "/analytics", icon: ChartColumn },
   { title: "API keys", to: "/api-keys", icon: Braces },
 ]
 

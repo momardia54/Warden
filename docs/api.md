@@ -59,6 +59,7 @@ In every path below, `{id}` can be the licence id (`lic_...`) or the licence key
 |---|---|---|
 | `GET /me` | read | The key's name and scope |
 | `GET /stats` | read | `total`, `in_force`, `not_in_force`, `expiring_within_14_days`, `not_checked_for_3_days` and `by_status` (a count per status key) |
+| `GET /analytics` | read | Checks and downloads per day, totals, refusal reasons, busiest licences and files (`days`, `app`, `license`; see [analytics.md](analytics.md)) |
 | `GET /statuses` | read | The built-in default statuses ([statuses.md](statuses.md)) |
 | `GET /licenses` | read | List, newest first |
 | `POST /licenses` | manage | Create |
