@@ -2,6 +2,8 @@
 
 The **Protection** page (sidebar) controls access to the public endpoints, `/check/…` and `/download/…`. It has three tabs:
 
+![The blocking rules on the Protection page](screenshots/protection.jpg)
+
 - **IP blocklist**
 - **Rate limits**
 - **Blocking rules**

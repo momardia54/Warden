@@ -2,6 +2,8 @@
 
 Base URL: `https://<your-worker>/api/v1`. JSON in, JSON out. A machine-readable description is served at `/api/v1/openapi.json` (no key needed).
 
+![API keys in the dashboard](screenshots/api.jpg)
+
 ## Authentication
 
 Create a key in the dashboard (**API** page). The key is shown once. Send it on every request:

@@ -2,6 +2,8 @@
 
 Warden can deliver the updates of what you sell. A **release** is a file with a version. It is stored in R2 like any other file ([files.md](files.md)) and keeps the same release rule: the licence statuses in which it can be downloaded, and whether the site's domain must match. On top of that, a release has a channel, public release notes and a checksum, and the check endpoint tells each site whether a newer release is waiting for it.
 
+![Releases of an app: the latest stable release, a beta and a withdrawn release](screenshots/releases.jpg)
+
 A file **without** a version is an *attachment* (a manual, a notice). It can be downloaded but is never offered as an update.
 
 ## What a release has

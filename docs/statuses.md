@@ -2,6 +2,8 @@
 
 Every licence has a **status**. The status decides what a site is told when it checks the licence, and which files it can download. Warden starts with a built-in set of statuses, and you can customise them **for an app** or **for a standalone licence**: rename them, change what they mean, remove the ones you do not need and add your own.
 
+![An app with its own statuses](screenshots/app-statuses.jpg)
+
 ## Where statuses come from
 
 | The licence is | It uses |
@@ -27,8 +29,8 @@ You can customise statuses **when you create** an app or a standalone licence: t
 
 | Status | Valid | Expiry date | Meaning |
 |---|---|---|---|
-| Pending | No | Does not apply | Created but not in effect yet, for example before the first payment |
-| Active | Yes | Becomes Expired | In effect. This is the default for new licences |
+| Pending | No | Does not apply | Issued but not valid yet, for example until the first payment |
+| Active | Yes | Becomes Expired | Valid. The default for new licences |
 | Completed | Yes | Does not apply | Paid in full. Permanent |
 | Suspended | No | Does not apply | Temporarily on hold, for example for a late payment |
 | Disabled | No | Does not apply | Permanently switched off |

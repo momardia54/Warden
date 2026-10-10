@@ -62,6 +62,7 @@ Not released yet: on the `develop` branch.
 
 ### Changed: terminology
 
+- The descriptions of the built-in statuses use the same terms: Pending is "not valid yet", Active and Completed are "valid"
 - Checks are described as **valid** or **invalid** throughout the dashboard, the API and the docs. The licence list views are now `?view=valid` and `?view=invalid` (`in_force` and `not_in_force` still work in bookmarked addresses)
 - API: `GET /stats` returns `valid` and `invalid`, and apps return `licenses_valid`. The earlier fields `in_force`, `not_in_force` and `licenses_in_force` are still returned as deprecated aliases and will be removed before 1.0
 

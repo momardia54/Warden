@@ -118,9 +118,9 @@ export function validateStatusSet(set: StatusSet): string | null {
 
 /** The statuses a new set starts with. Mirrors the rows seeded by migration 0006. */
 export const DEFAULT_STATUSES: StatusSet = [
-  { key: "pending", label: "Pending", description: "Created but not in effect yet, for example before the first payment is received.", color: "#6b7280", grants_access: false, on_expiry: null, check_message: "This licence is not active yet.", is_default: false, position: 1 },
-  { key: "active", label: "Active", description: "In effect. The site runs normally.", color: "#16a34a", grants_access: true, on_expiry: "expired", check_message: "", is_default: true, position: 2 },
-  { key: "completed", label: "Completed", description: "Paid in full. Permanent: the expiry date no longer applies.", color: "#16a34a", grants_access: true, on_expiry: null, check_message: "", is_default: false, position: 3 },
+  { key: "pending", label: "Pending", description: "Issued but not valid yet, for example until the first payment is received.", color: "#6b7280", grants_access: false, on_expiry: null, check_message: "This licence is not active yet.", is_default: false, position: 1 },
+  { key: "active", label: "Active", description: "Valid. The default status of new licences; becomes Expired after the expiry date.", color: "#16a34a", grants_access: true, on_expiry: "expired", check_message: "", is_default: true, position: 2 },
+  { key: "completed", label: "Completed", description: "Paid in full. Valid permanently: the expiry date no longer applies.", color: "#16a34a", grants_access: true, on_expiry: null, check_message: "", is_default: false, position: 3 },
   { key: "suspended", label: "Suspended", description: "Temporarily on hold, for example for a late payment. Set to Active to resume.", color: "#d97706", grants_access: false, on_expiry: null, check_message: "This licence is suspended.", is_default: false, position: 4 },
   { key: "disabled", label: "Disabled", description: "Permanently switched off.", color: "#dc2626", grants_access: false, on_expiry: null, check_message: "This licence has been disabled.", is_default: false, position: 5 },
   { key: "expired", label: "Expired", description: "Past its expiry date. Applied automatically to licences whose expiry date has passed.", color: "#dc2626", grants_access: false, on_expiry: null, check_message: "This licence has expired.", is_default: false, position: 6 },

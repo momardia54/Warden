@@ -2,6 +2,8 @@
 
 Files can belong to a single licence, or to an **app** and be shared by every licence of that app ([apps.md](apps.md)). Each file has a **release rule**: the licence statuses in which it can be downloaded. Files are stored privately in R2 and served by the Worker only when the rule is met.
 
+![Editing a release and the statuses it is available in](screenshots/edit-file.jpg)
+
 A file with a **version** is a release: it is offered to sites as an update, with a channel, release notes and a checksum. See [releases.md](releases.md). A file without a version is an attachment.
 
 ## Release rule
@@ -60,7 +62,7 @@ Maximum file size is 100 MB (the Worker request body limit on the Free plan). De
 
 ## Example: a project paid in instalments
 
-1. Deliver the theme with the licence check built in ([checking.md](checking.md)). Upload each new build as a file released in **Active, Completed** so the site can fetch updates while the licence is in effect.
+1. Deliver the theme with the licence check built in ([checking.md](checking.md)). Upload each new build as a file released in **Active, Completed** so the site can fetch updates while the licence is valid.
 2. Build the final theme without the licence check and upload it released in **Completed** only, with the domain check off. It stays unavailable.
 3. When the last payment arrives, set the licence status to **Completed** (dashboard, or `POST /api/v1/licenses/{id}/status`, for example from a payment webhook). The final file becomes available and the licence stays valid indefinitely.
 4. Send the client the download link. Once the final theme is installed, the site no longer calls Warden.

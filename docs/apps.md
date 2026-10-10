@@ -2,6 +2,8 @@
 
 An **app** is a product you license to many customers, for example a plugin or a theme. Licences can belong to an app. A licence without an app is a **standalone** licence, for a single customer or a custom project.
 
+![An app page](screenshots/app.jpg)
+
 | | Standalone licence | Licence under an app |
 |---|---|---|
 | Starts with | The values you enter | The app's defaults (duration, status, maximum sites, public message) |

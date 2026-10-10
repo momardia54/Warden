@@ -2,6 +2,8 @@
 
 An app or a licence can be connected to a GitHub repository. Connect GitHub once under **Integrations**, then pick a repository from a list. When you push a version tag, Warden downloads the repository at that tag as a zip, renames its top-level folder and publishes it as a release, exactly as if you had uploaded the file yourself. Sites that check with their version are then offered the update.
 
+![Connecting GitHub on the Integrations page](screenshots/integrations.jpg)
+
 Nothing is built: the repository is published as it is. This suits themes and plugins whose repository is the package. A project that needs a build step can upload its build with the API from its pipeline instead (see [releases.md](releases.md)).
 
 ## Connecting GitHub (once)
@@ -14,7 +16,7 @@ Open **Integrations**, GitHub, **Create GitHub App**. Warden creates a GitHub Ap
 
 The app's webhook points at `https://<your-worker>/hooks/github-app`, one address for every repository, and is signed with a secret GitHub generated for the app. Nothing has to be copied by hand. Warden must be reachable at its public address for the app's webhook; GitHub does not deliver to `localhost`.
 
-The app's private key and webhook secret are stored in your D1 database. Warden uses the key to request access tokens that last one hour and only read repository contents. *Remove from Warden* forgets the credentials (refused while repositories still use the app); delete the app on GitHub as well, under the app's settings, *Advanced*.
+The app's private key and webhook secret are stored in your D1 database. Warden uses the key to request access tokens that last one hour and only read repository contents. *Remove from Warden* forgets the credentials (not possible while repositories still use the app); delete the app on GitHub as well, under the app's settings, *Advanced*.
 
 ## Connecting a repository
 

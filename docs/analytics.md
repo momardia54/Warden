@@ -2,6 +2,8 @@
 
 The **Analytics** page shows the licence traffic of the installation: the checks your customers' sites make and the downloads of your files, per day. It answers questions such as:
 
+![The Analytics page](screenshots/analytics.jpg)
+
 - Are sites still checking in, or did checks drop (sites offline, the check removed from their code)?
 - How many checks are invalid, and why: a suspended or expired licence, a domain that is not allowed, a site limit reached?
 - How many sites are active, and how many are new?

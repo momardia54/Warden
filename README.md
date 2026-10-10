@@ -54,7 +54,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 - **Overview** with a *Needs attention* queue: licences expiring soon (extend them in one click) and valid licences with no recent check, plus apps with outdated sites
 - **Quick search** (Ctrl+K or Cmd+K) across licences, customers, keys, site domains and apps
 - **Licence list** with saved views in the address (valid, invalid, expiring, no recent check), filters, sorting and **CSV export**
-- **Files per licence** (stored in R2), each with a release rule: the licence statuses in which it can be downloaded. Use it to ship updates while a licence is in effect, to release a final build when the client has paid in full, or to serve a notice while a licence is suspended ([docs/files.md](docs/files.md))
+- **Files per licence** (stored in R2), each with a release rule: the licence statuses in which it can be downloaded. Use it to ship updates while a licence is valid, to release a final build when the client has paid in full, or to serve a notice while a licence is suspended ([docs/files.md](docs/files.md))
 - **Extend expiry** in one click (+30 days, +90 days, +1 year) and **regenerate key**
 - **API** with scoped keys, idempotent create, renew, status, search and paging, plus an OpenAPI description
 - Single admin login from Worker secrets, no third-party services, runs on the Workers and D1 free plans
@@ -62,17 +62,21 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | | |
 |---|---|
 | ![Apps](docs/screenshots/apps.jpg) | ![App page](docs/screenshots/app.jpg) |
-| Apps with licence counts, sites, latest release and sites behind it | An app: the versions its sites run, and its releases |
+| Apps with licence counts, valid licences, sites and outdated sites | An app: licences, sites, latest release and checks of the last 30 days |
+| ![Releases](docs/screenshots/releases.jpg) | ![Edit a release](docs/screenshots/edit-file.jpg) |
+| Releases of an app: latest, beta and withdrawn | Editing a release: version, channel, release notes and availability |
 | ![Licences](docs/screenshots/licences.jpg) | ![Licence page](docs/screenshots/licence.jpg) |
-| Licences of all apps, with quick views, filters and sorting | A licence: what sites see, expiry, sites, last check |
-| ![Sites and files](docs/screenshots/sites-and-files.jpg) | ![Edit a file's release rule](docs/screenshots/edit-file.jpg) |
-| Registered sites and the version each one runs | Changing the statuses a file is available in |
+| Licences of all apps, with views, filters and sorting | A licence: check result, expiry, sites and last check |
+| ![Sites](docs/screenshots/sites-and-files.jpg) | ![Analytics](docs/screenshots/analytics.jpg) |
+| Registered sites, the version each one runs and its address | Analytics: valid and invalid checks per day |
 | ![App statuses](docs/screenshots/app-statuses.jpg) | ![Edit a status](docs/screenshots/edit-status.jpg) |
-| An app with its own statuses | Editing a status: colour picker, sites, expiry rule, message |
-| ![Creating an app](docs/screenshots/new-app.jpg) | ![Analytics](docs/screenshots/analytics.jpg) |
-| Statuses can be customised while creating an app or a licence | Analytics: valid and invalid checks per day |
-| ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
-| A standalone licence: default statuses, customisable (a licence in an app uses its app's) | Issuing a licence with the app's defaults |
+| An app with its own statuses | Editing a status: colour, expiry rule, valid status and message |
+| ![Protection](docs/screenshots/protection.jpg) | ![Integrations](docs/screenshots/integrations.jpg) |
+| Protection: blocking rules with threshold, time window and block duration | Integrations: connecting GitHub |
+| ![Creating an app](docs/screenshots/new-app.jpg) | ![New licence under an app](docs/screenshots/new-licence.jpg) |
+| Creating an app with defaults for new licences | Issuing a licence with the app's defaults |
+| ![Licence statuses](docs/screenshots/licence-statuses.jpg) | ![API keys](docs/screenshots/api.jpg) |
+| A standalone licence: default statuses, customisable | API keys with their scope |
 
 ## The check URL
 
