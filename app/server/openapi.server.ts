@@ -6,6 +6,55 @@ export function openApiSpec(origin: string) {
   const body = (schema: object) => ({ required: true, content: { "application/json": { schema } } })
   const secured = [{ bearer: [] }]
   const appParam = { name: "app", in: "path", required: true, description: "App id (app_...) or slug.", schema: { type: "string" } }
+
+  // A repository connected to an app or a licence (docs/repositories.md). Both owners have the same endpoints.
+  const sourceDoc = "{ id, provider, repository, trigger, package_folder, statuses, check_domain, has_token, enabled, webhook_url, webhook_secret, app, license, created_at, updated_at, last_delivery_at }. webhook_secret is omitted for read keys; the access token is never returned."
+  const importDoc = "{ id, tag, version, commit, state (pending | imported | skipped | failed), detail, file_id, started_at, finished_at }"
+  const sourcePaths = (prefix: string, param: Record<string, unknown>) => ({
+    [`${prefix}/source`]: {
+      parameters: [param],
+      get: { summary: "The connected repository", responses: { 200: { description: sourceDoc }, 404: { description: "No repository is connected" } } },
+      put: {
+        summary: "Connect or edit the repository (permission: manage). Fields left out keep their value; the repository is checked with the provider first.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  provider: { type: "string", enum: ["github"], default: "github" },
+                  repository: { type: "string", description: "owner/name or its github.com address" },
+                  trigger: { type: "string", enum: ["tag"], default: "tag" },
+                  package_folder: { type: "string", description: "Top-level folder inside the published zip. Defaults to the repository name." },
+                  statuses: { description: "Release rule of published releases: comma separated status keys or an array" },
+                  check_domain: { type: "boolean", default: true },
+                  token: { type: "string", description: "Access token for a private repository; empty string removes it" },
+                  enabled: { type: "boolean", default: true },
+                },
+              },
+            },
+          },
+        },
+        responses: { 200: { description: sourceDoc }, 201: { description: sourceDoc }, 403: { description: "Permission denied" }, 422: { description: "Invalid settings, or the repository cannot be read" } },
+      },
+      delete: { summary: "Disconnect the repository (permission: manage). Published releases stay.", responses: { 200: { description: "{ deleted: true, id }" }, 404: { description: "No repository is connected" } } },
+    },
+    [`${prefix}/source/regenerate-secret`]: { parameters: [param], post: { summary: "Replace the webhook secret (permission: manage)", responses: { 200: { description: sourceDoc } } } },
+    [`${prefix}/source/imports`]: {
+      parameters: [param],
+      get: { summary: "Latest tags and their state, newest first", responses: { 200: { description: `{ data: [${importDoc}] }` } } },
+      post: {
+        summary: "Publish an existing tag (permission: manage). Runs in the background; poll the list for the result.",
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["tag"], properties: { tag: { type: "string", example: "v1.4.0" } } } } } },
+        responses: { 202: { description: importDoc } },
+      },
+    },
+    [`${prefix}/source/imports/{importId}/retry`]: {
+      parameters: [param, { name: "importId", in: "path", required: true, schema: { type: "string" } }],
+      post: { summary: "Retry a failed or skipped tag (permission: manage)", responses: { 202: { description: importDoc }, 404: { description: "Unknown import" }, 409: { description: "In progress or already published" } } },
+    },
+  })
   /** Query parameters of an upload that describe the file as a release. */
   const releaseParams = [
     { name: "version", in: "query", description: "Makes the file a release, offered as an update. Numbers separated by dots with an optional suffix: 1.4.0, 2.0.0-beta.1", schema: { type: "string", maxLength: 40 } },
@@ -230,6 +279,8 @@ export function openApiSpec(origin: string) {
           responses: { 201: ok("The file", "File"), 403: err, 413: err, 422: err, 501: err },
         },
       },
+      ...sourcePaths("/apps/{app}", appParam),
+      ...sourcePaths("/licenses/{id}", idParam),
       "/apps/{app}/versions": {
         parameters: [appParam],
         get: {

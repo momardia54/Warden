@@ -8,6 +8,7 @@ import { IpAddress } from "#/components/ip-address"
 import { ConfirmAction } from "#/components/confirm-action"
 import { Fact, FactStrip } from "#/components/fact-strip"
 import { FilesSection } from "#/components/files-section"
+import { ReleaseSource } from "#/components/release-source"
 import { HelpTip } from "#/components/help-tip"
 import { PageHeader } from "#/components/page-header"
 import { PageTitle } from "#/components/page-title"
@@ -31,6 +32,7 @@ import { dailyTraffic } from "~/server/analytics.server"
 import { blockedAmong } from "~/server/ip-blocks.server"
 import { requireAuth } from "~/server/auth.server"
 import { applyFileForm, listFiles, storageConfigured } from "~/server/files.server"
+import { applySourceForm, getSource, listImports, publicSource } from "~/server/sources.server"
 import { formatSites } from "#/components/licenses-table"
 import { applyStatusForm, getStatusSetForLicense, hasCustomSet, statusCounts } from "~/server/statuses.server"
 import { deleteLicense, listActivations, releaseActivation, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
@@ -57,6 +59,8 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   const now = Date.now()
   const downloadable = [...files, ...sharedFiles].filter((f) => f.withdrawn_at === null && evaluateFileAccess(license, { statuses: splitStatusKeys(f.statuses, set), check_domain: false }, null, now, true, set).allowed)
   const latest = latestRelease(downloadable.sort((a, b) => b.uploaded_at - a.uploaded_at))
+  const source = await getSource(env, { license })
+  const [sourceView, imports] = source ? await Promise.all([publicSource(env, source, origin), listImports(env, source.id, 10)]) : [null, []]
   const blockedIps = await blockedAmong(env, [...activity.map((a) => a.ip), ...sites.map((s) => s.last_ip)])
   return {
     license,
@@ -71,6 +75,8 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     statusUsage,
     latestVersion: latest?.version ?? null,
     filesConfigured: storageConfigured(env),
+    source: sourceView,
+    imports,
     origin,
     checkUrl: `${origin}/check/${license.license_key}`,
   }
@@ -91,6 +97,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if ((intent.endsWith("-status") && intent !== "status") || intent.endsWith("-statuses")) return applyStatusForm(env, { license: license.id }, form)
   const fileResult = await applyFileForm(env, { license }, form)
   if (fileResult) return fileResult
+  const sourceResult = await applySourceForm(env, context.cloudflare.ctx, { license }, form)
+  if (sourceResult) return sourceResult
   if (intent === "status") {
     const status = String(form.get("status"))
     if (!findStatus(await getStatusSetForLicense(env, license), status)) return { error: "That status does not exist for this licence." }
@@ -115,7 +123,7 @@ type LoaderData = Route.ComponentProps["loaderData"]
 const TABS = ["overview", "sites", "releases", "activity", "statuses"] as const
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, blockedIps, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, origin, checkUrl } = loaderData
+  const { license, activity, blockedIps, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, source, imports, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
   const statuses = useStatusSetForLicense(license)
   const [tab, setTab] = useRouteTab([...TABS])
@@ -343,21 +351,24 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           )}
 
           {tab === "releases" && (
-            <FilesSection
-              ownerLabel="licence"
-              description={
-                license.app_id
-                  ? "Files of this licence and of its app. Each one can be downloaded while the licence has one of its release statuses. Files of the app are managed on the app page."
-                  : "Files of this licence. Each one can be downloaded while the licence has one of its release statuses. A file with a version is a release, offered to the site as an update."
-              }
-              uploadPath={`/licenses/${license.id}/files`}
-              downloadUrl={(fileId) => `${origin}/download/${license.license_key}/${fileId}`}
-              license={license}
-              statuses={statuses}
-              files={files}
-              shared={license.app_id && sharedFiles.length > 0 ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles, statuses } : null}
-              configured={filesConfigured}
-            />
+            <div className="space-y-8">
+              {filesConfigured && <ReleaseSource source={source} imports={imports} statuses={statuses} ownerLabel="licence" />}
+              <FilesSection
+                ownerLabel="licence"
+                description={
+                  license.app_id
+                    ? "Files of this licence and of its app. Each one can be downloaded while the licence has one of its release statuses. Files of the app are managed on the app page."
+                    : "Files of this licence. Each one can be downloaded while the licence has one of its release statuses. A file with a version is a release, offered to the site as an update."
+                }
+                uploadPath={`/licenses/${license.id}/files`}
+                downloadUrl={(fileId) => `${origin}/download/${license.license_key}/${fileId}`}
+                license={license}
+                statuses={statuses}
+                files={files}
+                shared={license.app_id && sharedFiles.length > 0 ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles, statuses } : null}
+                configured={filesConfigured}
+              />
+            </div>
           )}
 
           {tab === "activity" && <ActivityTab licenseId={license.id} activity={activity} blockedIps={blockedIps} traffic={traffic} statuses={statuses} />}

@@ -2,7 +2,7 @@ import { KEY_PATTERN } from "../lib/license"
 import { DEFAULT_STATUSES, defaultStatusKey, findStatus, type StatusSet } from "../lib/statuses"
 import { applyAppBody, applyLicenseBody } from "./api-input.server"
 import { authenticate, type ApiKeyRow } from "./api-keys.server"
-import { CORS, fail, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
+import { CORS, fail, iso, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
 import { serializeActivation, serializeActivity, serializeApp, serializeBlock, serializeFile, serializeLicense, serializeStatus } from "./api-serializers.server"
 import { readRange, TRAFFIC_RANGES } from "../lib/analytics"
 import { trafficReport, type TrafficScope } from "./analytics.server"
@@ -16,12 +16,13 @@ import {
   regenerateKey, releaseActivation, renewUntil, setStatus, updateLicense, type License, type LicenseInput,
 } from "./licenses.server"
 import { openApiSpec } from "./openapi.server"
+import { deleteSource, getImport, getSource, listImports, publicSource, regenerateWebhookSecret, retryImport, saveSource, startImport, type SourceImport } from "./sources.server"
 import {
   createStatus, customizeStatuses, deleteStatus, getStatusSetForApp, getStatusSetForLicense, hasCustomSet, loadStatusSets, readStatusInput, resetStatuses, setForLicense,
   setStatusOrder, statusSource, updateStatus, type StatusInput, type StatusScope,
 } from "./statuses.server"
 
-type Context = { env: Env; request: Request; url: URL; origin: string; key: ApiKeyRow }
+type Context = { env: Env; request: Request; url: URL; origin: string; key: ApiKeyRow; execution: ExecutionContext }
 
 const need = (ctx: Context, scope: "read" | "manage" | "full") => requirePermission(ctx.key.scope, scope)
 
@@ -157,6 +158,7 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
   }
 
   if (sub === "files") return filesRoute(ctx, { license }, extra)
+  if (sub === "source") return sourceRoute(ctx, { license }, rest)
   if (sub === "statuses") {
     // A licence in an app uses the app's statuses: they can be read here but are changed on the app.
     if (license.app_id) {
@@ -270,6 +272,83 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
     return "error" in updated ? fail(updated.status, "invalid_file", updated.error) : reply(shape(updated.file))
   }
   return fail(405, "method_not_allowed", "Use GET or PUT on /files, and PATCH or DELETE on /files/{fileId}.")
+}
+
+// ---- release source ---------------------------------------------------------------
+
+const serializeImport = (i: SourceImport) => ({
+  id: i.id, tag: i.ref, version: i.version || null, commit: i.commit_sha || null, state: i.state, detail: i.detail, file_id: i.file_id,
+  started_at: iso(i.started_at), finished_at: iso(i.finished_at),
+})
+
+/**
+ * The repository connected to a licence or an app. Paths relative to .../source:
+ *   GET /  PUT /  DELETE /  POST /regenerate-secret  GET /imports  POST /imports  POST /imports/{id}/retry
+ */
+async function sourceRoute(ctx: Context, owner: FileOwner, segments: string[]): Promise<Response> {
+  const { env, request, origin } = ctx
+  const method = request.method
+  const [sub, importId, action] = segments
+  const shape = async (source: NonNullable<Awaited<ReturnType<typeof getSource>>>) => {
+    const view = await publicSource(env, source, origin)
+    const { webhook_secret, app_id, license_id, statuses: _statuses, status_keys, created_at, updated_at, last_delivery_at, ...rest } = view
+    return {
+      ...rest, app: app_id, license: license_id, statuses: status_keys,
+      // The secret lets a caller start imports, so only keys that can change the source see it.
+      webhook_secret: ctx.key.scope === "read" ? undefined : webhook_secret,
+      created_at: iso(created_at), updated_at: iso(updated_at), last_delivery_at: iso(last_delivery_at),
+    }
+  }
+
+  if (!sub && method === "PUT") {
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    const body = await readJson(request)
+    if (body instanceof Response) return body
+    const saved = await saveSource(env, owner, body)
+    return "error" in saved ? fail(saved.status, "invalid_source", saved.error) : reply(await shape(saved.source), saved.created ? 201 : 200)
+  }
+  const source = await getSource(env, owner)
+  if (!source) return fail(404, "source_not_found", "No repository is connected. Connect one with PUT.")
+
+  if (!sub) {
+    if (method === "GET") return reply(await shape(source))
+    if (method === "DELETE") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      await deleteSource(env, source)
+      return reply({ deleted: true, id: source.id })
+    }
+    return fail(405, "method_not_allowed", "Use GET, PUT or DELETE.")
+  }
+  if (sub === "regenerate-secret" && !importId) {
+    if (method !== "POST") return fail(405, "method_not_allowed", "Use POST.")
+    const denied = need(ctx, "manage")
+    if (denied) return denied
+    await regenerateWebhookSecret(env, source)
+    return reply(await shape((await getSource(env, owner))!))
+  }
+  if (sub === "imports") {
+    if (!importId && method === "GET") return reply({ data: (await listImports(env, source.id, 100)).map(serializeImport) })
+    if (!importId && method === "POST") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const tag = trimmed(body.tag, 200)
+      if (!tag) return fail(422, "invalid_tag", "tag is required, for example v1.4.0.")
+      return reply(serializeImport(await startImport(env, ctx.execution, source, tag)), 202)
+    }
+    if (importId && action === "retry" && method === "POST") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      const row = await getImport(env, source.id, importId)
+      if (!row) return fail(404, "import_not_found", "No import with this id.")
+      const retried = await retryImport(env, ctx.execution, source, row)
+      return "error" in retried ? fail(retried.status, "cannot_retry", retried.error) : reply(serializeImport(retried), 202)
+    }
+  }
+  return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
 }
 
 // ---- statuses ---------------------------------------------------------------------
@@ -414,6 +493,7 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
     return fail(405, "method_not_allowed", "Use GET or POST.")
   }
   if (sub === "files") return filesRoute(ctx, { app }, rest[0])
+  if (sub === "source") return sourceRoute(ctx, { app }, rest)
   if (sub === "versions" && rest.length === 0) {
     if (method !== "GET") return fail(405, "method_not_allowed", "Use GET.")
     return reply(await versionsInUse(env, app.id))
@@ -488,7 +568,7 @@ export async function handleApi(request: Request, env: Env, execution: Execution
     limited.headers.set("retry-after", "60")
     return limited
   }
-  const ctx: Context = { env, request, url, origin: url.origin, key }
+  const ctx: Context = { env, request, url, origin: url.origin, key, execution }
 
   const [resource, ...rest] = path.split("/").filter(Boolean)
   if (resource === "me" && request.method === "GET") return reply({ name: key.name, scope: key.scope, prefix: key.prefix })

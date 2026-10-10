@@ -291,6 +291,8 @@ export async function deleteLicense(env: Env, id: string): Promise<void> {
   await deleteLicenseFiles(env, id)
   await env.DB.batch([
     env.DB.prepare("DELETE FROM files WHERE license_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM source_imports WHERE source_id IN (SELECT id FROM release_sources WHERE license_id = ?)").bind(id),
+    env.DB.prepare("DELETE FROM release_sources WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM activations WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM statuses WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM activity WHERE license_id = ?").bind(id),

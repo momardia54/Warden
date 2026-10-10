@@ -9,6 +9,21 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 - Checks are described as **valid** or **invalid** throughout the dashboard, the API and the docs. The licence list views are now `?view=valid` and `?view=invalid` (`in_force` and `not_in_force` still work in bookmarked addresses)
 - API: `GET /stats` returns `valid` and `invalid`, and apps return `licenses_valid`. The earlier fields `in_force`, `not_in_force` and `licenses_in_force` are still returned as deprecated aliases and will be removed before 1.0
 
+### Added: publishing from a repository
+
+- Connect a **GitHub repository** to an app or a licence (*Releases* tab). Pushing a version tag (`v1.4.0`) publishes the repository at that tag as a release; a tag with a pre-release suffix goes to the beta channel, other tags are skipped
+- The zip from GitHub is **repacked with a fixed top-level folder** (the package folder, by default the repository name), so every release installs into the same folder. Only the zip headers are rewritten
+- Webhook deliveries are verified with a per-source secret; private repositories use a read-only access token, stored in D1 and never returned
+- Recent tags with their state (in progress, published, skipped, failed) and the reason, **Retry**, **Publish a tag** for existing tags, pause and disconnect. A redelivered webhook publishes a tag once
+- Providers and triggers are a registry: further providers (for example GitLab) and triggers (for example a version header in a pushed file) can be added without a schema change
+- API: `GET|PUT|DELETE /apps/{app}/source`, `POST .../source/regenerate-secret`, `GET|POST .../source/imports`, `POST .../source/imports/{id}/retry`, and the same under `/licenses/{id}/source`. Webhook endpoint `POST /hooks/github/{source id}`
+- Migration 0011 (release sources and their imports)
+- docs/repositories.md
+
+### Fixed
+
+- Pages with tabs did not reload their data on an explicit refresh (for example after an upload without release notes), because a refresh of the same address was treated as a tab change
+
 ### Added: releases and updates
 
 - A file with a version is a **release**. Releases have a channel (`stable` or `beta`), public release notes and a SHA-256 checksum computed during the upload, and can be **withdrawn** and restored. A withdrawn release is not listed and its download returns `410`

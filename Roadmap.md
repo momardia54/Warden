@@ -17,6 +17,7 @@ This is a plan, not a promise. Order can change.
 - **Releases and updates**: versions, stable and beta channels, release notes, SHA-256 checksums, withdrawal, update offers in the check response, versions in use per site and per app
 - Dashboard: needs-attention queue with one-click extend, quick search, saved list views, CSV export
 - **Analytics**: valid and invalid checks, active sites and downloads per day; top licences, files and IP addresses
+- **Publishing from GitHub**: version tags published as releases through a signed webhook, with a fixed package folder
 - **Protection**: client IP addresses, IP blocklist, rate limits and blocking rules configured in the dashboard
 
 ## Next (towards 1.0.0)
@@ -27,6 +28,7 @@ This is a plan, not a promise. Order can change.
 - [ ] **Import** of licences from CSV (export is done)
 - [ ] **Tests against a real Worker** in CI (today: unit tests plus a local D1 stand-in and manual runs)
 - [ ] **Signed releases** (Ed25519) so an updater can verify a package came from you, not only that it arrived intact
+- [ ] **More release sources**: GitLab and Bitbucket, a trigger on a raised `Version:` header (WordPress style) in pushed commits, and GitHub release assets for projects with a build step
 - [ ] **Staged rollouts**: offer a release to a percentage of sites first
 - [ ] **Larger files**: direct-to-R2 uploads for files over 100 MB, and range (resumable) downloads
 - [ ] **Download limits** and time-limited, signed download links

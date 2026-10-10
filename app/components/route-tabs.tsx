@@ -26,7 +26,8 @@ export function useRouteTab(ids: string[]): [string, (id: string) => void] {
 
 /** For a page's shouldRevalidate: switching tabs only changes ?tab=, which needs no new data. */
 export function onlyTabChanged({ currentUrl, nextUrl, formMethod }: Pick<ShouldRevalidateFunctionArgs, "currentUrl" | "nextUrl" | "formMethod">): boolean {
-  if (formMethod || currentUrl.pathname !== nextUrl.pathname) return false
+  // The same address is an explicit refresh (revalidator), not a tab change.
+  if (formMethod || currentUrl.pathname !== nextUrl.pathname || currentUrl.search === nextUrl.search) return false
   const strip = (url: URL) => {
     const params = new URLSearchParams(url.search)
     params.delete("tab")

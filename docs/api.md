@@ -233,6 +233,22 @@ An app is a product you license to many customers. See [apps.md](apps.md) for th
 
 `PUT /apps/{app}/files` uploads a file that every licence of the app can see, with the same body, query parameters and release rule as a licence file (below). The file JSON of an app has no `available` or `download_url`, because the download URL contains a licence key; licences get the URL from `GET /download/<key>` ([files.md](files.md)).
 
+### Release source
+
+A GitHub repository connected to an app or a licence publishes each version tag as a release. Endpoints under `/apps/{app}/source` and `/licenses/{id}/source`:
+
+| Method and path | Scope | Description |
+|---|---|---|
+| `GET .../source` | read | The connected repository; `webhook_secret` only for `manage` and `full` keys, the access token never (`has_token`) |
+| `PUT .../source` | manage | Connect or edit: `provider`, `repository`, `trigger`, `package_folder`, `statuses`, `check_domain`, `token`, `enabled` (201 when connected, 200 when edited) |
+| `DELETE .../source` | manage | Disconnect; published releases stay |
+| `POST .../source/regenerate-secret` | manage | Replace the webhook secret |
+| `GET .../source/imports` | read | Latest tags: `{ id, tag, version, commit, state, detail, file_id, started_at, finished_at }`, `state` is `pending`, `imported`, `skipped` or `failed` |
+| `POST .../source/imports` | manage | Publish an existing tag: `{ "tag": "v1.4.0" }` (202; runs in the background) |
+| `POST .../source/imports/{id}/retry` | manage | Retry a failed or skipped tag |
+
+Details, including the webhook setup: [repositories.md](repositories.md).
+
 ### Activity
 
 `GET /licenses/{id}/activity?limit=50` returns `{ "data": [ { "at", "event": "check" | "change" | "download", "status", "domain", "ip", "detail" } ] }`, newest first. `ip` is the caller of a check or a download (null for changes, and after 90 days). Sites (`/activations`) include `last_ip`.

@@ -104,6 +104,8 @@ curl -X PATCH https://<worker>/api/v1/apps/harbor-theme/files/<file id> -H "Auth
 
 Run it from your build pipeline to publish every release automatically.
 
+**From a repository:** connect a GitHub repository to the app or licence, and every version tag you push is published as a release, with a fixed folder name inside the zip. See [repositories.md](repositories.md).
+
 ## Example: an updater in WordPress
 
 ```php

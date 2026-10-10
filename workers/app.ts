@@ -6,6 +6,7 @@ import { guardPublic } from "../app/server/guard.server"
 import { pruneBlocks } from "../app/server/ip-blocks.server"
 import { pruneIpEvents } from "../app/server/protection.server"
 import { pruneActivity } from "../app/server/licenses.server"
+import { handleWebhook, pruneImports } from "../app/server/sources.server"
 import { withDashboardHeaders } from "../app/server/headers.server"
 import { initRequestCache } from "../app/server/request-cache.server"
 import { ensureMigrated, migrationFailureResponse, type Migration } from "../app/server/migrate.server"
@@ -50,6 +51,10 @@ export default {
     const download = url.pathname.match(/^\/download\/([A-Za-z0-9-]{10,40})(?:\/(fil_[a-z0-9]+))?\/?$/)
     if (download) return (await guardPublic(request, env, ctx, "download", download[1].toUpperCase())) ?? handleDownload(request, env, ctx, download[1].toUpperCase(), download[2] ?? null)
 
+    // Webhooks of connected repositories, authenticated by their signature.
+    const hook = url.pathname.match(/^\/hooks\/([a-z]+)\/(src_[a-z0-9]+)\/?$/)
+    if (hook) return handleWebhook(request, env, ctx, hook[1], hook[2])
+
     const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))))
     // A per-request copy of env: it is the key of the request-scoped cache (see request-cache.server.ts).
     const requestEnv = { ...env } as Env
@@ -63,5 +68,6 @@ export default {
     ctx.waitUntil(pruneActivity(env).catch((error) => console.error("Warden prune failed:", error)))
     ctx.waitUntil(pruneBlocks(env).catch((error) => console.error("Warden block clean-up failed:", error)))
     ctx.waitUntil(pruneIpEvents(env).catch((error) => console.error("Warden event clean-up failed:", error)))
+    ctx.waitUntil(pruneImports(env).catch((error) => console.error("Warden import clean-up failed:", error)))
   },
 } satisfies ExportedHandler<Env>

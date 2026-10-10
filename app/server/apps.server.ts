@@ -105,7 +105,13 @@ export async function deleteApp(env: Env, app: App): Promise<{ ok: true } | { er
   const count = await env.DB.prepare("SELECT COUNT(*) AS c FROM licenses WHERE app_id = ?").bind(app.id).first<{ c: number }>()
   if ((count?.c ?? 0) > 0) return { error: `This app still has ${count!.c} licence${count!.c === 1 ? "" : "s"}. Delete them or move them to another app first.` }
   await deleteAppFiles(env, app.id)
-  await env.DB.batch([env.DB.prepare("DELETE FROM files WHERE app_id = ?").bind(app.id), env.DB.prepare("DELETE FROM statuses WHERE app_id = ?").bind(app.id), env.DB.prepare("DELETE FROM apps WHERE id = ?").bind(app.id)])
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM files WHERE app_id = ?").bind(app.id),
+    env.DB.prepare("DELETE FROM statuses WHERE app_id = ?").bind(app.id),
+    env.DB.prepare("DELETE FROM source_imports WHERE source_id IN (SELECT id FROM release_sources WHERE app_id = ?)").bind(app.id),
+    env.DB.prepare("DELETE FROM release_sources WHERE app_id = ?").bind(app.id),
+    env.DB.prepare("DELETE FROM apps WHERE id = ?").bind(app.id),
+  ])
   return { ok: true }
 }
 
