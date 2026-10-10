@@ -17,7 +17,7 @@ import { requireAuth } from "~/server/auth.server"
 import { SCOPES, type Scope } from "#/lib/license"
 import { createApiKey, listApiKeys, revokeApiKey, type ApiKeyRow } from "~/server/api-keys.server"
 
-export const meta: Route.MetaFunction = () => [{ title: "API | Warden" }]
+export const meta: Route.MetaFunction = () => [{ title: "API keys | Warden" }]
 
 const SCOPE_TEXT: Record<Scope, string> = {
   read: "Read only: list and view licences",
@@ -79,11 +79,11 @@ curl -X POST ${origin}/api/v1/licenses/<id>/status -H "Authorization: Bearer $WA
 
   return (
     <>
-      <PageHeader crumbs={[{ label: "API" }]} />
-      <div className="max-w-4xl space-y-6 p-4 pt-0">
+      <PageHeader crumbs={[{ label: "API keys" }]} />
+      <div className="max-w-4xl space-y-6 p-4 pt-0 lg:px-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h1 className="text-2xl font-bold">API</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">API keys</h1>
             <p className="text-sm text-muted-foreground">
               API keys authenticate as your account. Send <InlineCode>Authorization: Bearer wk_...</InlineCode>. Reference: <a className="underline" href="/api/v1/openapi.json">/api/v1/openapi.json</a>.
             </p>

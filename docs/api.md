@@ -83,6 +83,7 @@ In every path below, `{id}` can be the licence id (`lic_...`) or the licence key
 | `GET /apps/{app}/licenses` | read | The licences of an app |
 | `POST /apps/{app}/licenses` | manage | Issue a licence under the app, with its defaults |
 | `GET /apps/{app}/files` | read | The files shared by the app |
+| `GET /apps/{app}/versions` | read | The versions the app's sites run, and how many are outdated |
 | `PUT /apps/{app}/files` | manage | Upload a shared file (raw body) |
 | `PATCH /apps/{app}/files/{fileId}` | manage | Change a shared file's release rule or metadata |
 | `DELETE /apps/{app}/files/{fileId}` | manage | Delete a shared file |
@@ -152,7 +153,10 @@ A file is downloadable while the licence status is one of the file's `statuses`.
 | `name` | Required. The download file name (folders and reserved characters are stripped) |
 | `statuses` | Comma separated licence statuses in which the file is available. Default `active,completed` |
 | `check_domain` | `true` (default) or `false`. Require a matching `?domain=` when the licence lists domains |
-| `version`, `notes` | Optional text |
+| `version` | Optional. Makes the file a release offered as an update: numbers separated by dots, optional suffix (`1.4.0`, `2.0.0-beta.1`). An invalid version returns `422` |
+| `channel` | `stable` (default) or `beta` |
+| `changelog` | Public release notes (up to 10,000 characters). Can also be set later with `PATCH` |
+| `notes` | Internal notes, never sent to sites |
 
 ```bash
 curl -X PUT "https://<worker>/api/v1/licenses/<id or key>/files?name=harbor-theme.zip&statuses=completed&check_domain=false&version=2.0.0" \
@@ -162,20 +166,21 @@ curl -X PUT "https://<worker>/api/v1/licenses/<id or key>/files?name=harbor-them
 Returns `201` and the file:
 
 ```json
-{ "id": "fil_...", "name": "harbor-theme.zip", "version": "2.0.0", "notes": "", "size": 800000, "content_type": "application/zip",
+{ "id": "fil_...", "name": "harbor-theme.zip", "version": "2.0.0", "channel": "stable", "changelog": "", "notes": "", "size": 800000,
+  "content_type": "application/zip", "sha256": "4c2a...", "withdrawn": false, "withdrawn_at": null,
   "statuses": ["completed"], "check_domain": false, "available": false,
   "uploaded_at": "...", "download_count": 0, "last_download_at": null, "download_url": "https://<worker>/download/WRD-.../fil_..." }
 ```
 
-`available` says whether the file can be downloaded right now, ignoring the domain check.
+`available` says whether the file can be downloaded right now, ignoring the domain check. `sha256` is computed during the upload (`null` for files uploaded before checksums were introduced).
 
 | Request | Permission | Description |
 |---|---|---|
 | `GET /licenses/{id}/files` | read | `{ "data": [file, ...] }` |
-| `PATCH /licenses/{id}/files/{fileId}` | manage | Change `statuses`, `check_domain`, `version` or `notes` (JSON body, only the fields sent) |
+| `PATCH /licenses/{id}/files/{fileId}` | manage | Change `statuses`, `check_domain`, `version`, `channel`, `changelog` or `notes`, or set `withdrawn` (`true` withdraws a release, `false` restores it). JSON body, only the fields sent |
 | `DELETE /licenses/{id}/files/{fileId}` | manage | Remove the file from storage |
 
-Uploading returns `501` when the deployment has no R2 bucket.
+Uploading returns `501` when the deployment has no R2 bucket. Releases, channels and update offers are described in [releases.md](releases.md).
 
 ### Statuses
 
@@ -185,7 +190,7 @@ The statuses are configurable at app level and licence level: see [statuses.md](
 
 A site registers when it checks the licence with its domain (`?domain=`). When the licence has a `max_sites` limit, further sites are refused (`site_limit_reached`) once it is reached.
 
-`GET /licenses/{id}/activations` returns `{ "max_sites": 3, "data": [ { "domain", "first_seen_at", "last_seen_at", "check_count" } ] }`. `DELETE /licenses/{id}/activations/{domain}` releases a site; it can register again on its next check if the licence has room. See [apps.md](apps.md#sites-and-the-site-limit).
+`GET /licenses/{id}/activations` returns `{ "max_sites": 3, "data": [ { "domain", "version", "first_seen_at", "last_seen_at", "check_count" } ] }`. `version` is the version the site last reported with its check (`?version=`), or `null`. `DELETE /licenses/{id}/activations/{domain}` releases a site; it can register again on its next check if the licence has room. See [apps.md](apps.md#sites-and-the-site-limit).
 
 ### Apps
 
@@ -216,7 +221,9 @@ An app is a product you license to many customers. See [apps.md](apps.md) for th
 
 `DELETE /apps/{app}` needs the `full` permission and returns `409` (`app_not_empty`) while the app still has licences. It deletes the app's files.
 
-`licenses_in_force` counts licences that are currently valid (Completed, or Active and not expired). `latest_version` is the highest version among the app's files.
+`licenses_in_force` counts licences that are currently valid (their status lets sites run). `latest_version` is the highest stable version among the app's current releases (withdrawn releases excluded).
+
+`GET /apps/{app}/versions` returns `{ "latest_version", "sites", "outdated", "data": [ { "version", "sites", "outdated" } ] }`: how many sites run each reported version, newest first (`version` is `null` for sites that never reported one).
 
 `PUT /apps/{app}/files` uploads a file that every licence of the app can see, with the same body, query parameters and release rule as a licence file (below). The file JSON of an app has no `available` or `download_url`, because the download URL contains a licence key; licences get the URL from `GET /download/<key>` ([files.md](files.md)).
 

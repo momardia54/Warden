@@ -20,7 +20,9 @@ Supported versions: only the latest release (there is no 1.0 yet, so none is lon
 | API keys | `wk_` plus 40 uniformly random letters and digits. Only a SHA-256 hash is stored; the key is shown once. Three scopes (`read`, `manage`, `full`), revocable at any time. Keys act as the admin account, so give each app its own key with the least access it needs. |
 | Licence keys | `WRD-` plus 20 random characters from a 30-symbol alphabet (about 98 bits), generated with the platform's secure random source. Unknown keys get a generic 404. |
 | Check responses | Signed: `X-Warden-Signature` is the HMAC-SHA256 of the body, keyed with the licence key. A site can verify a response is genuine and unmodified. |
-| File downloads | Files live in a private R2 bucket with no public URL; the Worker streams them only after checking the licence (the licence status against the file's release statuses, and the domain when the file requires it). Every download and refusal is logged. Names are sanitised and sent as attachments with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`, so an uploaded file can never run as a page on the dashboard's origin. |
+| File downloads | Files live in a private R2 bucket with no public URL; the Worker streams them only after checking the licence (the licence status against the file's release statuses, and the domain when the file requires it). Every download and refusal is logged. Names are sanitised and sent as attachments with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`, so an uploaded file can never run as a page on the dashboard's origin. Each file's SHA-256 is computed during the upload and sent with the release and as `X-Warden-Sha256`, so an updater can check the package arrived intact. |
+| Update offers | The `update` block is part of the signed check response, so a site can trust the version, checksum and download link it is offered as much as the status. |
+| CSV export | Cells that a spreadsheet would read as a formula (starting with `=`, `+`, `-`, `@`) are prefixed with an apostrophe, so opening an export cannot run anything. |
 | Database | Cloudflare D1, queries use bound parameters throughout. Check history older than 90 days is deleted daily. No visitor IPs are stored for checks; only the domain a site reports. |
 
 ## Limits you should know about
@@ -33,7 +35,7 @@ Supported versions: only the latest release (there is no 1.0 yet, so none is lon
 - **CORS is open (`*`) on `/check/*` and `/api/*`.** Those endpoints do not use cookies, so a web page cannot use your dashboard session against them; they authenticate with the key in the address or the `Authorization` header.
 - **Site limits rely on the domain a site reports.** A customer could send another domain, or run the same code on several servers that all report the same domain. The limit controls honest use and makes sharing visible (the licence page lists every registered site); it does not technically prevent it.
 - **Downloaded files stay downloaded.** Cutting a licence off stops future downloads and updates, not copies already on a client's server. The final file, once released, cannot be taken back. Anyone who holds a valid licence key can download the files that licence allows, from anywhere, as often as they like (no download limits yet).
-- **No malware scanning or checksums** on uploaded files; you are the only uploader, so scan your own builds. SHA-256 checksums are on the roadmap.
+- **No malware scanning** of uploaded files; you are the only uploader, so scan your own builds. The SHA-256 checksum proves a package arrived as uploaded, not that it came from you: anyone who can upload (you, or an API key with `manage`) can publish a release. Release signing is on the roadmap.
 - Not a general-purpose secret store. Do not put passwords or personal data in licence notes.
 
 ## Hardening checklist

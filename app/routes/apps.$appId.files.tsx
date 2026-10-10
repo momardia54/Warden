@@ -16,6 +16,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     statuses: q.get("statuses") ?? undefined,
     checkDomain: q.get("check_domain") !== "false",
     version: q.get("version") ?? "",
+    channel: q.get("channel") ?? undefined,
     contentType: request.headers.get("content-type"),
     size: Number(request.headers.get("content-length")),
     body: request.body,

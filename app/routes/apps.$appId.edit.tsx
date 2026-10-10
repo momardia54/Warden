@@ -43,8 +43,8 @@ export default function EditApp({ loaderData, actionData }: Route.ComponentProps
   return (
     <>
       <PageHeader crumbs={[{ label: "Apps", to: "/apps" }, { label: app.name, to: `/apps/${app.id}` }, { label: "Edit" }]} />
-      <div className="p-4 pt-0">
-        <h1 className="mb-6 text-2xl font-bold">Edit app</h1>
+      <div className="max-w-6xl p-4 pt-0 lg:px-6">
+        <h1 className="mb-6 text-2xl font-semibold tracking-tight">Edit app</h1>
         <AppForm values={values} statuses={statuses} error={actionData?.error} submitLabel="Save changes" cancelTo={`/apps/${app.id}`} />
       </div>
     </>

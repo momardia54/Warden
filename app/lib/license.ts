@@ -53,6 +53,30 @@ export type CheckResponse = {
   app?: { slug: string; name: string } | null
   expires_at?: string | null
   checked_at: string
+  /** Present when the site sent its version: the newest release this licence can download, and whether it is newer. */
+  update?: UpdateInfo
+}
+
+/** A release offered to a site. `download_url` already carries the site's domain when it sent one. */
+export type ReleaseInfo = {
+  id: string
+  name: string
+  version: string
+  channel: string
+  changelog: string
+  size: number
+  sha256: string | null
+  released_at: string
+  download_url: string
+}
+
+export type UpdateInfo = {
+  /** The version the site reported. */
+  current: string
+  /** True when `latest` is newer than `current`. */
+  available: boolean
+  /** The newest release the licence can download in the site's channel, or null if there is none. */
+  latest: ReleaseInfo | null
 }
 
 type LicenseForCheck = {

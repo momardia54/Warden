@@ -14,6 +14,8 @@ This is a plan, not a promise. Order can change.
 - **Configurable statuses** at app and licence level, with an expiry rule, a message and a free colour per status
 - **Apps**: licences issued under an app with defaults, a site limit with automatic site registration, and shared releases with a "latest version" pointer
 - Status **completed** (paid in full) and **files per licence** in R2: per-file release rules by licence status, gated downloads, download log, upload by dashboard or API
+- **Releases and updates**: versions, stable and beta channels, release notes, SHA-256 checksums, withdrawal, update offers in the check response, versions in use per site and per app
+- Dashboard: needs-attention queue with one-click extend, quick search, saved list views, CSV export
 
 ## Next (towards 1.0.0)
 
@@ -21,10 +23,10 @@ This is a plan, not a promise. Order can change.
 - [ ] **Rate limiting** for the API and the check URL
 - [ ] **Public-key signatures** (Ed25519) so a site holds only a public key and cannot forge responses
 - [ ] **Grace period** per licence: report `valid: true` with a warning for N days after the expiry date
-- [ ] **Import and export** of all licences as JSON/CSV
-- [ ] **Renewal reminders** in the dashboard: a list of licences ending soon with a one-click extend
+- [ ] **Import** of licences from CSV (export is done)
 - [ ] **Tests against a real Worker** in CI (today: unit tests plus a local D1 stand-in and manual runs)
-- [ ] **SHA-256 checksum** for each file, shown in the listing, so an updater can verify what it downloaded
+- [ ] **Signed releases** (Ed25519) so an updater can verify a package came from you, not only that it arrived intact
+- [ ] **Staged rollouts**: offer a release to a percentage of sites first
 - [ ] **Larger files**: direct-to-R2 uploads for files over 100 MB, and range (resumable) downloads
 - [ ] **Download limits** and time-limited, signed download links
 - [ ] **Docs site** and a one-click deploy button once the repository is public
@@ -36,6 +38,7 @@ This is a plan, not a promise. Order can change.
 - Plans within an app (for example 1 site, 5 sites, unlimited) as named templates for duration and site limit
 - Check statistics per licence over time
 - Official client snippets (PHP/WordPress, JavaScript) kept in this repository
+- Bulk actions in the licence list (change status, extend several licences at once)
 - Audit log for dashboard and API changes
 
 ## Not planned

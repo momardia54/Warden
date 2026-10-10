@@ -6,6 +6,13 @@ export function openApiSpec(origin: string) {
   const body = (schema: object) => ({ required: true, content: { "application/json": { schema } } })
   const secured = [{ bearer: [] }]
   const appParam = { name: "app", in: "path", required: true, description: "App id (app_...) or slug.", schema: { type: "string" } }
+  /** Query parameters of an upload that describe the file as a release. */
+  const releaseParams = [
+    { name: "version", in: "query", description: "Makes the file a release, offered as an update. Numbers separated by dots with an optional suffix: 1.4.0, 2.0.0-beta.1", schema: { type: "string", maxLength: 40 } },
+    { name: "channel", in: "query", description: "Beta releases are offered only to sites that check with channel=beta", schema: { enum: ["stable", "beta"], default: "stable" } },
+    { name: "changelog", in: "query", description: "Public release notes, returned to sites with the release. Can also be set afterwards with PATCH", schema: { type: "string", maxLength: 10000 } },
+    { name: "notes", in: "query", description: "Internal notes, never sent to sites", schema: { type: "string" } },
+  ]
 
   /** The endpoints that manage the statuses of an app or of a licence. */
   const statusPaths = (base: string, params: object[], owner: string) => ({
@@ -58,7 +65,7 @@ export function openApiSpec(origin: string) {
           summary: "List licences",
           description: "Newest first. Pass `before` = the `next` value of the previous page to continue.",
           parameters: [
-            { name: "status", in: "query", schema: { enum: ["pending", "active", "completed", "suspended", "disabled", "expired"] } },
+            { name: "status", in: "query", description: "A status key, matched on the status reported to sites (an expiry rule that has triggered counts)", schema: { type: "string", example: "active" } },
             { name: "q", in: "query", description: "Search name, customer, key, domains, external_ref and app name", schema: { type: "string" } },
             { name: "app", in: "query", description: "Only licences of this app (id or slug)", schema: { type: "string" } },
             { name: "external_ref", in: "query", schema: { type: "string" } },
@@ -82,7 +89,7 @@ export function openApiSpec(origin: string) {
       },
       "/licenses/{id}/status": {
         parameters: [idParam],
-        post: { summary: "Set the status", requestBody: body({ type: "object", required: ["status"], properties: { status: { enum: ["pending", "active", "completed", "suspended", "disabled"] } } }), responses: { 200: ok("Updated"), 403: err, 404: err, 422: err } },
+        post: { summary: "Set the status", requestBody: body({ type: "object", required: ["status"], properties: { status: { type: "string", description: "A status key of the statuses that apply to the licence" } } }), responses: { 200: ok("Updated"), 403: err, 404: err, 422: err } },
       },
       "/licenses/{id}/renew": {
         parameters: [idParam],
@@ -105,19 +112,18 @@ export function openApiSpec(origin: string) {
             { name: "name", in: "query", required: true, description: "Download file name", schema: { type: "string" } },
             { name: "statuses", in: "query", description: "Comma separated licence statuses in which the file is available", schema: { type: "string", default: "active,completed", example: "active,completed" } },
             { name: "check_domain", in: "query", description: "Require the requesting domain to match the licence's allowed domains", schema: { type: "boolean", default: true } },
-            { name: "version", in: "query", schema: { type: "string" } },
-            { name: "notes", in: "query", schema: { type: "string" } },
+            ...releaseParams,
           ],
           requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
-          responses: { 201: { description: "The file" }, 403: err, 413: err, 422: err, 501: err },
+          responses: { 201: ok("The file", "File"), 403: err, 413: err, 422: err, 501: err },
         },
       },
       "/licenses/{id}/files/{fileId}": {
         parameters: [idParam, { name: "fileId", in: "path", required: true, schema: { type: "string" } }],
         patch: {
           summary: "Update a file's release rule or metadata (permission: manage)",
-          requestBody: body({ type: "object", properties: { statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" }, version: { type: "string" }, notes: { type: "string" } } }),
-          responses: { 200: { description: "The file" }, 403: err, 404: err, 422: err },
+          requestBody: body({ $ref: "#/components/schemas/FileChanges" }),
+          responses: { 200: ok("The file", "File"), 403: err, 404: err, 422: err },
         },
         delete: { summary: "Delete a file (permission: manage)", responses: { 200: { description: "{ deleted: true, id }" }, 404: err } },
       },
@@ -163,16 +169,23 @@ export function openApiSpec(origin: string) {
             { name: "name", in: "query", required: true, schema: { type: "string" } },
             { name: "statuses", in: "query", schema: { type: "string", default: "active,completed" } },
             { name: "check_domain", in: "query", schema: { type: "boolean", default: true } },
-            { name: "version", in: "query", schema: { type: "string" } },
-            { name: "notes", in: "query", schema: { type: "string" } },
+            ...releaseParams,
           ],
           requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
-          responses: { 201: { description: "The file" }, 403: err, 413: err, 422: err, 501: err },
+          responses: { 201: ok("The file", "File"), 403: err, 413: err, 422: err, 501: err },
+        },
+      },
+      "/apps/{app}/versions": {
+        parameters: [appParam],
+        get: {
+          summary: "Versions the sites of the app run",
+          description: "Built from the version each site reports with its check (`?version=`). `outdated` counts sites on a version older than `latest_version`, the highest stable release.",
+          responses: { 200: { description: "{ latest_version, sites, outdated, data: [{ version, sites, outdated }] }" }, 404: err },
         },
       },
       "/apps/{app}/files/{fileId}": {
         parameters: [appParam, { name: "fileId", in: "path", required: true, schema: { type: "string" } }],
-        patch: { summary: "Update a shared file's release rule or metadata (permission: manage)", requestBody: body({ type: "object", properties: { statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" }, version: { type: "string" }, notes: { type: "string" } } }), responses: { 200: { description: "The file" }, 403: err, 404: err, 422: err } },
+        patch: { summary: "Update a shared file's release rule or metadata (permission: manage)", requestBody: body({ $ref: "#/components/schemas/FileChanges" }), responses: { 200: ok("The file", "File"), 403: err, 404: err, 422: err } },
         delete: { summary: "Delete a shared file (permission: manage)", responses: { 200: { description: "{ deleted: true, id }" }, 404: err } },
       },
       "/licenses/{id}/activity": { parameters: [idParam], get: { summary: "Recent checks and changes", parameters: [{ name: "limit", in: "query", schema: { type: "integer", maximum: 200, default: 50 } }], responses: { 200: { description: "{ data: Activity[] }" }, 404: err } } },
@@ -211,6 +224,28 @@ export function openApiSpec(origin: string) {
             is_default: { type: "boolean", description: "New licences start with this status. Exactly one status of a set is the default" },
           },
         },
+        File: {
+          type: "object",
+          properties: {
+            id: { type: "string" }, name: { type: "string" },
+            version: { type: "string", description: "Empty for an attachment. A file with a version is a release" },
+            channel: { enum: ["stable", "beta"] }, changelog: { type: "string", description: "Public release notes" }, notes: { type: "string", description: "Internal" },
+            size: { type: "integer" }, content_type: { type: "string" }, sha256: { type: ["string", "null"], description: "Hex SHA-256 of the file. null for files uploaded before checksums were recorded" },
+            withdrawn: { type: "boolean", description: "A withdrawn release is not offered and cannot be downloaded (HTTP 410)" }, withdrawn_at: { type: ["string", "null"] },
+            statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" },
+            available: { type: "boolean", description: "Licence files only: downloadable now, ignoring the domain check" }, download_url: { type: "string", description: "Licence files only" },
+            uploaded_at: { type: "string" }, download_count: { type: "integer" }, last_download_at: { type: ["string", "null"] },
+          },
+        },
+        FileChanges: {
+          type: "object",
+          properties: {
+            statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" },
+            version: { type: "string", description: "Empty string turns a release into an attachment" }, channel: { enum: ["stable", "beta"] },
+            changelog: { type: "string", maxLength: 10000 }, notes: { type: "string", maxLength: 500 },
+            withdrawn: { type: "boolean", description: "true withdraws the release, false restores it" },
+          },
+        },
         AppInput: {
           type: "object",
           properties: {
@@ -229,7 +264,7 @@ export function openApiSpec(origin: string) {
           properties: {
             id: { type: "string" }, name: { type: "string" }, customer_name: { type: "string" }, customer_email: { type: "string" }, app: { type: ["object", "null"], properties: { id: { type: "string" }, slug: { type: "string" }, name: { type: "string" } } }, max_sites: { type: ["integer", "null"] }, sites_used: { type: "integer" }, key: { type: "string" }, check_url: { type: "string" },
             status: { type: "string", description: "The status reported to sites: the stored status, or the status its expiry rule points to once the expiry date has passed" },
-            stored_status: { type: "string" }, valid: { type: "boolean", description: "true for active and completed" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
+            stored_status: { type: "string" }, valid: { type: "boolean", description: "true when the reported status lets sites run (by default Active and Completed)" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
             message: { type: "string" }, notes: { type: "string" }, external_ref: { type: ["string", "null"] },
             created_at: { type: "string" }, updated_at: { type: "string" }, last_check_at: { type: ["string", "null"] }, last_check_domain: { type: ["string", "null"] }, check_count: { type: "integer" },
           },

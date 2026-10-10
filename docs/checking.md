@@ -18,6 +18,8 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 | `site_limit_reached` | false | The licence is already used on its maximum number of sites, and this domain is not one of them |
 | `unknown` | false | No such key (HTTP 404) |
 
+Send the installed version as well (`&version=1.3.0`) and the response includes an `update` block: the newest release the licence can download and whether it is newer. See [releases.md](releases.md).
+
 `status` is the key of the licence's status among the statuses that apply to it. The table above shows the defaults; you can add, rename and remove statuses, so decide by `valid` rather than by a fixed list of keys. `message` is the licence's public message, or the message of its status, meant to be shown to the site's owner.
 
 ## Rules of thumb for the site

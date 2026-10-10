@@ -65,12 +65,17 @@ export function serializeFile(f: LicenseFile, license: License | null, origin: s
     id: f.id,
     name: f.name,
     version: f.version,
+    channel: f.channel,
+    changelog: f.changelog,
     notes: f.notes,
     size: f.size,
     content_type: f.content_type,
+    sha256: f.sha256 || null,
+    withdrawn: f.withdrawn_at !== null,
+    withdrawn_at: iso(f.withdrawn_at),
     statuses: rule.statuses,
     check_domain: rule.check_domain,
-    ...(license ? { available: evaluateFileAccess(license, rule, null, Date.now(), true, set).allowed, download_url: `${origin}/download/${license.license_key}/${f.id}` } : {}),
+    ...(license ? { available: f.withdrawn_at === null && evaluateFileAccess(license, rule, null, Date.now(), true, set).allowed, download_url: `${origin}/download/${license.license_key}/${f.id}` } : {}),
     uploaded_at: iso(f.uploaded_at),
     download_count: f.download_count,
     last_download_at: iso(f.last_download_at),
@@ -90,4 +95,4 @@ export const serializeStatus = (s: StatusDef) => ({
 
 export const serializeActivity = (a: Activity) => ({ at: iso(a.at), event: a.event, status: a.status, domain: a.domain, detail: a.detail })
 
-export const serializeActivation = (a: Activation) => ({ domain: a.domain, first_seen_at: iso(a.first_seen_at), last_seen_at: iso(a.last_seen_at), check_count: a.check_count })
+export const serializeActivation = (a: Activation) => ({ domain: a.domain, version: a.version, first_seen_at: iso(a.first_seen_at), last_seen_at: iso(a.last_seen_at), check_count: a.check_count })

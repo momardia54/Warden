@@ -4,7 +4,7 @@ import { applyAppBody, applyLicenseBody } from "./api-input.server"
 import { authenticate, type ApiKeyRow } from "./api-keys.server"
 import { CORS, fail, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
 import { serializeActivation, serializeActivity, serializeApp, serializeFile, serializeLicense, serializeStatus } from "./api-serializers.server"
-import { appDefaults, createApp, deleteApp, findApp, getAppSummary, listApps, updateApp, type App, type AppInput } from "./apps.server"
+import { appDefaults, createApp, deleteApp, findApp, getAppSummary, listApps, updateApp, versionsInUse, type App, type AppInput } from "./apps.server"
 import { deleteFile, getFile, listFiles, statusSetForOwner, storeFile, updateFile, type FileOwner } from "./files.server"
 import {
   createLicense, deleteLicense, extendLicense, getLicense, getLicenseByKey, getLicenseByRef, listActivations, overviewStats, queryLicenses, recentActivity,
@@ -233,6 +233,8 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
       checkDomain: q.get("check_domain") !== "false",
       version: q.get("version") ?? "",
       notes: q.get("notes") ?? "",
+      channel: q.get("channel") ?? undefined,
+      changelog: q.get("changelog") ?? "",
       contentType: request.headers.get("content-type"),
       size: Number(request.headers.get("content-length")),
       body: request.body,
@@ -256,6 +258,9 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
       checkDomain: typeof body.check_domain === "boolean" ? body.check_domain : undefined,
       version: typeof body.version === "string" ? body.version : undefined,
       notes: typeof body.notes === "string" ? body.notes : undefined,
+      channel: typeof body.channel === "string" ? body.channel : undefined,
+      changelog: typeof body.changelog === "string" ? body.changelog : undefined,
+      withdrawn: typeof body.withdrawn === "boolean" ? body.withdrawn : undefined,
     })
     return "error" in updated ? fail(updated.status, "invalid_file", updated.error) : reply(shape(updated.file))
   }
@@ -404,6 +409,10 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
     return fail(405, "method_not_allowed", "Use GET or POST.")
   }
   if (sub === "files") return filesRoute(ctx, { app }, rest[0])
+  if (sub === "versions" && rest.length === 0) {
+    if (method !== "GET") return fail(405, "method_not_allowed", "Use GET.")
+    return reply(await versionsInUse(env, app.id))
+  }
   if (sub === "statuses") return statusRoute(ctx, { app: app.id }, await getStatusSetForApp(env, app.id), rest)
   return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
 }

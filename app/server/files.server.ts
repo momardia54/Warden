@@ -1,9 +1,10 @@
 import { cleanFileName, defaultReleaseStatuses, MAX_FILE_BYTES } from "../lib/files"
+import { CHANNELS, isChannel, isValidVersion, MAX_CHANGELOG_LENGTH, MAX_VERSION_LENGTH, type Channel } from "../lib/releases"
 import { describeStatusKeys, parseStatusKeys, splitStatusKeys, type StatusSet } from "../lib/statuses"
 import type { App } from "./apps.server"
 import type { License } from "./licenses.server"
 import { getStatusSetForApp, getStatusSetForLicense } from "./statuses.server"
-import { newId } from "./util.server"
+import { newId, toHex } from "./util.server"
 
 /** The owner of a file: a single licence, or an app (shared by every licence of that app). */
 export type FileOwner = { license: License } | { app: App }
@@ -19,8 +20,18 @@ export type LicenseFile = {
   /** Set for a file shared by all licences of an app. */
   app_id: string | null
   name: string
+  /** Empty for an attachment. A file with a version is a release. */
   version: string
+  /** Internal notes, never sent to sites. */
   notes: string
+  /** stable or beta. */
+  channel: Channel
+  /** Public release notes. */
+  changelog: string
+  /** Hex SHA-256 of the stored file. Empty for files uploaded before checksums were recorded. */
+  sha256: string
+  /** Set when the release was withdrawn: no longer offered or downloadable. */
+  withdrawn_at: number | null
   statuses: string
   check_domain: number
   size: number
@@ -72,12 +83,67 @@ export type StoreInput = {
   checkDomain?: boolean
   version?: string
   notes?: string
+  channel?: string
+  changelog?: string
   contentType?: string | null
   size: number
   body: ReadableStream | null
 }
 
 type Failure = { error: string; status: number }
+
+/** Validates an optional version. Returns the cleaned value ("" for none) or an error message. */
+function readVersion(raw: string | undefined): { version: string } | { error: string } {
+  const version = (raw ?? "").trim()
+  if (version && !isValidVersion(version)) {
+    return { error: `"${version.slice(0, MAX_VERSION_LENGTH)}" is not a valid version. Use numbers separated by dots, optionally with a suffix, for example 1.4.0 or 2.0.0-beta.1.` }
+  }
+  return { version }
+}
+
+function readChannel(raw: string | undefined): { channel: Channel } | { error: string } {
+  const channel = (raw ?? "").trim().toLowerCase() || "stable"
+  return isChannel(channel) ? { channel } : { error: `channel must be one of: ${CHANNELS.join(", ")}.` }
+}
+
+/** Feeds bytes to SHA-256 as they pass. Workers have a streaming digest; elsewhere (tests) the bytes are collected first. */
+function sha256Hasher(): { update: (chunk: Uint8Array) => Promise<void>; digest: () => Promise<string> } {
+  const Native = (crypto as unknown as { DigestStream?: new (algorithm: string) => WritableStream<Uint8Array> & { digest: Promise<ArrayBuffer> } }).DigestStream
+  if (typeof Native === "function") {
+    const stream = new Native("SHA-256")
+    const writer = stream.getWriter()
+    return {
+      update: (chunk) => writer.write(chunk),
+      digest: async () => {
+        await writer.close()
+        return toHex(await stream.digest)
+      },
+    }
+  }
+  const chunks: Uint8Array[] = []
+  return {
+    update: async (chunk) => void chunks.push(chunk),
+    digest: async () => toHex(await crypto.subtle.digest("SHA-256", await new Blob(chunks as BlobPart[]).arrayBuffer())),
+  }
+}
+
+/**
+ * Streams the body through a SHA-256 hash. In a Worker the result is wrapped in a FixedLengthStream, because R2 needs to
+ * know the length of a stream in advance; it also fails the upload if fewer or more bytes arrive than announced.
+ */
+function hashedBody(body: ReadableStream<Uint8Array>, size: number): { stream: ReadableStream; digest: () => Promise<string> } {
+  const hasher = sha256Hasher()
+  const hashed = body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      async transform(chunk, controller) {
+        await hasher.update(chunk)
+        controller.enqueue(chunk)
+      },
+    })
+  )
+  const stream = typeof FixedLengthStream === "function" ? hashed.pipeThrough(new FixedLengthStream(size)) : hashed
+  return { stream, digest: hasher.digest }
+}
 
 /** Validates the input, streams the body to R2 and records the file. */
 export async function storeFile(env: Env, owner: FileOwner, input: StoreInput): Promise<{ file: LicenseFile } | Failure> {
@@ -90,22 +156,30 @@ export async function storeFile(env: Env, owner: FileOwner, input: StoreInput): 
   if (!Number.isFinite(input.size) || input.size <= 0) return { error: "The request body is empty or has no Content-Length header.", status: 411 }
   if (input.size > MAX_FILE_BYTES) return { error: `The file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB limit.`, status: 413 }
   if (!input.body) return { error: "The request has no body.", status: 422 }
+  const version = readVersion(input.version)
+  if ("error" in version) return { error: version.error, status: 422 }
+  const channel = readChannel(input.channel)
+  if ("error" in channel) return { error: channel.error, status: 422 }
 
   const id = newId("fil")
   const key = `${ownerId(owner)}/${id}`
   const contentType = (input.contentType || "application/octet-stream").slice(0, 120)
-  await env.FILES.put(key, input.body, { httpMetadata: { contentType } })
+  const body = hashedBody(input.body, input.size)
+  await env.FILES.put(key, body.stream, { httpMetadata: { contentType } })
+  const sha256 = await body.digest()
   const now = Date.now()
+  const label = version.version ? `${name} (version ${version.version}${channel.channel === "beta" ? ", beta" : ""})` : name
   try {
     const statements = [
       env.DB.prepare(
-        `INSERT INTO files (id, license_id, app_id, name, version, notes, statuses, check_domain, size, content_type, r2_key, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO files (id, license_id, app_id, name, version, notes, channel, changelog, sha256, statuses, check_domain, size, content_type, r2_key, uploaded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
-        id, "license" in owner ? owner.license.id : null, "app" in owner ? owner.app.id : null, name, (input.version ?? "").trim().slice(0, 40), (input.notes ?? "").trim().slice(0, 500),
-        statuses.join(","), input.checkDomain === false ? 0 : 1, input.size, contentType, key, now
+        id, "license" in owner ? owner.license.id : null, "app" in owner ? owner.app.id : null, name, version.version, (input.notes ?? "").trim().slice(0, 500),
+        channel.channel, (input.changelog ?? "").trim().slice(0, MAX_CHANGELOG_LENGTH), sha256, statuses.join(","), input.checkDomain === false ? 0 : 1, input.size, contentType, key, now
       ),
     ]
-    if ("license" in owner) statements.push(logChange(env, owner.license, now, `File added: ${name} (available when ${describeStatusKeys(statuses, set)})`))
+    if ("license" in owner) statements.push(logChange(env, owner.license, now, `File added: ${label} (available when ${describeStatusKeys(statuses, set)})`))
     await env.DB.batch(statements)
   } catch (error) {
     await env.FILES.delete(key)
@@ -114,7 +188,16 @@ export async function storeFile(env: Env, owner: FileOwner, input: StoreInput): 
   return { file: (await getFile(env, owner, id))! }
 }
 
-export type FileChanges = { statuses?: unknown; checkDomain?: boolean; version?: string; notes?: string }
+export type FileChanges = {
+  statuses?: unknown
+  checkDomain?: boolean
+  version?: string
+  notes?: string
+  channel?: string
+  changelog?: string
+  /** true withdraws the release, false restores it. */
+  withdrawn?: boolean
+}
 
 /** Updates a file's release rule or metadata. Only the fields present are changed. */
 export async function updateFile(env: Env, owner: FileOwner, file: LicenseFile, changes: FileChanges): Promise<{ file: LicenseFile } | Failure> {
@@ -126,11 +209,24 @@ export async function updateFile(env: Env, owner: FileOwner, file: LicenseFile, 
     statuses = parsed.join(",")
   }
   const checkDomain = changes.checkDomain === undefined ? file.check_domain : changes.checkDomain ? 1 : 0
-  const version = changes.version === undefined ? file.version : changes.version.trim().slice(0, 40)
+  const version = changes.version === undefined ? { version: file.version } : readVersion(changes.version)
+  if ("error" in version) return { error: version.error, status: 422 }
+  const channel = changes.channel === undefined ? { channel: file.channel } : readChannel(changes.channel)
+  if ("error" in channel) return { error: channel.error, status: 422 }
+  const withdrawnAt = changes.withdrawn === undefined ? file.withdrawn_at : changes.withdrawn ? (file.withdrawn_at ?? Date.now()) : null
   const notes = changes.notes === undefined ? file.notes : changes.notes.trim().slice(0, 500)
-  const statements = [env.DB.prepare("UPDATE files SET statuses = ?, check_domain = ?, version = ?, notes = ? WHERE id = ?").bind(statuses, checkDomain, version, notes, file.id)]
-  if ("license" in owner && (statuses !== file.statuses || checkDomain !== file.check_domain)) {
-    statements.push(logChange(env, owner.license, Date.now(), `File updated: ${file.name} (available when ${describeStatusKeys(splitStatusKeys(statuses, set), set)})`))
+  const changelog = changes.changelog === undefined ? file.changelog : changes.changelog.trim().slice(0, MAX_CHANGELOG_LENGTH)
+  const statements = [
+    env.DB.prepare("UPDATE files SET statuses = ?, check_domain = ?, version = ?, notes = ?, channel = ?, changelog = ?, withdrawn_at = ? WHERE id = ?").bind(
+      statuses, checkDomain, version.version, notes, channel.channel, changelog, withdrawnAt, file.id
+    ),
+  ]
+  if ("license" in owner) {
+    const now = Date.now()
+    if (statuses !== file.statuses || checkDomain !== file.check_domain) {
+      statements.push(logChange(env, owner.license, now, `File updated: ${file.name} (available when ${describeStatusKeys(splitStatusKeys(statuses, set), set)})`))
+    }
+    if ((withdrawnAt === null) !== (file.withdrawn_at === null)) statements.push(logChange(env, owner.license, now, `${withdrawnAt === null ? "Release restored" : "Release withdrawn"}: ${file.name}`))
   }
   await env.DB.batch(statements)
   return { file: (await getFile(env, owner, file.id))! }
@@ -158,4 +254,28 @@ export const deleteAppFiles = (env: Env, appId: string) => deleteStoredObjects(e
 
 function logChange(env: Env, license: License, at: number, detail: string) {
   return env.DB.prepare("INSERT INTO activity (license_id, at, event, status, detail) VALUES (?, ?, 'change', ?, ?)").bind(license.id, at, license.status, detail)
+}
+
+/** Reads the file fields a dashboard form sent. Fields that are absent are left unchanged. */
+function readFileForm(form: FormData): FileChanges {
+  const text = (name: string) => (form.has(name) ? String(form.get(name)) : undefined)
+  const flag = (name: string) => (form.has(name) ? form.get(name) === "true" : undefined)
+  return { statuses: text("statuses"), checkDomain: flag("check_domain"), version: text("version"), notes: text("notes"), channel: text("channel"), changelog: text("changelog"), withdrawn: flag("withdrawn") }
+}
+
+/**
+ * Handles the file intents of a licence or app page: "update-file" and "delete-file". Returns `{ ok: true }` or
+ * `{ error }` for the page's fetcher, or null when the intent is not a file intent.
+ */
+export async function applyFileForm(env: Env, owner: FileOwner, form: FormData): Promise<{ ok: true } | { error: string } | null> {
+  const intent = String(form.get("intent"))
+  if (intent !== "update-file" && intent !== "delete-file") return null
+  const file = await getFile(env, owner, String(form.get("fileId")))
+  if (!file) return { error: "That file no longer exists. Reload the page." }
+  if (intent === "delete-file") {
+    await deleteFile(env, owner, file)
+    return { ok: true }
+  }
+  const updated = await updateFile(env, owner, file, readFileForm(form))
+  return "error" in updated ? { error: updated.error } : { ok: true }
 }

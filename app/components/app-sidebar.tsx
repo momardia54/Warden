@@ -1,4 +1,5 @@
-import { Boxes, KeyRound, Braces, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, ShieldCheck, Sun } from "lucide-react"
+import { Boxes, KeyRound, Braces, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, Search, ShieldCheck, Sun } from "lucide-react"
+import { Kbd } from "#/components/command-menu"
 import { NavLink, useFetcher, useLocation } from "react-router"
 import { useTheme } from "next-themes"
 import {
@@ -29,7 +30,7 @@ const NAV = [
   { title: "Overview", to: "/overview", icon: LayoutDashboard },
   { title: "Apps", to: "/apps", icon: Boxes },
   { title: "Licences", to: "/licenses", icon: KeyRound },
-  { title: "API", to: "/api-keys", icon: Braces },
+  { title: "API keys", to: "/api-keys", icon: Braces },
 ]
 
 function NavGroup({ label, items }: { label: string; items: typeof NAV }) {
@@ -57,7 +58,7 @@ function NavGroup({ label, items }: { label: string; items: typeof NAV }) {
   )
 }
 
-export function AppSidebar({ username, ...props }: { username: string } & React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({ username, onSearch, ...props }: { username: string; onSearch: () => void } & React.ComponentProps<typeof Sidebar>) {
   const fetcher = useFetcher()
   const { setTheme } = useTheme()
 
@@ -81,6 +82,19 @@ export function AppSidebar({ username, ...props }: { username: string } & React.
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
+        <SidebarGroup className="pb-0">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={onSearch} tooltip="Search (Ctrl+K)" className="border bg-background text-muted-foreground shadow-xs hover:text-foreground">
+                <Search />
+                <span>Search</span>
+                <span className="ml-auto group-data-[collapsible=icon]:hidden">
+                  <Kbd>⌘K</Kbd>
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
         <NavGroup label="Manage" items={NAV} />
       </SidebarContent>
       <SidebarFooter>

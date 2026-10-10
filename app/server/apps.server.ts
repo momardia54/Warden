@@ -1,4 +1,5 @@
-import { isValidSlug, latestVersioned, slugify } from "../lib/apps"
+import { isValidSlug, slugify } from "../lib/apps"
+import { compareVersions, isOutdated, latestRelease } from "../lib/releases"
 import { defaultStatusKey, effectiveStatusKey, findStatus, type StatusSet } from "../lib/statuses"
 import { deleteAppFiles } from "./files.server"
 import { parseOptionalCount, type LicenseInput } from "./licenses.server"
@@ -29,6 +30,7 @@ export type AppSummary = App & {
   /** Total number of site activations across the app's licences. */
   sites: number
   files: number
+  /** The highest stable version among the app's current releases. */
   latest_version: string | null
 }
 
@@ -116,13 +118,15 @@ export async function listApps(env: Env, now = Date.now()): Promise<AppSummary[]
        FROM apps a ORDER BY a.name COLLATE NOCASE`
     ).all<Omit<AppSummary, "latest_version" | "in_force">>()
   ).results
-  const versions = (await env.DB.prepare("SELECT app_id, version FROM files WHERE app_id IS NOT NULL AND version != ''").all<{ app_id: string; version: string }>()).results
+  const versions = (
+    await env.DB.prepare("SELECT app_id, version, channel, withdrawn_at FROM files WHERE app_id IS NOT NULL AND version != '' AND withdrawn_at IS NULL").all<{ app_id: string; version: string; channel: string; withdrawn_at: null }>()
+  ).results
   const sets = await loadStatusSets(env)
   const licenses = (await env.DB.prepare("SELECT app_id, status, expires_at FROM licenses WHERE app_id IS NOT NULL").all<{ app_id: string; status: string; expires_at: number | null }>()).results
   return apps.map((app) => {
     const set = setForApp(sets, app.id)
     const inForce = licenses.filter((l) => l.app_id === app.id && findStatus(set, effectiveStatusKey(l, set, now))?.grants_access).length
-    return { ...app, in_force: inForce, latest_version: latestVersioned(versions.filter((v) => v.app_id === app.id))?.version ?? null }
+    return { ...app, in_force: inForce, latest_version: latestRelease(versions.filter((v) => v.app_id === app.id))?.version ?? null }
   })
 }
 
@@ -139,4 +143,40 @@ export function appDefaults(app: App, now = Date.now()): Pick<LicenseInput, "sta
     max_sites: app.default_max_sites,
     message: app.default_message,
   }
+}
+
+export type VersionsInUse = {
+  /** The highest stable version among the app's current releases, or null. */
+  latest_version: string | null
+  /** Sites registered under the app's licences, total and on a version older than the latest. */
+  sites: number
+  outdated: number
+  /** Sites per reported version, newest first. `version` is null for sites that never reported one. */
+  data: { version: string | null; sites: number; outdated: boolean }[]
+}
+
+/** Which versions the sites of an app's licences run, as reported with their checks (?version=). */
+export async function versionsInUse(env: Env, appId: string): Promise<VersionsInUse> {
+  const [rows, files] = await Promise.all([
+    env.DB.prepare("SELECT x.version, COUNT(*) AS sites FROM activations x JOIN licenses l ON l.id = x.license_id WHERE l.app_id = ? GROUP BY x.version").bind(appId).all<{ version: string | null; sites: number }>(),
+    env.DB.prepare("SELECT version, channel, withdrawn_at FROM files WHERE app_id = ? AND version != '' AND withdrawn_at IS NULL ORDER BY uploaded_at DESC").bind(appId).all<{ version: string; channel: string; withdrawn_at: null }>(),
+  ])
+  const latest = latestRelease(files.results)?.version ?? null
+  const data = rows.results
+    .map((r) => ({ version: r.version, sites: r.sites, outdated: isOutdated(r.version, latest) }))
+    .sort((a, b) => (a.version === null ? 1 : b.version === null ? -1 : compareVersions(b.version, a.version)))
+  return { latest_version: latest, sites: data.reduce((n, r) => n + r.sites, 0), outdated: data.filter((r) => r.outdated).reduce((n, r) => n + r.sites, 0), data }
+}
+
+/** For each app with a current release: how many of its sites reported a version older than its latest. */
+export async function outdatedSitesByApp(env: Env, apps: AppSummary[]): Promise<Record<string, number>> {
+  const rows = (
+    await env.DB.prepare(
+      "SELECT l.app_id, x.version, COUNT(*) AS sites FROM activations x JOIN licenses l ON l.id = x.license_id WHERE l.app_id IS NOT NULL AND x.version IS NOT NULL GROUP BY l.app_id, x.version"
+    ).all<{ app_id: string; version: string; sites: number }>()
+  ).results
+  const latest = new Map(apps.map((a) => [a.id, a.latest_version]))
+  const out: Record<string, number> = {}
+  for (const row of rows) if (isOutdated(row.version, latest.get(row.app_id))) out[row.app_id] = (out[row.app_id] ?? 0) + row.sites
+  return out
 }

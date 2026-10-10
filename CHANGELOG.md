@@ -4,6 +4,31 @@ Warden is pre-1.0: the API and data model can change between 0.x versions.
 
 ## 0.1.0 (unreleased)
 
+### Added: releases and updates
+
+- A file with a version is a **release**. Releases have a channel (`stable` or `beta`), public release notes and a SHA-256 checksum computed during the upload, and can be **withdrawn** and restored. A withdrawn release is not listed and its download returns `410`
+- The check endpoint accepts `version` (and `channel`) and answers with an `update` block: the newest release the licence can download for that domain and whether it is newer. The version is recorded for the site
+- Versions are validated (`1.4.0`, `v2.1`, `2.0.0-beta.1`) and compared by semantic versioning precedence: `2.0.0-rc.1` now ranks below `2.0.0` (before, the suffix was ignored)
+- Downloads carry `X-Warden-Sha256`; the download list includes `channel`, `changelog` and `sha256`, accepts `channel=beta`, and no longer includes the file's internal `notes`
+- API: upload accepts `channel` and `changelog`; `PATCH` on a file accepts `channel`, `changelog` and `withdrawn`; files return `channel`, `changelog`, `sha256`, `withdrawn`, `withdrawn_at`; activations return `version`; new `GET /apps/{app}/versions`
+- Migration 0007 (file channel, release notes, checksum, withdrawal; the version of each site)
+- docs/releases.md
+
+### Added: dashboard
+
+- Licence and app pages rebuilt around a summary strip (what sites see, expiry, sites, last check; licences, sites, latest release, sites on an old version) and tabs that are kept in the address
+- Release manager: upload dialog with drag and drop, version filled in from the file name, channel and release notes; releases listed by version with the latest marked; edit, copy link or checksum, withdraw, restore and delete from a menu
+- Versions in use per app, and per site on the licence page with "Update available"
+- Overview with a *Needs attention* queue (expiring licences with one-click extend, silent licences), apps with sites on an old version, links from every number to the matching list, and recent activity across all licences
+- Licence list: quick views (in force, not in force, expiring, silent), filters and sorting kept in the address, clickable rows, expiry shown as "in 5 days", and CSV export of the filtered list (spreadsheet formulas are neutralised)
+- Quick search with Ctrl+K or Cmd+K (or `/`): licences by name, customer, key, reference or registered site domain, apps and pages
+- Activity tab with filters for changes, checks and downloads
+- File actions in the dashboard now report errors instead of failing silently
+
+### Fixed
+
+- The OpenAPI description listed only the built-in statuses for `status` filters and bodies, and described `valid` as "true for active and completed"; both now reflect configurable statuses
+
 ### Fixed (review)
 
 - Downloads of files whose names are not plain ASCII (for example `主题.zip`) failed with an error: the header now carries an ASCII name and the exact UTF-8 name (`filename*`)

@@ -56,8 +56,8 @@ export default function NewLicense({ loaderData, actionData }: Route.ComponentPr
   return (
     <>
       <PageHeader crumbs={[{ label: "Licences", to: "/licenses" }, { label: "New licence" }]} />
-      <div className="p-4 pt-0">
-        <h1 className="mb-1 text-2xl font-bold">New licence</h1>
+      <div className="max-w-6xl p-4 pt-0 lg:px-6">
+        <h1 className="mb-1 text-2xl font-semibold tracking-tight">New licence</h1>
         <p className="mb-6 text-sm text-muted-foreground">The key and check URL are generated when you save.</p>
         <LicenseForm values={loaderData.values} apps={loaderData.apps} appHint={loaderData.appHint} error={actionData?.error} submitLabel="Create licence" cancelTo="/licenses" reloadOnAppChange allowStatusCustomisation />
       </div>

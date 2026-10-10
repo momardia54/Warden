@@ -36,8 +36,8 @@ export default function NewApp({ loaderData, actionData }: Route.ComponentProps)
   return (
     <>
       <PageHeader crumbs={[{ label: "Apps", to: "/apps" }, { label: "New app" }]} />
-      <div className="p-4 pt-0">
-        <h1 className="mb-1 text-2xl font-bold">New app</h1>
+      <div className="max-w-6xl p-4 pt-0 lg:px-6">
+        <h1 className="mb-1 text-2xl font-semibold tracking-tight">New app</h1>
         <p className="mb-6 text-sm text-muted-foreground">An app is a product you license to many customers. Licences issued under it share its defaults and its releases.</p>
         <AppForm values={{ ...EMPTY_APP_FORM, default_status: defaultStatusKey(loaderData.statuses) }} statuses={loaderData.statuses} error={actionData?.error} submitLabel="Create app" cancelTo="/apps" allowStatusCustomisation />
       </div>
