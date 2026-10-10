@@ -72,6 +72,7 @@ Not released yet: on the `develop` branch.
 
 ### Fixed
 
+- Preview builds of pull requests (Cloudflare Workers Builds) failed with "Your Wrangler configuration is missing a `previews` block": `wrangler.jsonc` now gives previews rate limit counters of their own. Previews have no database by design, and show a notice saying so instead of "Database upgrade failed"
 - The OpenAPI description listed only the built-in statuses for `status` filters and bodies, and described `valid` as "true for active and completed"; both now reflect configurable statuses
 - The OpenAPI description listed only the built-in statuses for `status` filters and bodies, and described `valid` as "true for active and completed"; both now reflect configurable statuses
 

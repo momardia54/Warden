@@ -170,6 +170,8 @@ R2 has to be activated once in the Cloudflare dashboard (it asks for a payment m
 
 Use a custom domain (Workers > your Worker > Settings > Domains) so check URLs do not depend on `workers.dev`.
 
+If your Worker is connected to a GitHub repository, Cloudflare also builds a **preview** for each pull request. A preview has no database (production's is never shared with unreleased code), so it shows a notice instead of the dashboard; the build passing is what matters. Merge the pull request to deploy.
+
 ## Under the hood
 
 React Router 7 (SSR) on Cloudflare Workers, Cloudflare D1 (data) and R2 (files), Tailwind and shadcn/ui, TypeScript. One daily Cron Trigger deletes check history older than 90 days. The public check endpoint and the API are served by the Worker before the dashboard, and do not use cookies.
