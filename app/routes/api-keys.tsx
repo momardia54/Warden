@@ -80,7 +80,7 @@ curl -X POST ${origin}/api/v1/licenses/<id>/status -H "Authorization: Bearer $WA
   return (
     <>
       <PageHeader crumbs={[{ label: "API keys" }]} />
-      <div className="max-w-4xl space-y-6 p-4 pt-0 lg:px-6">
+      <div className="space-y-6 p-4 pt-0 lg:px-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">API keys</h1>

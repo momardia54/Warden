@@ -24,7 +24,7 @@ export default function Apps({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <PageHeader crumbs={[{ label: "Apps" }]} />
-      <div className="max-w-6xl space-y-5 p-4 pt-0 lg:px-6">
+      <div className="space-y-5 p-4 pt-0 lg:px-6">
         <PageTitle
           title="Apps"
           description="Products you license to many customers. Each app has its own licences, defaults, statuses and releases."

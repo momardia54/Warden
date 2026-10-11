@@ -40,7 +40,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <PageHeader crumbs={[{ label: "Overview" }]} />
-      <div className="max-w-6xl space-y-8 p-4 pt-0 lg:px-6">
+      <div className="space-y-8 p-4 pt-0 lg:px-6">
         <PageTitle
           title="Overview"
           description={stats.total === 0 ? "Nothing issued yet. Start with an app for a product you sell, or a standalone licence for a single project." : `${stats.total} licence${stats.total === 1 ? "" : "s"}, ${stats.valid} valid.`}

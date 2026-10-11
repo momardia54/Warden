@@ -60,6 +60,10 @@ Not released yet: on the `develop` branch.
 - Migrations 0011 (release sources and their imports) and 0012 (GitHub App installation and repository id of a source)
 - docs/repositories.md
 
+### Changed: layout
+
+- Dashboard pages with tables and charts (overview, licences, apps, an app, a licence, analytics, protection, API keys) use the full width of the window instead of stopping at 1,152 pixels. Forms and the Integrations page keep a readable width
+
 ### Changed: terminology
 
 - The descriptions of the built-in statuses use the same terms: Pending is "not valid yet", Active and Completed are "valid"
@@ -68,6 +72,7 @@ Not released yet: on the `develop` branch.
 
 ### Fixed
 
+- Preview builds of pull requests (Cloudflare Workers Builds) failed with "Your Wrangler configuration is missing a `previews` block": `wrangler.jsonc` now gives previews rate limit counters of their own. Previews have no database by design, and show a notice saying so instead of "Database upgrade failed"
 - The OpenAPI description listed only the built-in statuses for `status` filters and bodies, and described `valid` as "true for active and completed"; both now reflect configurable statuses
 - The OpenAPI description listed only the built-in statuses for `status` filters and bodies, and described `valid` as "true for active and completed"; both now reflect configurable statuses
 

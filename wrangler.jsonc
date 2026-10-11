@@ -30,5 +30,20 @@
 		{ "name": "RATE_LIMIT_1200", "namespace_id": "4106", "simple": { "limit": 1200, "period": 60 } }
 	],
 	// Daily housekeeping: deletes old check history.
+	// Preview builds (pull requests and branches other than production) run `wrangler preview`, which does not reuse
+	// production's rate limit counters: each limit needs its own namespace here, separate from production's so preview
+	// traffic never counts against production limits. Previews get no database or file storage (Cloudflare does not
+	// create them automatically, and production's must never be used by unreleased code), so a preview shows a notice
+	// instead of the dashboard. Cron triggers do not run in previews.
+	"previews": {
+		"ratelimits": [
+			{ "name": "RATE_LIMIT_30", "namespace_id": "4201", "simple": { "limit": 30, "period": 60 } },
+			{ "name": "RATE_LIMIT_60", "namespace_id": "4202", "simple": { "limit": 60, "period": 60 } },
+			{ "name": "RATE_LIMIT_120", "namespace_id": "4203", "simple": { "limit": 120, "period": 60 } },
+			{ "name": "RATE_LIMIT_300", "namespace_id": "4204", "simple": { "limit": 300, "period": 60 } },
+			{ "name": "RATE_LIMIT_600", "namespace_id": "4205", "simple": { "limit": 600, "period": 60 } },
+			{ "name": "RATE_LIMIT_1200", "namespace_id": "4206", "simple": { "limit": 1200, "period": 60 } }
+		]
+	},
 	"triggers": { "crons": ["17 3 * * *"] }
 }

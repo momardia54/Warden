@@ -36,6 +36,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url)
 
+    // Worker Previews (preview builds of pull requests) have no database: say so instead of reporting a failed upgrade.
+    if (!env.DB) return previewWithoutDatabase(request)
+
     try {
       await ensureMigrated(env.DB, migrations)
     } catch (error) {
@@ -72,3 +75,17 @@ export default {
     ctx.waitUntil(pruneImports(env).catch((error) => console.error("Warden import clean-up failed:", error)))
   },
 } satisfies ExportedHandler<Env>
+
+function previewWithoutDatabase(request: Request): Response {
+  if (new URL(request.url).pathname.startsWith("/api/")) {
+    return Response.json({ error: { code: "no_database", message: "This Worker has no D1 database bound (DB). Previews of pull requests run without one." } }, { status: 503 })
+  }
+  const page = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Preview without a database</title>
+<body style="font-family:system-ui;max-width:560px;margin:15vh auto;padding:0 20px;line-height:1.5">
+<h1>Preview without a database</h1>
+<p>This build of Warden runs without a database: Cloudflare does not give previews of pull requests access to the production database, by design.
+The build itself succeeded; merge the pull request to deploy it.</p>
+<p>If this is not a preview, bind a D1 database as <code>DB</code> in the Worker's settings.</p>
+</body>`
+  return new Response(page, { status: 503, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } })
+}
