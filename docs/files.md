@@ -40,14 +40,18 @@ The first returns the licence status and the files visible to the licence (its o
   "status": "active",
   "message": "",
   "app": { "slug": "harbor-theme", "name": "Harbor Theme" },
-  "latest": { "id": "fil_...", "name": "harbor-theme-1.4.0.zip", "version": "1.4.0", "channel": "stable", "changelog": "Faster gallery.", "size": 3000000, "sha256": "9f86d0...", "released_at": "...", "download_url": "https://<worker>/download/WRD-.../fil_..." },
+  "license_key": "WRD-7KQ4M-X2PHR-9TCVN-B3WZD",
+  "checked_at": "2026-10-11T09:12:44.512Z",
+  "latest": { "id": "fil_...", "name": "harbor-theme-1.4.0.zip", "version": "1.4.0", "channel": "stable", "changelog": "Faster gallery.", "size": 3000000, "sha256": "9f86d0...", "signature": "base64...", "released_at": "...", "download_url": "https://<worker>/download/WRD-.../fil_..." },
   "files": [
-    { "id": "fil_...", "name": "harbor-theme-1.4.0.zip", "version": "1.4.0", "channel": "stable", "changelog": "Faster gallery.", "size": 3000000, "sha256": "9f86d0...", "source": "app", "uploaded_at": "...", "statuses": ["active", "completed"], "check_domain": true, "available": true, "download_url": "https://<worker>/download/WRD-.../fil_..." }
+    { "id": "fil_...", "name": "harbor-theme-1.4.0.zip", "version": "1.4.0", "channel": "stable", "changelog": "Faster gallery.", "size": 3000000, "sha256": "9f86d0...", "signature": "base64...", "source": "app", "uploaded_at": "...", "statuses": ["active", "completed"], "check_domain": true, "available": true, "download_url": "https://<worker>/download/WRD-.../fil_..." }
   ]
 }
 ```
 
-The second returns the file as an attachment (with its SHA-256 in the `X-Warden-Sha256` header), or HTTP 403 with `{ valid, status, message, file }` when the rule is not met, 410 for a withdrawn release, or 404 for an unknown key or file. Downloads and denied downloads are written to the licence's activity log.
+Both JSON answers are signed like a check response (`X-Warden-Signature-Ed25519`, see [checking.md](checking.md#verifying-the-signature)), and `signature` on each release is the signature of its `sha256` ([releases.md](releases.md#verifying-a-package)).
+
+The second returns the file as an attachment (with its SHA-256 in the `X-Warden-Sha256` header and the signature of that checksum in `X-Warden-Release-Signature`), or HTTP 403 with `{ valid, status, message, file }` when the rule is not met, 410 for a withdrawn release, or 404 for an unknown key or file. Downloads and denied downloads are written to the licence's activity log.
 
 ## Managing files
 
