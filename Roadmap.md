@@ -11,7 +11,7 @@ Warden uses [semantic versioning](https://semver.org/). The version is in `packa
 - **Before 1.0.0**, a minor version (0.x.0) adds features and may change the check response, the API or the data model. Every such change is listed under **Changed** or **Removed** in [CHANGELOG.md](CHANGELOG.md), with what to do; renamed API fields keep their old name as a deprecated alias until 1.0.0. A patch version (0.x.y) only fixes bugs.
 - **From 1.0.0**, the check response and `/api/v1` only change in backward compatible ways within a major version.
 - **Database migrations** only move forward and run by themselves on the first request after an update. A migration that has been released is never edited.
-- **Releasing**: `develop` is merged into `main` through a pull request, the merge commit is tagged `vX.Y.Z`, and the changelog section `X.Y.Z (unreleased)` gets its date. The Deploy button installs `main`.
+- **Releasing**: the last commit on `develop` before the release gives the changelog section `X.Y.Z (unreleased)` its date, so `main` never shows a released version as unreleased; then `develop` is merged into `main` through a pull request and the merge commit is tagged `vX.Y.Z`. The Deploy button installs `main`, and the documentation site publishes the documentation of `main`.
 
 ## Released
 
