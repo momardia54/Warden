@@ -48,8 +48,6 @@ export function serializeApp(a: AppSummary) {
     notes: a.notes,
     licenses: a.licenses,
     licenses_valid: a.valid,
-    /** Deprecated alias of licenses_valid. */
-    licenses_in_force: a.valid,
     sites: a.sites,
     files: a.files,
     latest_version: a.latest_version,
@@ -60,9 +58,10 @@ export function serializeApp(a: AppSummary) {
 
 /**
  * A file. For a licence's own file, `available` and `download_url` are included. A file shared by an app has no
- * single download URL (the URL contains a licence key), so those fields are omitted.
+ * single download URL (the URL contains a licence key), so those fields are omitted. `signature` is the Ed25519
+ * signature of the checksum (signRelease), computed by the caller.
  */
-export function serializeFile(f: LicenseFile, license: License | null, origin: string, set: StatusSet) {
+export function serializeFile(f: LicenseFile, license: License | null, origin: string, set: StatusSet, signature: string | null) {
   const rule = releaseRule(f, set)
   return {
     id: f.id,
@@ -74,6 +73,7 @@ export function serializeFile(f: LicenseFile, license: License | null, origin: s
     size: f.size,
     content_type: f.content_type,
     sha256: f.sha256 || null,
+    signature,
     withdrawn: f.withdrawn_at !== null,
     withdrawn_at: iso(f.withdrawn_at),
     // A release's statuses and domain check are its track's; an attachment (no version) has no track.

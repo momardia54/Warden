@@ -179,7 +179,7 @@ test("app files are shared by the licences of the app", async () => {
 
   const log = (await env.DB.prepare("SELECT detail FROM activity WHERE license_id = ? AND event = 'download'").bind(a.id).all<{ detail: string }>()).results.map((r) => r.detail).join("|")
   assert.match(log, /Downloaded: theme-1.10.0.zip/)
-  assert.match(log, /Download refused: theme-2.0.0-beta.zip/)
+  assert.match(log, /Download denied: theme-2.0.0-beta.zip/)
 
   // deleting a licence keeps the app's files; deleting a shared file removes the stored object
   await deleteLicense(env, a.id)

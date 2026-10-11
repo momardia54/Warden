@@ -48,7 +48,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence, with a customer name and email
 - **Configurable statuses** at app level and licence level: everything starts with a built-in set (pending, active, completed, suspended, disabled, expired). An app can customise its own, shared by all of its licences, and a standalone licence can customise its own. Each status says whether it is valid, what it becomes when the expiry date passes, its colour (any colour, with presets) and its message to sites ([docs/statuses.md](docs/statuses.md))
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
-- **Signed responses** (`X-Warden-Signature`, HMAC-SHA256 keyed with the licence key)
+- **Signed responses and releases**: every check and download answer is signed with the installation's Ed25519 key, and every release carries a signature of its checksum; sites verify with the public key alone ([docs/checking.md](docs/checking.md))
 - Activity log per licence: every check (which domain, which result) and every change
 - **Protection**: client IP address of every check and download, an IP blocklist (addresses and CIDR ranges), rate limits per IP address, licence key and API key, and blocking rules (invalid licence keys, invalid checks, licences per IP address, rate limit violations) with an allowlist, all configured in the dashboard ([docs/protection.md](docs/protection.md))
 - **Analytics**: valid and invalid checks per day, invalid checks by reason, active sites, downloads, and top licences, files and IP addresses, over 7, 30 or 90 days, for everything or one app ([docs/analytics.md](docs/analytics.md))
@@ -142,7 +142,7 @@ curl           "https://<worker>/api/v1/licenses?status=expired"   -H "Authoriza
 | `manage` | also create, edit, set status, renew |
 | `full` | also delete and regenerate keys |
 
-Endpoints: `GET /apps/{app}/versions`, `GET /me`, `GET /stats`, `GET /statuses`, `GET|POST|DELETE /apps/{app}/statuses` and `/licenses/{id}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`, `GET|POST /apps/{app}/tracks` and `/licenses/{id}/tracks`, `GET|PATCH|DELETE .../tracks/{track}`, `GET|PUT|DELETE .../tracks/{track}/source` (with `/imports`), `GET /integrations/github` (with `/repositories`). Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
+Endpoints: `GET /apps/{app}/versions`, `GET /me`, `GET /stats`, `GET /signing-key`, `GET /statuses`, `GET|POST|DELETE /apps/{app}/statuses` and `/licenses/{id}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`, `GET|POST /apps/{app}/tracks` and `/licenses/{id}/tracks`, `GET|PATCH|DELETE .../tracks/{track}`, `GET|PUT|DELETE .../tracks/{track}/source` (with `/imports`), `GET /integrations/github` (with `/repositories`). Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
 
 ## Run and deploy
 
@@ -179,8 +179,9 @@ React Router 7 (SSR) on Cloudflare Workers, Cloudflare D1 (data) and R2 (files),
 
 ```
 workers/app.ts              entry: migrations, /api/v1, /check/<key>, dashboard
-app/server/check.server.ts  the check endpoint and its signature
+app/server/check.server.ts  the check endpoint
 app/server/download.server.ts  gated file downloads
+app/server/signing.server.ts   the installation's Ed25519 signing key
 app/server/files.server.ts  file storage in R2, checksums, releases
 app/lib/releases.ts         versions, channels, the latest release
 app/server/api.server.ts    API: keys, routes, validation
@@ -195,6 +196,7 @@ tests/                      node:test, runs the real SQL on a SQLite stand-in fo
 - [Roadmap.md](Roadmap.md): what is done and what comes before 1.0.0
 - [Security.md](Security.md): how it is protected, its limits, how to report a problem
 - [CHANGELOG.md](CHANGELOG.md): what changed
+- [docs/upgrade-notes.md](docs/upgrade-notes.md): what to change on your side when you upgrade
 - [Licence.md](Licence.md): MIT
 
 The dashboard UI kit (shadcn/ui components, sidebar and layout) is derived from [FormZero](https://github.com/BohdanPetryshyn/formzero) by Bohdan Petryshyn (MIT), and both copyright holders are named in the licence.

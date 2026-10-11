@@ -7,8 +7,10 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 ```
 
 ```json
-{ "name": "Harbor Studio website", "valid": true, "status": "active", "message": "", "expires_at": "2027-03-31T23:59:59.999Z", "checked_at": "2026-10-04T16:17:30.248Z" }
+{ "valid": true, "status": "active", "message": "", "name": "Harbor Studio website", "app": null, "expires_at": "2027-03-31T23:59:59.999Z", "checked_at": "2026-10-11T16:17:30.248Z", "license_key": "WRD-7KQ4M-X2PHR-9TCVN-B3WZD", "domain": "client-site.org", "nonce": null }
 ```
+
+`license_key`, `domain` and `nonce` repeat what the response answers: the key that was checked, the domain as Warden read it (`null` when none was sent), and the `nonce` the site sent (below), or `null`.
 
 | `status` | `valid` | Meaning |
 |---|---|---|
@@ -18,6 +20,8 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 | `site_limit_reached` | false | The licence is already used on its maximum number of sites, and this domain is not one of them |
 | `unknown` | false | No such key (HTTP 404) |
 | `blocked` | false | The caller's IP address is blocked (HTTP 403, unsigned: no licence was read). See [protection.md](protection.md) |
+
+Every answer from the check endpoint is signed, including `unknown`. The two answers sent before any licence is read, `blocked` (403) and `rate_limited` (429), are not: treat them like a network error.
 
 A check can also receive **HTTP 429** (`"status": "rate_limited"`, no `valid` field, `Retry-After: 60`) when it goes over a rate limit. That is not a verdict on the licence: keep the last answer and try again later.
 
@@ -29,36 +33,70 @@ Send the installed version as well (`&version=1.3.0`) and the response includes 
 
 1. **Check about every 12 hours**, not on every page view. Store the response (WordPress: a transient or option) with the time you got it.
 2. **Fail open on errors.** If the request times out, fails, returns 429 or a 5xx, or something that is not the JSON above, keep the last known response. Only change behaviour on a response you could read and verify. A Warden outage must never lock a client out.
-3. **Verify the signature** before trusting a response (below).
+3. **Verify the signature** before trusting a response (below). An unsigned or wrongly signed response is an error, not a verdict.
 4. **Always send `domain`** so domain-locked licences work.
 5. Decide what "not valid" does: a notice in the admin area, a maintenance page, disabling a feature. That part is yours.
 
 ## Verifying the signature
 
-`X-Warden-Signature` is the lowercase hex HMAC-SHA256 of the **raw response body**, keyed with the licence key.
+Every response is signed with your installation's **Ed25519 signing key**:
 
-PHP:
+| Header | Content |
+|---|---|
+| `X-Warden-Signature-Ed25519` | Ed25519 signature of the **raw response body** (the exact bytes received), base64 |
+| `X-Warden-Key-Id` | Identifier of the signing key (16 hex characters) |
+
+The site verifies the signature with the **public key**, which you put in the site's code. Holding the public key or the licence key does not allow creating a signature, so a site's owner cannot fake a valid answer, for example by pointing the check at a server of their own.
+
+**Where to find the public key:** on any licence page, *Integration* tab, *Public signing key*; or `GET /api/v1/signing-key` ([api.md](api.md)). It is the same for every licence of the installation, and it does not change. It is given in two forms: `public_key`, the raw 32-byte key in base64 (libsodium, PHP), and `public_key_pem` (OpenSSL, Node.js).
+
+**Freshness.** A signed answer stays valid forever, so an old "valid" answer could be replayed later. Send a random `nonce` with each check (8 to 64 letters, digits, `.`, `_`, `~` or `-`) and accept the answer only if it echoes it. Also compare `license_key` with the site's key, so an answer for another licence is not accepted. A nonce in another format is ignored and the answer has `"nonce": null`.
+
+PHP (libsodium is part of PHP 7.2 and later):
 
 ```php
-$res  = wp_remote_get( "https://your-worker.example/check/$key?domain=" . rawurlencode( $domain ), [ 'timeout' => 10 ] );
-if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) >= 500 ) { return; } // keep last known state
+const WARDEN_PUBLIC_KEY = 'base64 public key from the licence page';
+
+function warden_signed( $signature, $message ) {
+    $sig = base64_decode( (string) $signature, true );
+    return $sig !== false && strlen( $sig ) === SODIUM_CRYPTO_SIGN_BYTES
+        && sodium_crypto_sign_verify_detached( $sig, $message, base64_decode( WARDEN_PUBLIC_KEY ) );
+}
+
+$nonce = bin2hex( random_bytes( 16 ) );
+$res   = wp_remote_get( "https://your-worker.example/check/$key?domain=" . rawurlencode( $domain ) . "&nonce=$nonce", [ 'timeout' => 10 ] );
+if ( is_wp_error( $res ) ) { return; }                                                                   // keep the last known state
 $body = wp_remote_retrieve_body( $res );
-$sig  = wp_remote_retrieve_header( $res, 'x-warden-signature' );
-if ( ! hash_equals( hash_hmac( 'sha256', $body, $key ), (string) $sig ) ) { return; }      // not from Warden
+if ( ! warden_signed( wp_remote_retrieve_header( $res, 'x-warden-signature-ed25519' ), $body ) ) { return; } // not from Warden
 $result = json_decode( $body, true );
+if ( $result['license_key'] !== $key || $result['nonce'] !== $nonce ) { return; }                          // an answer to another request
 update_option( 'my_licence_state', [ 'valid' => $result['valid'], 'status' => $result['status'], 'message' => $result['message'], 'at' => time() ] );
 ```
 
-JavaScript (Node 18+ or a Worker):
+JavaScript (Node 22 or later, a Worker, or a current browser):
 
 ```js
-const res = await fetch(`https://your-worker.example/check/${key}?domain=${domain}`)
+const PUBLIC_KEY = "base64 public key from the licence page"
+const bytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+
+const nonce = crypto.randomUUID()
+const res = await fetch(`https://your-worker.example/check/${key}?domain=${encodeURIComponent(domain)}&nonce=${nonce}`)
 const body = await res.text()
-const sig = res.headers.get("x-warden-signature")
-const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
-const mac = [...new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(body)))].map((b) => b.toString(16).padStart(2, "0")).join("")
-if (mac !== sig) throw new Error("response was not signed by Warden")
+const publicKey = await crypto.subtle.importKey("raw", bytes(PUBLIC_KEY), { name: "Ed25519" }, false, ["verify"])
+const signed = await crypto.subtle.verify({ name: "Ed25519" }, publicKey, bytes(res.headers.get("x-warden-signature-ed25519") ?? ""), new TextEncoder().encode(body))
+if (!signed) throw new Error("response was not signed by Warden")
 const result = JSON.parse(body)
+if (result.license_key !== key || result.nonce !== nonce) throw new Error("answer to another request")
 ```
 
-Unknown keys (404) carry no signature, since there is no key to sign with. Treat a 404 as "invalid key" only if you are sure the URL is right; if you deleted the licence on purpose, that is the intended effect.
+Verify the body exactly as received, before parsing it: re-encoding the JSON changes the bytes. The download endpoint signs its JSON answers the same way, and each release carries a signature of its checksum ([releases.md](releases.md#verifying-a-package)).
+
+### The signing key
+
+The key pair is created the first time it is needed and stored in the installation's D1 database. Back up the database ([upgrade-notes.md](upgrade-notes.md#before-you-upgrade)): an installation started on a new, empty database has a new key, and sites that pin the old public key then reject every answer, keeping their last known state, until their code has the new key. `X-Warden-Key-Id` lets a site report which key signed an answer it rejected.
+
+### Earlier signature (deprecated)
+
+`X-Warden-Signature`, the lowercase hex HMAC-SHA256 of the body keyed with the licence key, is still sent on answers for known keys and is **removed in 1.0.0**. Anyone holding the licence key can compute it, including the site's owner, so it only shows that a response was not altered in transit. Move site code to the Ed25519 signature.
+
+Treat a 404 (`unknown`) as "invalid key" only if you are sure the URL is right; if you deleted the licence on purpose, that is the intended effect.

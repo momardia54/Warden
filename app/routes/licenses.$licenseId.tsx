@@ -35,6 +35,7 @@ import { applySourceForm, trackPanels } from "~/server/sources.server"
 import { applyTrackForm, listAppTracks } from "~/server/tracks.server"
 import { trackForStatus, trackView } from "#/lib/tracks"
 import { getGitHubApp } from "~/server/github-app.server"
+import { getSigningKey } from "~/server/signing.server"
 import { formatSites } from "#/components/licenses-table"
 import { applyStatusForm, getStatusSetForLicense, hasCustomSet, statusCounts } from "~/server/statuses.server"
 import { deleteLicense, listActivations, releaseActivation, extendLicense, getLicense, recentActivity, regenerateKey, setStatus } from "~/server/licenses.server"
@@ -90,6 +91,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     githubApp: (await getGitHubApp(env)) !== null,
     origin,
     checkUrl: `${origin}/check/${license.license_key}`,
+    signingKey: await getSigningKey(env).then((k) => ({ publicKey: k.publicKey, keyId: k.keyId })),
   }
 }
 
@@ -136,7 +138,7 @@ type LoaderData = Route.ComponentProps["loaderData"]
 const TABS = ["overview", "sites", "releases", "activity", "statuses"] as const
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, blockedIps, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, tracks, appTracks, receiving, githubApp, origin, checkUrl } = loaderData
+  const { license, activity, blockedIps, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, tracks, appTracks, receiving, githubApp, origin, checkUrl, signingKey } = loaderData
   const [params] = useSearchParams()
   const statuses = useStatusSetForLicense(license)
   const [tab, setTab] = useRouteTab([...TABS])
@@ -303,7 +305,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
             ]}
           />
 
-          {tab === "overview" && <IntegrationTab license={license} checkUrl={checkUrl} origin={origin} statuses={statuses} />}
+          {tab === "overview" && <IntegrationTab license={license} checkUrl={checkUrl} origin={origin} statuses={statuses} signingKey={signingKey} />}
 
           {tab === "sites" && (
             <div className="space-y-3">
@@ -432,7 +434,19 @@ function SiteRelease({ domain }: { domain: string }) {
   )
 }
 
-function IntegrationTab({ license, checkUrl, origin, statuses }: { license: Route.ComponentProps["loaderData"]["license"]; checkUrl: string; origin: string; statuses: ReturnType<typeof useStatusSetForLicense> }) {
+function IntegrationTab({
+  license,
+  checkUrl,
+  origin,
+  statuses,
+  signingKey,
+}: {
+  license: Route.ComponentProps["loaderData"]["license"]
+  checkUrl: string
+  origin: string
+  statuses: ReturnType<typeof useStatusSetForLicense>
+  signingKey: { publicKey: string; keyId: string }
+}) {
   const example = `curl "${checkUrl}?domain=${license.last_check_domain ?? license.domains.split(",")[0]?.trim() ?? "example.com"}&version=1.0.0"`
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -447,7 +461,7 @@ function IntegrationTab({ license, checkUrl, origin, statuses }: { license: Rout
           <p className="flex items-center gap-1.5 text-sm font-medium">
             Check URL{" "}
             <HelpTip>
-              The site calls it (GET) about every 12 hours with its domain, and its version to be told about updates. The JSON response is signed in the X-Warden-Signature header (HMAC-SHA256 of the body, keyed with the licence key).
+              The site calls it (GET) about every 12 hours with its domain, and its version to be told about updates. The JSON response is signed with this installation's signing key (X-Warden-Signature-Ed25519 header).
             </HelpTip>
           </p>
           <CopyField value={checkUrl} />
@@ -457,6 +471,16 @@ function IntegrationTab({ license, checkUrl, origin, statuses }: { license: Rout
             Download list <HelpTip>Lists the files this licence can see, with their availability and the latest release.</HelpTip>
           </p>
           <CopyField value={`${origin}/download/${license.license_key}`} />
+        </div>
+        <div className="space-y-1.5">
+          <p className="flex items-center gap-1.5 text-sm font-medium">
+            Public signing key{" "}
+            <HelpTip>
+              Ed25519 public key of this installation, the same for every licence. Put it in the site's code: the site verifies the X-Warden-Signature-Ed25519 header of each check with it, and the
+              signature of each release before installing it. It is public: it can verify signatures but not create them. Key ID {signingKey.keyId}.
+            </HelpTip>
+          </p>
+          <CopyField value={signingKey.publicKey} />
         </div>
         <div className="space-y-1.5">
           <p className="text-sm font-medium">Example request</p>

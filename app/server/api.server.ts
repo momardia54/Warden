@@ -2,7 +2,7 @@ import { KEY_PATTERN } from "../lib/license"
 import { DEFAULT_STATUSES, defaultStatusKey, findStatus, type StatusSet } from "../lib/statuses"
 import { applyAppBody, applyLicenseBody } from "./api-input.server"
 import { authenticate, type ApiKeyRow } from "./api-keys.server"
-import { CORS, fail, iso, parseExpiry, readJson, reply, requirePermission, trimmed } from "./api-http.server"
+import { CORS, fail, iso, pageOf, parseExpiry, readJson, readLimit, reply, requirePermission, trimmed, unknownEndpoint } from "./api-http.server"
 import { serializeActivation, serializeActivity, serializeApp, serializeBlock, serializeFile, serializeLicense, serializeStatus } from "./api-serializers.server"
 import { readRange, TRAFFIC_RANGES } from "../lib/analytics"
 import { trafficReport, type TrafficScope } from "./analytics.server"
@@ -17,6 +17,7 @@ import {
 } from "./licenses.server"
 import { getGitHubApp, listAppRepositories, listInstallations, publicGitHubApp } from "./github-app.server"
 import { openApiSpec } from "./openapi.server"
+import { getSigningKey, publicSigningKey, signRelease } from "./signing.server"
 import { deleteSource, getImport, getSourceForTrack, listImports, listSources, publicSource, regenerateWebhookSecret, retryImport, saveSource, startImport, type ReleaseSource, type SourceImport } from "./sources.server"
 import { createTrack, deleteTrack, findTrack, listAppTracks, listTracks, updateTrack, type ReleaseTrack } from "./tracks.server"
 import { statusConflicts, trackForStatus } from "../lib/tracks"
@@ -68,7 +69,10 @@ async function resolveAppField(env: Env, body: Record<string, unknown>): Promise
 
 async function listLicensesResponse(ctx: Context, appId?: string): Promise<Response> {
   const q = ctx.url.searchParams
-  const limit = Math.min(100, Math.max(1, Number(q.get("limit")) || 25))
+  const limit = readLimit(q)
+  // `before` is the earlier name of `cursor`, accepted until 1.0.0.
+  const cursor = q.get("cursor") ?? q.get("before") ?? undefined
+  if (cursor && !/^lic_[a-z0-9]+$/.test(cursor)) return fail(422, "invalid_cursor", "cursor must be the next value of a previous page of this list.")
   const sets = await loadStatusSets(ctx.env)
   const status = q.get("status") ?? undefined
   if (status && ![DEFAULT_STATUSES, ...Object.values(sets.byApp), ...Object.values(sets.byLicense)].some((set) => findStatus(set, status))) {
@@ -81,7 +85,7 @@ async function listLicensesResponse(ctx: Context, appId?: string): Promise<Respo
     if (!app) return fail(422, "invalid_app", `No app matches "${appRef}".`)
     filterApp = app.id
   }
-  const rows = await queryLicenses(ctx.env, { status, q: q.get("q") ?? undefined, externalRef: q.get("external_ref") ?? undefined, appId: filterApp, before: q.get("before") ?? undefined, limit: limit + 1 })
+  const rows = await queryLicenses(ctx.env, { status, q: q.get("q") ?? undefined, externalRef: q.get("external_ref") ?? undefined, appId: filterApp, before: cursor, limit: limit + 1 })
   const page = rows.slice(0, limit)
   return reply({ data: page.map((l) => serializeLicense(l, ctx.origin, setForLicense(sets, l))), next: rows.length > limit ? page[page.length - 1].id : null })
 }
@@ -167,19 +171,28 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
     // A licence in an app uses the app's statuses: they can be read here but are changed on the app.
     if (license.app_id) {
       if (method !== "GET" || rest.length > 0) return fail(409, "license_in_app", "This licence belongs to an app and uses the app's statuses. Change them with /apps/{app}/statuses.")
-      return reply({ custom: false, source: await statusSource(env, license), data: set.map(serializeStatus) })
+      return reply({ custom: false, source: await statusSource(env, license), data: set.map(serializeStatus), next: null })
     }
     return statusRoute(ctx, { license: license.id }, set, rest)
   }
 
   if (sub === "activity") {
     if (method !== "GET") return fail(405, "method_not_allowed", "Use GET.")
-    const limit = Math.min(200, Math.max(1, Number(ctx.url.searchParams.get("limit")) || 50))
-    return reply({ data: (await recentActivity(env, license.id, limit)).map(serializeActivity) })
+    const limit = readLimit(ctx.url.searchParams)
+    const cursor = ctx.url.searchParams.get("cursor")
+    const position = cursor?.match(/^(\d+)\.(\d+)$/)
+    if (cursor && !position) return fail(422, "invalid_cursor", "cursor must be the next value of a previous page of this list.")
+    const rows = await recentActivity(env, license.id, limit + 1, position ? { at: Number(position[1]), id: Number(position[2]) } : undefined)
+    const page = rows.slice(0, limit)
+    const last = page[page.length - 1]
+    return reply({ data: page.map(serializeActivity), next: rows.length > limit ? `${last.at}.${last.id}` : null })
   }
 
   if (sub === "activations") {
-    if (method === "GET" && !extra) return reply({ max_sites: license.max_sites, data: (await listActivations(env, license.id)).map(serializeActivation) })
+    if (method === "GET" && !extra) {
+      const page = pageOf(await listActivations(env, license.id), (a) => a.domain, ctx.url.searchParams)
+      return page instanceof Response ? page : reply({ max_sites: license.max_sites, data: page.data.map(serializeActivation), next: page.next })
+    }
     if (method === "DELETE" && extra) {
       const denied = need(ctx, "manage")
       if (denied) return denied
@@ -219,7 +232,7 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
     }
     return reply(serializeLicense((await getLicense(env, license.id))!, origin, set))
   }
-  return fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")
+  return unknownEndpoint()
 }
 
 // ---- files ------------------------------------------------------------------------
@@ -230,9 +243,13 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
   const method = request.method
   const license = "license" in owner ? owner.license : null
   const set = await statusSetForOwner(env, owner)
-  const shape = (f: Parameters<typeof serializeFile>[0]) => serializeFile(f, license, origin, set)
+  const signing = await getSigningKey(env)
+  const shape = async (f: Parameters<typeof serializeFile>[0]) => serializeFile(f, license, origin, set, await signRelease(signing, f.sha256))
 
-  if (method === "GET" && !fileId) return reply({ data: (await listFiles(env, owner)).map(shape) })
+  if (method === "GET" && !fileId) {
+    const page = pageOf(await listFiles(env, owner), (f) => f.id, url.searchParams)
+    return page instanceof Response ? page : reply({ data: await Promise.all(page.data.map(shape)), next: page.next })
+  }
 
   if (method === "PUT" && !fileId) {
     const denied = need(ctx, "manage")
@@ -251,7 +268,7 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
       size: Number(request.headers.get("content-length")),
       body: request.body,
     })
-    return "error" in stored ? fail(stored.status, "upload_failed", stored.error) : reply(shape(stored.file), 201)
+    return "error" in stored ? fail(stored.status, "upload_failed", stored.error) : reply(await shape(stored.file), 201)
   }
 
   if (fileId && (method === "PATCH" || method === "DELETE")) {
@@ -275,7 +292,7 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
       changelog: typeof body.changelog === "string" ? body.changelog : undefined,
       withdrawn: typeof body.withdrawn === "boolean" ? body.withdrawn : undefined,
     })
-    return "error" in updated ? fail(updated.status, "invalid_file", updated.error) : reply(shape(updated.file))
+    return "error" in updated ? fail(updated.status, "invalid_file", updated.error) : reply(await shape(updated.file))
   }
   return fail(405, "method_not_allowed", "Use GET or PUT on /files, and PATCH or DELETE on /files/{fileId}.")
 }
@@ -322,7 +339,7 @@ async function tracksRoute(ctx: Context, owner: FileOwner, segments: string[]): 
   if (!trackRef) {
     if (method === "GET") {
       const [tracks, sources] = await Promise.all([listTracks(env, owner), listSources(env, owner)])
-      const body: Record<string, unknown> = { data: await Promise.all(tracks.map((t) => serializeTrack(ctx, t, sources))), conflicts: statusConflicts(tracks).map((c) => ({ status: c.status, tracks: c.tracks.map((t) => t.id) })) }
+      const body: Record<string, unknown> = { data: await Promise.all(tracks.map((t) => serializeTrack(ctx, t, sources))), next: null, conflicts: statusConflicts(tracks).map((c) => ({ status: c.status, tracks: c.tracks.map((t) => t.id) })) }
       // A licence of an app also receives the app's tracks, for the statuses its own tracks do not cover.
       if ("license" in owner && owner.license.app_id) {
         const appTracks = await listAppTracks(env, owner.license.app_id)
@@ -375,7 +392,7 @@ async function tracksRoute(ctx: Context, owner: FileOwner, segments: string[]): 
     return fail(405, "method_not_allowed", "Use GET, PATCH or DELETE.")
   }
 
-  if (sub !== "source") return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
+  if (sub !== "source") return unknownEndpoint()
   if (!part && method === "PUT") {
     const denied = need(ctx, "manage")
     if (denied) return denied
@@ -404,7 +421,10 @@ async function tracksRoute(ctx: Context, owner: FileOwner, segments: string[]): 
     return reply(await serializeSource(ctx, (await getSourceForTrack(env, owner, track.id))!))
   }
   if (part === "imports") {
-    if (!importId && method === "GET") return reply({ data: (await listImports(env, source.id, 100)).map(serializeImport) })
+    if (!importId && method === "GET") {
+      const page = pageOf(await listImports(env, source.id, 1000), (i) => i.id, url.searchParams)
+      return page instanceof Response ? page : reply({ data: page.data.map(serializeImport), next: page.next })
+    }
     if (!importId && method === "POST") {
       const denied = need(ctx, "manage")
       if (denied) return denied
@@ -424,7 +444,7 @@ async function tracksRoute(ctx: Context, owner: FileOwner, segments: string[]): 
       return "error" in retried ? fail(retried.status, "cannot_retry", retried.error) : reply(serializeImport(retried), 202)
     }
   }
-  return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
+  return unknownEndpoint()
 }
 
 // ---- statuses ---------------------------------------------------------------------
@@ -439,12 +459,12 @@ async function statusRoute(ctx: Context, scope: StatusScope, current: StatusSet,
   const { env, request, url } = ctx
   const method = request.method
   const custom = await hasCustomSet(env, scope)
-  const list = (set: StatusSet) => reply({ data: set.map(serializeStatus) })
+  const list = (set: StatusSet) => reply({ data: set.map(serializeStatus), next: null })
 
   if (segments.length === 0) {
     if (method === "GET") {
       const source = "license" in scope ? await statusSource(env, { id: scope.license, app_id: await appOfLicense(env, scope.license) }) : custom ? "app" : "default"
-      return reply({ custom, source, data: current.map(serializeStatus) })
+      return reply({ custom, source, data: current.map(serializeStatus), next: null })
     }
     if (method === "POST") {
       const denied = need(ctx, "manage")
@@ -464,7 +484,7 @@ async function statusRoute(ctx: Context, scope: StatusScope, current: StatusSet,
       if (body instanceof Response) return body
       const mapping = body.mapping && typeof body.mapping === "object" ? (body.mapping as Record<string, string>) : {}
       const reset = await resetStatuses(env, scope, mapping)
-      return "error" in reset ? fail(409, "statuses_in_use", reset.error) : reply({ custom: false, data: (await currentSet(env, scope)).map(serializeStatus) })
+      return "error" in reset ? fail(409, "statuses_in_use", reset.error) : reply({ custom: false, data: (await currentSet(env, scope)).map(serializeStatus), next: null })
     }
     return fail(405, "method_not_allowed", "Use GET, POST or DELETE.")
   }
@@ -474,7 +494,7 @@ async function statusRoute(ctx: Context, scope: StatusScope, current: StatusSet,
     const denied = need(ctx, "manage")
     if (denied) return denied
     const result = await customizeStatuses(env, scope)
-    return "error" in result ? fail(409, "already_customized", result.error) : reply({ custom: true, data: result.set.map(serializeStatus) }, 201)
+    return "error" in result ? fail(409, "already_customized", result.error) : reply({ custom: true, data: result.set.map(serializeStatus), next: null }, 201)
   }
   if (first === "order" && method === "POST") {
     const denied = need(ctx, "manage")
@@ -523,7 +543,10 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
   const method = request.method
 
   if (segments.length === 0) {
-    if (method === "GET") return reply({ data: (await listApps(env)).map(serializeApp) })
+    if (method === "GET") {
+      const page = pageOf(await listApps(env), (a) => a.id, ctx.url.searchParams)
+      return page instanceof Response ? page : reply({ data: page.data.map(serializeApp), next: page.next })
+    }
     if (method === "POST") {
       const denied = need(ctx, "manage")
       if (denied) return denied
@@ -575,7 +598,7 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
     return reply(await versionsInUse(env, app.id))
   }
   if (sub === "statuses") return statusRoute(ctx, { app: app.id }, await getStatusSetForApp(env, app.id), rest)
-  return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
+  return unknownEndpoint()
 }
 
 // ---- analytics ----------------------------------------------------------------------
@@ -588,12 +611,12 @@ async function analyticsRoute({ env, url }: Context): Promise<Response> {
   let scope: TrafficScope = {}
   if (licenseRef) {
     const license = await findLicense(env, licenseRef)
-    if (!license) return fail(404, "not_found", `No licence matches "${licenseRef}".`)
+    if (!license) return fail(404, "license_not_found", `No licence matches "${licenseRef}".`)
     scope = { license: license.id }
   } else if (appRef === "none") scope = { standalone: true }
   else if (appRef) {
     const app = await findApp(env, appRef)
-    if (!app) return fail(404, "not_found", `No app matches "${appRef}".`)
+    if (!app) return fail(404, "app_not_found", `No app matches "${appRef}".`)
     scope = { app: app.id }
   }
   return reply(await trafficReport(env, scope, readRange(daysParam)))
@@ -603,7 +626,10 @@ async function analyticsRoute({ env, url }: Context): Promise<Response> {
 
 async function ipBlockRoute(ctx: Context, rest: string[]): Promise<Response> {
   const { env, request } = ctx
-  if (rest.length === 0 && request.method === "GET") return reply({ data: (await listBlocks(env)).map(serializeBlock) })
+  if (rest.length === 0 && request.method === "GET") {
+    const page = pageOf(await listBlocks(env), (b) => b.id, ctx.url.searchParams)
+    return page instanceof Response ? page : reply({ data: page.data.map(serializeBlock), next: page.next })
+  }
   if (rest.length === 0 && request.method === "POST") {
     const denied = need(ctx, "manage")
     if (denied) return denied
@@ -624,9 +650,10 @@ async function ipBlockRoute(ctx: Context, rest: string[]): Promise<Response> {
   if (rest.length === 1 && request.method === "DELETE") {
     const denied = need(ctx, "manage")
     if (denied) return denied
-    return (await deleteBlock(env, rest[0])) ? reply({ deleted: true, id: rest[0] }) : fail(404, "not_found", "No block with this id.")
+    return (await deleteBlock(env, rest[0])) ? reply({ deleted: true, id: rest[0] }) : fail(404, "ip_block_not_found", "No block with this id.")
   }
-  return fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")
+  if (rest.length <= 1) return fail(405, "method_not_allowed", "Use GET or POST on /ip-blocks, and DELETE on /ip-blocks/{id}.")
+  return unknownEndpoint()
 }
 
 // ---- entry point ------------------------------------------------------------------
@@ -650,8 +677,9 @@ export async function handleApi(request: Request, env: Env, execution: Execution
   if (resource === "me" && request.method === "GET") return reply({ name: key.name, scope: key.scope, prefix: key.prefix })
   if (resource === "stats" && request.method === "GET") {
     const stats = await overviewStats(env)
-    return reply({ total: stats.total, valid: stats.valid, invalid: stats.invalid, in_force: stats.valid, not_in_force: stats.invalid, expiring_within_14_days: stats.endingSoon, not_checked_for_3_days: stats.silent, by_status: stats.byStatus })
+    return reply({ total: stats.total, valid: stats.valid, invalid: stats.invalid, expiring_within_14_days: stats.endingSoon, not_checked_for_3_days: stats.silent, by_status: stats.byStatus })
   }
+  if (resource === "signing-key" && rest.length === 0 && request.method === "GET") return reply(publicSigningKey(await getSigningKey(env)))
   if (resource === "analytics" && rest.length === 0 && request.method === "GET") return analyticsRoute(ctx)
   if (resource === "ip-blocks") return ipBlockRoute(ctx, rest)
   if (resource === "protection" && rest.length === 0) {
@@ -664,6 +692,7 @@ export async function handleApi(request: Request, env: Env, execution: Execution
       const saved = await saveProtection(env, body)
       return "error" in saved ? fail(422, "invalid_settings", saved.error) : reply(saved.settings)
     }
+    return fail(405, "method_not_allowed", "Use GET or PATCH.")
   }
   if (resource === "integrations" && rest[0] === "github" && request.method === "GET") {
     const app = await getGitHubApp(env)
@@ -676,11 +705,11 @@ export async function handleApi(request: Request, env: Env, execution: Execution
     if (rest.length === 2 && rest[1] === "repositories") {
       if (!app) return fail(404, "github_not_connected", "No GitHub App is connected. Create one under Integrations in the dashboard.")
       const repositories = await listAppRepositories(app)
-      return "error" in repositories ? fail(repositories.status, "github_unavailable", repositories.error) : reply({ data: repositories })
+      return "error" in repositories ? fail(repositories.status, "github_unavailable", repositories.error) : reply({ data: repositories, next: null })
     }
   }
   if (resource === "licenses") return licenseRoute(ctx, rest)
   if (resource === "apps") return appRoute(ctx, rest)
-  if (resource === "statuses" && rest.length === 0 && request.method === "GET") return reply({ data: DEFAULT_STATUSES.map(serializeStatus) })
-  return fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")
+  if (resource === "statuses" && rest.length === 0 && request.method === "GET") return reply({ data: DEFAULT_STATUSES.map(serializeStatus), next: null })
+  return unknownEndpoint()
 }

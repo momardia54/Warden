@@ -110,7 +110,7 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
       .first<{ sites: number }>(),
     env.DB.prepare(
       `SELECT COUNT(*) AS n FROM activity a JOIN licenses l ON l.id = a.license_id
-       WHERE a.event = 'download' AND a.at >= ? AND a.detail LIKE 'Download refused: %'${s.sql}`
+       WHERE a.event = 'download' AND a.at >= ? AND (a.detail LIKE 'Download denied: %' OR a.detail LIKE 'Download refused: %')${s.sql}`
     )
       .bind(from, ...s.binds)
       .first<{ n: number }>(),

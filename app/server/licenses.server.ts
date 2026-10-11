@@ -339,8 +339,13 @@ export async function releaseActivation(env: Env, license: License, domain: stri
 
 // ---- activity and statistics ----------------------------------------------------
 
-export async function recentActivity(env: Env, id: string, limit = 50): Promise<Activity[]> {
-  const res = await env.DB.prepare("SELECT id, at, event, status, domain, detail, ip FROM activity WHERE license_id = ? ORDER BY at DESC, id DESC LIMIT ?").bind(id, limit).all<Activity>()
+/** A licence's activity, newest first. `after` continues a list after that entry (its `at` and `id`). */
+export async function recentActivity(env: Env, id: string, limit = 50, after?: { at: number; id: number }): Promise<Activity[]> {
+  const res = after
+    ? await env.DB.prepare("SELECT id, at, event, status, domain, detail, ip FROM activity WHERE license_id = ? AND (at < ? OR (at = ? AND id < ?)) ORDER BY at DESC, id DESC LIMIT ?")
+        .bind(id, after.at, after.at, after.id, limit)
+        .all<Activity>()
+    : await env.DB.prepare("SELECT id, at, event, status, domain, detail, ip FROM activity WHERE license_id = ? ORDER BY at DESC, id DESC LIMIT ?").bind(id, limit).all<Activity>()
   return res.results
 }
 

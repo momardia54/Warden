@@ -132,15 +132,16 @@ test("list: filters, search, pagination, stats", async () => {
 
   const page1 = (await call("GET", "/licenses?limit=3", keys.read)).json
   assert.equal(page1.data.length, 3)
-  const page2 = (await call("GET", `/licenses?limit=3&before=${page1.next}`, keys.read)).json
+  const page2 = (await call("GET", `/licenses?limit=3&cursor=${page1.next}`, keys.read)).json
   assert.equal(page2.data.length, 3)
+  // `before` is the earlier name of `cursor`, accepted until 1.0.0.
   const page3 = (await call("GET", `/licenses?limit=3&before=${page2.next}`, keys.read)).json
   assert.equal(page3.data.length, 1)
   assert.equal(page3.next, null)
   assert.equal(new Set([...page1.data, ...page2.data, ...page3.data].map((l: any) => l.id)).size, 7)
 
   const stats = (await call("GET", "/stats", keys.read)).json
-  assert.deepEqual([stats.total, stats.by_status.active, stats.by_status.expired, stats.by_status.suspended, stats.valid, stats.invalid, stats.in_force, stats.not_in_force], [7, 5, 1, 1, 5, 2, 5, 2])
+  assert.deepEqual([stats.total, stats.by_status.active, stats.by_status.expired, stats.by_status.suspended, stats.valid, stats.invalid, "in_force" in stats], [7, 5, 1, 1, 5, 2, false])
 })
 
 test("helpers", () => {
@@ -188,7 +189,7 @@ test("API: apps, defaults, listing and permissions", async () => {
   assert.equal((await call("GET", "/licenses?app=nope", keys.read)).status, 422)
   assert.equal((await call("GET", "/licenses?q=alice%40example", keys.read)).json.data.length, 1)
   const summary = (await call("GET", "/apps", keys.read)).json.data[0]
-  assert.deepEqual([summary.licenses, summary.licenses_valid, summary.licenses_in_force], [2, 1, 1])
+  assert.deepEqual([summary.licenses, summary.licenses_valid, "licenses_in_force" in summary], [2, 1, false])
 
   // move a licence to another app, and out of any app
   const other = (await call("POST", "/apps", keys.manage, { name: "Other" })).json

@@ -7,14 +7,21 @@ import { releaseSummary, visibleFiles } from "./download.server"
 import { getLicenseByKey, listActivations, recordActivation, type License } from "./licenses.server"
 import { getStatusSetForLicense } from "./statuses.server"
 import { readTextUpTo } from "./api-http.server"
+import { signatureHeaders, getSigningKey } from "./signing.server"
 import { hmacHex, json } from "./util.server"
 
-const CORS = { "access-control-allow-origin": "*", "access-control-expose-headers": "X-Warden-Signature", "cache-control": "no-store" }
+const CORS = { "access-control-allow-origin": "*", "access-control-expose-headers": "X-Warden-Signature-Ed25519, X-Warden-Key-Id, X-Warden-Signature", "cache-control": "no-store" }
 
 export const MAX_CHECK_BODY_BYTES = 4096
 
-/** What a site sends with a check: its domain, and optionally the version it runs and the release channel it follows. */
-type CheckRequest = { domain: string | null; version: string | null; channel: Channel }
+/** A nonce is echoed in the signed response: 8 to 64 letters, digits, dots, underscores, tildes or hyphens. */
+const NONCE_PATTERN = /^[A-Za-z0-9._~-]{8,64}$/
+
+/**
+ * What a site sends with a check: its domain, and optionally the version it runs, the release channel it follows and
+ * a nonce to echo.
+ */
+type CheckRequest = { domain: string | null; version: string | null; channel: Channel; nonce: string | null }
 
 async function readCheckRequest(request: Request): Promise<CheckRequest> {
   const q = new URL(request.url).searchParams
@@ -33,15 +40,23 @@ async function readCheckRequest(request: Request): Promise<CheckRequest> {
   const pick = (name: string) => q.get(name) ?? (typeof body[name] === "string" ? (body[name] as string) : null)
   const domainRaw = pick("domain")
   const channel = pick("channel")
-  return { domain: domainRaw ? normalizeDomain(domainRaw) : null, version: readReportedVersion(pick("version")), channel: isChannel(channel) ? channel : "stable" }
+  const nonce = pick("nonce")
+  return {
+    domain: domainRaw ? normalizeDomain(domainRaw) : null,
+    version: readReportedVersion(pick("version")),
+    channel: isChannel(channel) ? channel : "stable",
+    nonce: nonce && NONCE_PATTERN.test(nonce) ? nonce : null,
+  }
 }
 
 /**
- * Public endpoint: GET or POST /check/<licence key>[?domain=example.com][&version=1.3.0][&channel=beta]
+ * Public endpoint: GET or POST /check/<licence key>[?domain=example.com][&version=1.3.0][&channel=beta][&nonce=…]
  *
- * Returns JSON with `valid` and `status`. The licence key in the path is the credential. The response is signed:
- * X-Warden-Signature is the HMAC-SHA256 of the body, keyed with the licence key, so a site can verify that it
- * came from this server unmodified. A known key returns HTTP 200 and an unknown key 404, both with a JSON body.
+ * Returns JSON with `valid` and `status`. The licence key in the path is the credential. Every response is signed
+ * with the install's Ed25519 key (X-Warden-Signature-Ed25519 over the raw body, X-Warden-Key-Id), so a site verifies
+ * with the public key that the response came from this server unmodified; the body names the licence key, the domain
+ * and the nonce it answers. X-Warden-Signature (HMAC-SHA256 keyed with the licence key) is deprecated and is removed in
+ * 1.0.0. A known key returns HTTP 200 and an unknown key 404, both with a JSON body.
  * When a domain is sent, the site is registered as an activation of the licence (within the licence's site limit).
  * When a version is sent, the response includes `update`: the newest release this licence can download and whether
  * it is newer than the site's version, and the version is recorded for the site.
@@ -51,17 +66,18 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
   if (request.method !== "GET" && request.method !== "POST") return json({ error: "Use GET or POST" }, { status: 405, headers: CORS })
 
   const now = Date.now()
-  const { domain, version, channel } = await readCheckRequest(request)
+  const { domain, version, channel, nonce } = await readCheckRequest(request)
 
   const license = KEY_PATTERN.test(key) ? await getLicenseByKey(env, key) : null
   // Activations only matter for the limit, so they are loaded only for licences that have one.
   const activated = license && license.max_sites !== null ? (await listActivations(env, license.id)).map((a) => a.domain) : []
   const set = license ? await getStatusSetForLicense(env, license) : DEFAULT_STATUSES
-  const result: CheckResponse = buildCheckResponse(license, domain, now, activated, set)
+  const signing = await getSigningKey(env)
+  const result: CheckResponse = { ...buildCheckResponse(license, domain, now, activated, set), license_key: key, domain, nonce }
   if (license && version) {
     const files = await visibleFiles(env, license, domain, result, now, set, new URL(request.url).origin)
     const latest = latestRelease(files.filter((f) => f.available), channel)
-    result.update = { current: version, available: Boolean(latest && compareVersions(latest.version, version) > 0), latest: latest ? releaseSummary(latest, domain) : null }
+    result.update = { current: version, available: Boolean(latest && compareVersions(latest.version, version) > 0), latest: latest ? await releaseSummary(latest, signing, domain) : null }
   }
   const body = JSON.stringify(result)
 
@@ -74,7 +90,8 @@ export async function handleCheck(request: Request, env: Env, ctx: ExecutionCont
         .catch((error) => console.error("Failed to record check:", error))
     )
   } else reportUnknownKey(env, ctx, request)
-  const headers: Record<string, string> = { ...CORS, "content-type": "application/json; charset=utf-8" }
+  const headers: Record<string, string> = { ...CORS, "content-type": "application/json; charset=utf-8", ...(await signatureHeaders(signing, body)) }
+  // Deprecated: the HMAC can be computed by anyone holding the licence key. Removed in 1.0.0.
   if (license) headers["x-warden-signature"] = await hmacHex(license.license_key, body)
   return new Response(body, { status: license ? 200 : 404, headers })
 }

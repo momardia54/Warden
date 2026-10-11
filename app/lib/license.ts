@@ -53,6 +53,12 @@ export type CheckResponse = {
   app?: { slug: string; name: string } | null
   expires_at?: string | null
   checked_at: string
+  /** Set by the check endpoint: the licence key that was checked, so a response cannot be passed off as another licence's. */
+  license_key?: string
+  /** Set by the check endpoint: the site's domain as Warden read it, or null when none was sent. */
+  domain?: string | null
+  /** Set by the check endpoint: the nonce the site sent, echoed so the site can tell a fresh response from a replayed one. */
+  nonce?: string | null
   /** Present when the site sent its version: the newest release this licence can download, and whether it is newer. */
   update?: UpdateInfo
 }
@@ -66,6 +72,8 @@ export type ReleaseInfo = {
   changelog: string
   size: number
   sha256: string | null
+  /** Ed25519 signature of `sha256` (the 64 hex characters), base64. Null when the release has no checksum. */
+  signature: string | null
   released_at: string
   download_url: string
 }
