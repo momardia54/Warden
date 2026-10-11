@@ -2,6 +2,13 @@
 
 All notable changes, newest first. Warden follows [semantic versioning](https://semver.org/); while it is pre-1.0, a minor version (0.x.0) can change the API, the check response or the data model, and every such change is listed under **Changed** or **Removed** with what to do. Database migrations run by themselves on the first request after an update. See "Versioning" in [Roadmap.md](Roadmap.md).
 
+**Next, towards 1.0.0** (details in [Roadmap.md](Roadmap.md)):
+
+- **0.3.0, the contract**: Ed25519 signatures on check responses and on release packages, API review and freeze (deprecated aliases removed), upgrade notes
+- **0.4.0, trust**: end-to-end tests on real Cloudflare (GitHub App, private repositories, phone width, CI), backups and export, two-factor sign-in or Cloudflare Access, independent security review
+- **0.5.0, completeness**: outgoing webhooks, grace period after expiry, public documentation site and a verified Deploy button
+- **1.0.0**: the check response and the API are frozen
+
 ## 0.2.0 (unreleased)
 
 Not released yet: on the `develop` branch.
