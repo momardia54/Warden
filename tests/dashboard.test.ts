@@ -46,8 +46,7 @@ test("licence views and list filters", () => {
   assert.deepEqual(run("app=app_1"), ["Atlas"])
   assert.deepEqual(run("status=suspended"), ["Atlas"])
   assert.deepEqual(run("view=expiring"), ["Harbor"])
-  assert.deepEqual(readLicenseFilter(new URLSearchParams("view=in_force")).view, "valid") // earlier name, kept for bookmarks
-  assert.deepEqual(readLicenseFilter(new URLSearchParams("view=not_in_force")).view, "invalid")
+  assert.deepEqual(readLicenseFilter(new URLSearchParams("view=in_force")).view, "") // earlier name, removed in 0.3.0
   assert.deepEqual(run("view=bogus"), ["Maple Dental", "Atlas", "Harbor"]) // unknown views are ignored
 })
 

@@ -80,3 +80,30 @@ export function parseExpiry(value: unknown): number | null | "invalid" {
 }
 
 export const trimmed = (value: unknown, max: number): string | null => (typeof value === "string" ? value.trim().slice(0, max) : null)
+
+export const DEFAULT_PAGE_SIZE = 50
+export const MAX_PAGE_SIZE = 100
+
+/** The page size of a list request: ?limit= from 1 to 100, 50 by default. */
+export function readLimit(q: URLSearchParams): number {
+  return Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(Number(q.get("limit"))) || DEFAULT_PAGE_SIZE))
+}
+
+/**
+ * One page of a list that is read whole: `{ data, next }`. ?cursor= is the `next` of the previous page (the id of its
+ * last item); `next` is null on the last page. An unknown cursor is an error, so a client never silently restarts.
+ */
+export function pageOf<T>(items: T[], idOf: (item: T) => string, q: URLSearchParams): { data: T[]; next: string | null } | Response {
+  const limit = readLimit(q)
+  const cursor = q.get("cursor")
+  let start = 0
+  if (cursor) {
+    const index = items.findIndex((item) => idOf(item) === cursor)
+    if (index < 0) return fail(422, "invalid_cursor", "cursor must be the next value of a previous page of this list.")
+    start = index + 1
+  }
+  const data = items.slice(start, start + limit)
+  return { data, next: start + limit < items.length ? idOf(data[data.length - 1]) : null }
+}
+
+export const unknownEndpoint = () => fail(404, "not_found", "Unknown endpoint. See /api/v1/openapi.json.")

@@ -134,7 +134,7 @@ test("download rules, logging and counters", async () => {
   assert.equal((await getFile(env, { license: lic }, fin.id))!.download_count, 1)
   const log = (await recentActivity(env, lic.id)).filter((a) => a.event === "download").map((a) => a.detail).join("|")
   assert.match(log, /Downloaded: theme-update.zip/)
-  assert.match(log, /Download refused: theme-final.zip \(available when Completed\)/)
+  assert.match(log, /Download denied: theme-final.zip \(available when Completed\)/)
 
   // unknown key and unknown file
   const unknown = await handleDownload(new Request("https://w.dev/download/WRD-AAAAA-AAAAA-AAAAA-AAAAA"), env, ctx, "WRD-AAAAA-AAAAA-AAAAA-AAAAA", null)

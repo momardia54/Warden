@@ -6,10 +6,19 @@ import { describeStatusKeys, type StatusSet } from "../lib/statuses"
 import { getFileForLicense, listFilesForLicense, releaseRule, type LicenseFile } from "./files.server"
 import { getLicenseByKey, listActivations, type License } from "./licenses.server"
 import { getStatusSetForLicense } from "./statuses.server"
-import { json } from "./util.server"
+import { getSigningKey, signatureHeaders, signRelease, type SigningKey } from "./signing.server"
 
-const CORS = { "access-control-allow-origin": "*", "access-control-expose-headers": "X-Warden-Sha256", "cache-control": "no-store" }
-const reply = (body: unknown, status: number) => json(body, { status, headers: CORS })
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-expose-headers": "X-Warden-Sha256, X-Warden-Release-Signature, X-Warden-Signature-Ed25519, X-Warden-Key-Id",
+  "cache-control": "no-store",
+}
+
+/** A JSON response of the download endpoint, signed like a check response (X-Warden-Signature-Ed25519 over the body). */
+async function reply(key: SigningKey, body: unknown, status: number): Promise<Response> {
+  const text = JSON.stringify(body)
+  return new Response(text, { status, headers: { ...CORS, "content-type": "application/json; charset=utf-8", ...(await signatureHeaders(key, text)) } })
+}
 
 /**
  * Content-Disposition for a download. Header values must be Latin-1, so the plain `filename` gets an ASCII version of
@@ -81,8 +90,8 @@ export async function visibleFiles(env: Env, license: License, domain: string | 
   })
 }
 
-/** The fields of a release a site needs to offer an update. */
-export function releaseSummary(f: VisibleFile, domain: string | null = null) {
+/** The fields of a release a site needs to offer an update, with the signature of its checksum. */
+export async function releaseSummary(f: VisibleFile, key: SigningKey, domain: string | null = null) {
   return {
     id: f.id,
     name: f.name,
@@ -91,13 +100,14 @@ export function releaseSummary(f: VisibleFile, domain: string | null = null) {
     changelog: f.changelog,
     size: f.size,
     sha256: f.sha256 || null,
+    signature: await signRelease(key, f.sha256),
     released_at: new Date(f.uploaded_at).toISOString(),
     download_url: domain ? `${f.download_url}?domain=${encodeURIComponent(domain)}` : f.download_url,
   }
 }
 
 /** A file in the public download list. Internal notes are never included. */
-const publicEntry = (f: VisibleFile) => ({
+const publicEntry = async (f: VisibleFile, key: SigningKey) => ({
   id: f.id,
   name: f.name,
   version: f.version,
@@ -105,6 +115,7 @@ const publicEntry = (f: VisibleFile) => ({
   changelog: f.changelog,
   size: f.size,
   sha256: f.sha256 || null,
+  signature: await signRelease(key, f.sha256),
   source: f.source,
   uploaded_at: new Date(f.uploaded_at).toISOString(),
   statuses: f.statuses,
@@ -121,12 +132,16 @@ const publicEntry = (f: VisibleFile) => ({
  *   GET /download/<key>/<file id>[?domain=example.com]       returns the file, a JSON error with HTTP 403, or 410
  *                                                          for a withdrawn release
  *
+ * Every JSON response is signed with the install's Ed25519 key. A file carries X-Warden-Sha256 and
+ * X-Warden-Release-Signature, the signature of that checksum.
+ *
  * A file is released when the licence's effective status is one of the file's release statuses and, if the
  * file requires it, the requesting domain is allowed for the licence.
  */
 export async function handleDownload(request: Request, env: Env, ctx: ExecutionContext, key: string, fileId: string | null): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...CORS, "access-control-allow-methods": "GET" } })
-  if (request.method !== "GET" && request.method !== "HEAD") return reply({ error: "Method not allowed. Use GET." }, 405)
+  const signing = await getSigningKey(env)
+  if (request.method !== "GET" && request.method !== "HEAD") return reply(signing, { error: "Method not allowed. Use GET." }, 405)
 
   const url = new URL(request.url)
   const domainParam = url.searchParams.get("domain")
@@ -136,7 +151,7 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
   const license = KEY_PATTERN.test(key) ? await getLicenseByKey(env, key) : null
   if (!license) {
     reportUnknownKey(env, ctx, request)
-    return reply({ valid: false, status: "unknown", message: "Unknown licence." }, 404)
+    return reply(signing, { valid: false, status: "unknown", message: "Unknown licence." }, 404)
   }
 
   const activated = license.max_sites !== null ? (await listActivations(env, license.id)).map((a) => a.domain) : []
@@ -148,21 +163,21 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
     const channel: Channel = isChannel(channelParam) ? channelParam : "stable"
     const entries = await visibleFiles(env, license, domain, check, now, set, url.origin)
     const latest = latestRelease(entries.filter((e) => e.available), channel)
-    return reply({ valid: check.valid, status: check.status, message: check.message, app: check.app, latest: latest ? releaseSummary(latest) : null, files: entries.map(publicEntry) }, 200)
+    return reply(signing, { valid: check.valid, status: check.status, message: check.message, app: check.app, license_key: license.license_key, checked_at: check.checked_at, latest: latest ? await releaseSummary(latest, signing) : null, files: await Promise.all(entries.map((e) => publicEntry(e, signing))) }, 200)
   }
 
   const file = /^fil_[a-z0-9]+$/.test(fileId) ? await getFileForLicense(env, license, fileId) : null
-  if (!file) return reply({ error: "File not found for this licence." }, 404)
-  if (file.withdrawn_at !== null) return reply({ valid: false, status: "withdrawn", message: "This release has been withdrawn.", file: { id: file.id, name: file.name, version: file.version } }, 410)
+  if (!file) return reply(signing, { error: "File not found for this licence." }, 404)
+  if (file.withdrawn_at !== null) return reply(signing, { valid: false, status: "withdrawn", message: "This release has been withdrawn.", file: { id: file.id, name: file.name, version: file.version } }, 410)
 
   const access = accessFor(license, file, domain, check, now, set)
   if (!access.allowed) {
     ctx.waitUntil(logDownload(env, license, file, access.status, domain, clientIp(request), now, false, set).catch((e) => console.error("Failed to log download:", e)))
-    return reply({ valid: false, status: access.status, message: access.message, file: { id: file.id, name: file.name, statuses: releaseRule(file, set).statuses } }, 403)
+    return reply(signing, { valid: false, status: access.status, message: access.message, file: { id: file.id, name: file.name, statuses: releaseRule(file, set).statuses } }, 403)
   }
-  if (!env.FILES) return reply({ error: "File storage is not configured." }, 501)
+  if (!env.FILES) return reply(signing, { error: "File storage is not configured." }, 501)
   const object = await env.FILES.get(file.r2_key)
-  if (!object) return reply({ error: "The file is missing from storage." }, 404)
+  if (!object) return reply(signing, { error: "The file is missing from storage." }, 404)
 
   const headers: Record<string, string> = {
     ...CORS,
@@ -174,7 +189,11 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
     // keeps it from running scripts or reaching anything.
     "content-security-policy": "default-src 'none'; sandbox",
   }
-  if (file.sha256) headers["x-warden-sha256"] = file.sha256
+  if (file.sha256) {
+    headers["x-warden-sha256"] = file.sha256
+    headers["x-warden-release-signature"] = (await signRelease(signing, file.sha256))!
+    headers["x-warden-key-id"] = signing.keyId
+  }
   // A HEAD request only asks for the headers: it is not a download and is not counted.
   if (request.method === "HEAD") {
     object.body.cancel().catch(() => {})
@@ -185,7 +204,7 @@ export async function handleDownload(request: Request, env: Env, ctx: ExecutionC
 }
 
 async function logDownload(env: Env, license: License, file: LicenseFile, status: string, domain: string | null, ip: string | null, now: number, granted: boolean, set: StatusSet) {
-  const detail = granted ? `Downloaded: ${file.name}` : `Download refused: ${file.name} (available when ${describeStatusKeys(releaseRule(file, set).statuses, set)})`
+  const detail = granted ? `Downloaded: ${file.name}` : `Download denied: ${file.name} (available when ${describeStatusKeys(releaseRule(file, set).statuses, set)})`
   const statements = [env.DB.prepare("INSERT INTO activity (license_id, at, event, status, domain, detail, ip) VALUES (?, ?, 'download', ?, ?, ?, ?)").bind(license.id, now, status, domain, detail, ip)]
   if (granted) statements.push(env.DB.prepare("UPDATE files SET download_count = download_count + 1, last_download_at = ? WHERE id = ?").bind(now, file.id))
   await env.DB.batch(statements)

@@ -38,6 +38,7 @@ Files without a version (attachments) are not in a track: each one keeps its own
 | **Channel** | `stable` (default) or `beta`. Sites receive stable releases unless they ask for the beta channel, in which case they receive the newest of both. |
 | **Release notes** | Public text (up to 10,000 characters) returned with the release, so a site can show "what's new" before installing. |
 | **Checksum** | The SHA-256 of the file, computed by Warden during the upload. Returned with the release and sent as the `X-Warden-Sha256` header of the download, so an updater can verify what it received. Files uploaded before checksums were introduced have none. |
+| **Signature** | Ed25519 signature of the checksum, made with the installation's signing key. Returned with the release (`signature`) and sent as the `X-Warden-Release-Signature` header of the download, so an updater can verify that the package was published by you ([below](#verifying-a-package)). `null` for a file without a checksum. |
 | **Withdrawn** | A withdrawn release is no longer offered, no longer listed, and its download returns HTTP 410. It stays on record and can be restored. Use it to pull a bad build without losing its history. |
 | **Internal notes** | For you only. Never sent to sites. |
 
@@ -60,6 +61,9 @@ GET https://<your-worker>/check/<licence key>?domain=harborstudio.com&version=1.
   "app": { "slug": "harbor-theme", "name": "Harbor Theme" },
   "expires_at": "2027-10-04T23:59:59.999Z",
   "checked_at": "2026-10-10T09:12:44.512Z",
+  "license_key": "WRD-7KQ4M-X2PHR-9TCVN-B3WZD",
+  "domain": "harborstudio.com",
+  "nonce": null,
   "update": {
     "current": "1.3.0",
     "available": true,
@@ -71,6 +75,7 @@ GET https://<your-worker>/check/<licence key>?domain=harborstudio.com&version=1.
       "changelog": "Faster gallery. Fixes the mobile menu.",
       "size": 3145728,
       "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "signature": "<Ed25519 signature of sha256, base64>",
       "released_at": "2026-10-08T14:03:11.000Z",
       "download_url": "https://<your-worker>/download/WRD-.../fil_...?domain=harborstudio.com"
     }
@@ -82,7 +87,7 @@ GET https://<your-worker>/check/<licence key>?domain=harborstudio.com&version=1.
 - `available` is `true` when `latest` is newer than `current`.
 - `download_url` already carries the domain, so the site can fetch it as is.
 - Add `&channel=beta` to receive beta releases too.
-- The whole response, `update` included, is signed with `X-Warden-Signature` ([checking.md](checking.md)).
+- The whole response, `update` included, is signed with the installation's Ed25519 key ([checking.md](checking.md#verifying-the-signature)).
 - The `update` block appears only when the site sends a valid `version`. Older site code that does not send one gets the same response as before.
 
 The same fields can be sent in a POST body: `{ "domain": "harborstudio.com", "version": "1.3.0", "channel": "beta" }`.
@@ -132,21 +137,46 @@ Run it from your build pipeline to publish every release automatically.
 
 **From a repository:** connect a GitHub repository to the app or licence, and every version tag you push is published as a release, with a fixed folder name inside the zip. See [repositories.md](repositories.md).
 
+## Verifying a package
+
+A release's `signature` is the Ed25519 signature of its `sha256`, the 64 lowercase hex characters as text, made with the installation's signing key ([checking.md](checking.md#verifying-the-signature)). Before installing a package, an updater:
+
+1. computes the SHA-256 of the file it downloaded, in lowercase hex;
+2. compares it with `sha256` from the signed check response (or the `X-Warden-Sha256` header);
+3. verifies `signature` (or the `X-Warden-Release-Signature` header) against that hex text with the public key.
+
+The checksum proves the file arrived intact; the signature proves it was published through your Warden installation and not replaced on the way or on a mirror. The check response that offered the release is signed too, so the version, checksum and signature it names come from you.
+
+From the command line (OpenSSL 3), with the public key saved in PEM form (`public_key_pem` of `GET /api/v1/signing-key`) as `warden.pem`:
+
+```bash
+openssl dgst -sha256 -r harbor-theme-1.4.0.zip | cut -d' ' -f1 | tr -d '\n' > package.sha256
+echo "<signature>" | base64 -d > package.sig
+openssl pkeyutl -verify -pubin -inkey warden.pem -rawin -in package.sha256 -sigfile package.sig
+```
+
 ## Example: an updater in WordPress
+
+`warden_signed()` is the helper from [checking.md](checking.md#verifying-the-signature).
 
 ```php
 function harbor_check_for_update( $key, $installed_version ) {
-    $url = 'https://your-worker.example/check/' . $key . '?domain=' . rawurlencode( wp_parse_url( home_url(), PHP_URL_HOST ) ) . '&version=' . rawurlencode( $installed_version );
-    $res = wp_remote_get( $url, [ 'timeout' => 10 ] );
-    if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) >= 500 ) { return null; } // keep the last known state
+    $nonce = bin2hex( random_bytes( 16 ) );
+    $url   = 'https://your-worker.example/check/' . $key . '?domain=' . rawurlencode( wp_parse_url( home_url(), PHP_URL_HOST ) ) . '&version=' . rawurlencode( $installed_version ) . '&nonce=' . $nonce;
+    $res   = wp_remote_get( $url, [ 'timeout' => 10 ] );
+    if ( is_wp_error( $res ) ) { return null; } // keep the last known state
     $body = wp_remote_retrieve_body( $res );
-    if ( ! hash_equals( hash_hmac( 'sha256', $body, $key ), (string) wp_remote_retrieve_header( $res, 'x-warden-signature' ) ) ) { return null; }
+    if ( ! warden_signed( wp_remote_retrieve_header( $res, 'x-warden-signature-ed25519' ), $body ) ) { return null; }
     $result = json_decode( $body, true );
+    if ( $result['license_key'] !== $key || $result['nonce'] !== $nonce ) { return null; }
     return ! empty( $result['update']['available'] ) ? $result['update']['latest'] : null;
 }
 
 // After downloading the package with download_url( $latest['download_url'] ), verify it before installing:
-// hash_equals( $latest['sha256'], hash_file( 'sha256', $package ) )
+function harbor_package_ok( $package, $latest ) {
+    $hash = hash_file( 'sha256', $package );
+    return hash_equals( (string) $latest['sha256'], $hash ) && warden_signed( $latest['signature'], $hash );
+}
 ```
 
 Hook the result into the `pre_set_site_transient_update_themes` (or `_plugins`) filter to show the update in the WordPress admin, and install with the regular upgrader.
@@ -157,4 +187,4 @@ Hook the result into the `pre_set_site_transient_update_themes` (or `_plugins`) 
 - Upload each build with its version, and keep older releases in the track: they stay on record, and withdrawing the newest one makes the previous one the latest again.
 - Use the beta channel for early builds and promote a build by changing its channel to stable.
 - Withdraw instead of deleting when a release turns out to be broken: sites stop being offered it, and you keep its record and download count.
-- Have the site verify the signature of the check and the checksum of the package before installing anything.
+- Have the site verify the signature of the check, and the checksum and signature of the package, before installing anything.

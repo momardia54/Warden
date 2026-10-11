@@ -8,6 +8,11 @@ export function openApiSpec(origin: string) {
   const body = (schema: object) => ({ required: true, content: { "application/json": { schema } } })
   const secured = [{ bearer: [] }]
   const appParam = { name: "app", in: "path", required: true, description: "App id (app_...) or slug.", schema: { type: "string" } }
+  /** Query parameters of a paged list. */
+  const pageParams = [
+    { name: "limit", in: "query", description: "Items per page", schema: { type: "integer", minimum: 1, maximum: 100, default: 50 } },
+    { name: "cursor", in: "query", description: "The `next` value of the previous page. An unknown cursor answers 422 `invalid_cursor`", schema: { type: "string" } },
+  ]
 
   // A repository connected to an app or a licence (docs/repositories.md). Both owners have the same endpoints.
   const sourceDoc = "{ id, track_id, tag_prefix, connection (app | token), provider, repository, trigger, package_folder, has_token, enabled, webhook_url, webhook_secret, created_at, updated_at, last_delivery_at }. webhook_secret is omitted for read keys; the access token is never returned."
@@ -29,7 +34,7 @@ export function openApiSpec(origin: string) {
       parameters: [param],
       get: {
         summary: "Release tracks. For a licence, also `app_tracks` and `receives`: the track that serves its current status.",
-        responses: { 200: { description: `{ data: [${trackDoc}], conflicts: [{ status, tracks }], app_tracks?, receives? }` } },
+        responses: { 200: { description: `{ data: [${trackDoc}], next: null, conflicts: [{ status, tracks }], app_tracks?, receives? }. Always complete` } },
       },
       post: { summary: "Create a track (permission: manage)", requestBody: body(trackBody), responses: { 201: { description: trackDoc }, 409: { description: "A status already belongs to another track" }, 422: err } },
     },
@@ -78,7 +83,7 @@ export function openApiSpec(origin: string) {
     [`${prefix}/source/regenerate-secret`]: { parameters: params, post: { summary: "Replace the webhook secret (permission: manage)", responses: { 200: { description: sourceDoc } } } },
     [`${prefix}/source/imports`]: {
       parameters: params,
-      get: { summary: "Latest tags and their state, newest first", responses: { 200: { description: `{ data: [${importDoc}] }` } } },
+      get: { summary: "Tags and their state, newest first", parameters: pageParams, responses: { 200: { description: `{ data: [${importDoc}], next }` } } },
       post: {
         summary: "Publish an existing tag (permission: manage). Runs in the background; poll the list for the result.",
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["tag"], properties: { tag: { type: "string", example: "v1.4.0" } } } } } },
@@ -102,7 +107,7 @@ export function openApiSpec(origin: string) {
   const statusPaths = (base: string, params: object[], owner: string) => ({
     [base]: {
       parameters: params,
-      get: { summary: `The statuses that apply to the ${owner}`, description: "`custom` is true when the " + owner + " has statuses of its own. `source` is `" + owner + "`, `app` or `default`: where the statuses in effect come from.", responses: { 200: { description: "{ custom, source, data: Status[] }" }, 404: err } },
+      get: { summary: `The statuses that apply to the ${owner}`, description: "`custom` is true when the " + owner + " has statuses of its own. `source` is `" + owner + "`, `app` or `default`: where the statuses in effect come from.", responses: { 200: { description: "{ custom, source, data: Status[], next: null }. Always complete" }, 404: err } },
       post: { summary: `Add a status to the ${owner}'s own statuses (permission: manage). Customize them first`, requestBody: body({ $ref: "#/components/schemas/StatusInput" }), responses: { 201: { description: "The status" }, 403: err, 409: err, 422: err } },
       delete: {
         summary: `Remove the ${owner}'s own statuses so it uses the inherited statuses again (permission: full)`,
@@ -137,17 +142,26 @@ export function openApiSpec(origin: string) {
       title: "Warden API",
       version: VERSION,
       description:
-        "Create and manage licences from your own code. Authenticate with an API key created in the dashboard (API keys page): `Authorization: Bearer wk_...`. Scopes: `read` (GET), `manage` (also create, edit, status, renew), `full` (also delete and regenerate keys). Each key is rate limited (600 requests per minute by default); over the limit the API answers `429` with `Retry-After`.",
+        "Create and manage licences from your own code. Authenticate with an API key created in the dashboard (API keys page): `Authorization: Bearer wk_...`. Scopes: `read` (GET), `manage` (also create, edit, status, renew), `full` (also delete and regenerate keys). Each key is rate limited (600 requests per minute by default); over the limit the API answers `429` with `Retry-After`. Errors are `{ error: { code, message } }`; branch on `code`. Lists answer `{ data, next }`: pass `next` as `cursor` for the following page (`limit` 1 to 100, default 50); `next` is null on the last page, and always null for lists that are never long (statuses, tracks, repositories).",
     },
     servers: [{ url: `${origin}/api/v1` }],
     security: secured,
     paths: {
       "/me": { get: { summary: "Who the key belongs to", responses: { 200: { description: "Key name and scope" }, 401: err } } },
-      "/stats": { get: { summary: "Licence statistics", responses: { 200: { description: "{ total, valid, invalid, expiring_within_14_days, not_checked_for_3_days, by_status }; in_force and not_in_force are deprecated aliases of valid and invalid" }, 401: err } } },
+      "/stats": { get: { summary: "Licence statistics", responses: { 200: { description: "{ total, valid, invalid, expiring_within_14_days, not_checked_for_3_days, by_status }" }, 401: err } } },
+      "/signing-key": {
+        get: {
+          summary: "The install's public signing key",
+          description:
+            "Ed25519 public key that signs check responses and download responses (`X-Warden-Signature-Ed25519` over the raw body, with `X-Warden-Key-Id`) and releases (`signature` over the 64 hex characters of `sha256`). Put it in the site's code. `public_key` is the raw 32-byte key in base64 (libsodium); `public_key_pem` is the same key as SubjectPublicKeyInfo PEM (OpenSSL, Node.js, WebCrypto). Created on first use; it does not change.",
+          responses: { 200: { description: "{ algorithm: \"Ed25519\", key_id, public_key, public_key_pem, created_at }" }, 401: err },
+        },
+      },
       "/ip-blocks": {
         get: {
           summary: "Blocked IP addresses and ranges",
-          responses: { 200: { description: "{ data: [{ id, ip, source, reason, created_at, expires_at, hits, last_hit_at }] }. `ip` is an address or a CIDR range; `source` is manual or auto (created by a protection rule); `hits` is approximate." }, 401: err },
+          parameters: pageParams,
+          responses: { 200: { description: "{ next, data: [{ id, ip, source, reason, created_at, expires_at, hits, last_hit_at }] }. `ip` is an address or a CIDR range; `source` is manual or auto (created by a protection rule); `hits` is approximate." }, 401: err },
         },
         post: {
           summary: "Block an IP address or range (permission: manage)",
@@ -202,14 +216,14 @@ export function openApiSpec(origin: string) {
       "/licenses": {
         get: {
           summary: "List licences",
-          description: "Newest first. Pass `before` = the `next` value of the previous page to continue.",
+          description: "Newest first. Pass the `next` value of the previous page as `cursor` to continue. `before` is the earlier name of `cursor`, accepted until 1.0.0.",
           parameters: [
             { name: "status", in: "query", description: "A status key, matched on the status reported to sites (an expiry rule that has triggered counts)", schema: { type: "string", example: "active" } },
             { name: "q", in: "query", description: "Search name, customer, key, domains, external_ref and app name", schema: { type: "string" } },
             { name: "app", in: "query", description: "Only licences of this app (id or slug)", schema: { type: "string" } },
             { name: "external_ref", in: "query", schema: { type: "string" } },
-            { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 25 } },
-            { name: "before", in: "query", schema: { type: "string" } },
+            ...pageParams,
+            { name: "before", in: "query", deprecated: true, description: "Earlier name of `cursor`, removed in 1.0.0", schema: { type: "string" } },
           ],
           responses: { 200: { description: "A page of licences: { data: License[], next: string | null }" }, 401: err },
         },
@@ -242,7 +256,7 @@ export function openApiSpec(origin: string) {
       "/licenses/{id}/regenerate-key": { parameters: [idParam], post: { summary: "Replace the key (scope full). The old key and check URL stop working.", responses: { 200: ok("Updated, with the new key"), 403: err, 404: err } } },
       "/licenses/{id}/files": {
         parameters: [idParam],
-        get: { summary: "List the files attached to a licence", responses: { 200: { description: "{ data: File[] }" }, 404: err } },
+        get: { summary: "List the files attached to a licence, newest first", parameters: pageParams, responses: { 200: { description: "{ data: File[], next }" }, 404: err } },
         put: {
           summary: "Upload a file (permission: manage)",
           description:
@@ -269,19 +283,19 @@ export function openApiSpec(origin: string) {
       },
       "/licenses/{id}/activations": {
         parameters: [idParam],
-        get: { summary: "Sites (domains) registered for the licence", responses: { 200: { description: "{ max_sites, data: [{ domain, version, first_seen_at, last_seen_at, check_count, last_ip }] }" }, 404: err } },
+        get: { summary: "Sites (domains) registered for the licence", parameters: pageParams, responses: { 200: { description: "{ max_sites, data: [{ domain, version, first_seen_at, last_seen_at, check_count, last_ip }], next }" }, 404: err } },
       },
       "/licenses/{id}/activations/{domain}": {
         parameters: [idParam, { name: "domain", in: "path", required: true, schema: { type: "string" } }],
         delete: { summary: "Release a site to free its slot (permission: manage)", responses: { 200: { description: "{ released: true, domain }" }, 403: err, 404: err } },
       },
       "/statuses": {
-        get: { summary: "The built-in default statuses (read only)", description: "What an app or a licence uses until its statuses are customised. Customise them per app (`/apps/{app}/statuses`) or per licence (`/licenses/{id}/statuses`).", responses: { 200: { description: "{ data: Status[] }" }, 401: err } },
+        get: { summary: "The built-in default statuses (read only)", description: "What an app or a licence uses until its statuses are customised. Customise them per app (`/apps/{app}/statuses`) or per licence (`/licenses/{id}/statuses`).", responses: { 200: { description: "{ data: Status[], next: null }" }, 401: err } },
       },
       ...statusPaths("/apps/{app}/statuses", [appParam], "app"),
       ...statusPaths("/licenses/{id}/statuses", [idParam], "licence"),
       "/apps": {
-        get: { summary: "List apps with their statistics", responses: { 200: { description: "{ data: App[] }" }, 401: err } },
+        get: { summary: "List apps with their statistics, by name", parameters: pageParams, responses: { 200: { description: "{ data: App[], next }. App: { id, name, slug, description, default_*, notes, licenses, licenses_valid, sites, files, latest_version, created_at, updated_at }" }, 401: err } },
         post: {
           summary: "Create an app (permission: manage)",
           requestBody: body({ $ref: "#/components/schemas/AppInput" }),
@@ -301,7 +315,7 @@ export function openApiSpec(origin: string) {
       },
       "/apps/{app}/files": {
         parameters: [appParam],
-        get: { summary: "List the files shared by the app", responses: { 200: { description: "{ data: File[] }" }, 404: err } },
+        get: { summary: "List the files shared by the app, newest first", parameters: pageParams, responses: { 200: { description: "{ data: File[], next }" }, 404: err } },
         put: {
           summary: "Upload a file shared by every licence of the app (permission: manage)",
           description: "Same body and query parameters as PUT /licenses/{id}/files. Licences of the app see the file in their download list, subject to the file's release statuses.",
@@ -323,7 +337,7 @@ export function openApiSpec(origin: string) {
         },
       },
       "/integrations/github/repositories": {
-        get: { summary: "Repositories the GitHub App can access", responses: { 200: { description: "{ data: [{ id, full_name, private, account }] }" }, 404: err, 502: err } },
+        get: { summary: "Repositories the GitHub App can access", responses: { 200: { description: "{ data: [{ id, full_name, private, account }], next: null }" }, 404: err, 502: err } },
       },
       ...trackPaths("/apps/{app}", appParam),
       ...trackPaths("/licenses/{id}", idParam),
@@ -340,7 +354,14 @@ export function openApiSpec(origin: string) {
         patch: { summary: "Update a shared file's release rule or metadata (permission: manage)", requestBody: body({ $ref: "#/components/schemas/FileChanges" }), responses: { 200: ok("The file", "File"), 403: err, 404: err, 422: err } },
         delete: { summary: "Delete a shared file (permission: manage)", responses: { 200: { description: "{ deleted: true, id }" }, 404: err } },
       },
-      "/licenses/{id}/activity": { parameters: [idParam], get: { summary: "Recent checks, downloads and changes", parameters: [{ name: "limit", in: "query", schema: { type: "integer", maximum: 200, default: 50 } }], responses: { 200: { description: "{ data: [{ at, event, status, domain, ip, detail }] }. `ip` is the caller of a check or a download (null for changes, and after 90 days)." }, 404: err } } },
+      "/licenses/{id}/activity": {
+        parameters: [idParam],
+        get: {
+          summary: "Checks, downloads and changes, newest first",
+          parameters: pageParams,
+          responses: { 200: { description: "{ data: [{ at, event, status, domain, ip, detail }], next }. `ip` is the caller of a check or a download (null for changes, and after 90 days). Checks are kept 90 days." }, 404: err },
+        },
+      },
     },
     components: {
       securitySchemes: { bearer: { type: "http", scheme: "bearer", description: "API key, wk_..." } },
@@ -383,6 +404,7 @@ export function openApiSpec(origin: string) {
             version: { type: "string", description: "Empty for an attachment. A file with a version is a release" },
             channel: { enum: ["stable", "beta"] }, changelog: { type: "string", description: "Public release notes" }, notes: { type: "string", description: "Internal" },
             size: { type: "integer" }, content_type: { type: "string" }, sha256: { type: ["string", "null"], description: "Hex SHA-256 of the file. null for files uploaded before checksums were recorded" },
+            signature: { type: ["string", "null"], description: "Ed25519 signature of `sha256` (its 64 hex characters), base64; verify with GET /signing-key. null when `sha256` is null" },
             withdrawn: { type: "boolean", description: "A withdrawn release is not offered and cannot be downloaded (HTTP 410)" }, withdrawn_at: { type: ["string", "null"] },
             statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" },
             available: { type: "boolean", description: "Licence files only: downloadable now, ignoring the domain check" }, download_url: { type: "string", description: "Licence files only" },

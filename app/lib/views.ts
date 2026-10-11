@@ -28,9 +28,6 @@ export function isLicenseView(value: unknown): value is LicenseView {
   return typeof value === "string" && (LICENSE_VIEWS as readonly string[]).includes(value)
 }
 
-/** Earlier names of views, still accepted in the address so bookmarked lists keep working. */
-const VIEW_ALIASES: Record<string, LicenseView> = { in_force: "valid", not_in_force: "invalid" }
-
 type LicenseFacts = { status: string; expires_at: number | null; last_check_at: number | null; created_at: number }
 
 export function inView(license: LicenseFacts, set: StatusSet, view: LicenseView, now = Date.now()): boolean {
@@ -67,8 +64,7 @@ export type LicenseFilter = {
 }
 
 export function readLicenseFilter(params: URLSearchParams): LicenseFilter {
-  const raw = params.get("view") ?? ""
-  const view = Object.hasOwn(VIEW_ALIASES, raw) ? VIEW_ALIASES[raw] : raw
+  const view = params.get("view") ?? ""
   return { q: params.get("q") ?? "", status: params.get("status") ?? "", app: params.get("app") ?? "", view: isLicenseView(view) ? view : "" }
 }
 

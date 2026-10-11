@@ -5,13 +5,44 @@ All notable changes, newest first. Warden follows [semantic versioning](https://
 **Next, towards 1.0.0** (details in [Roadmap.md](Roadmap.md)):
 
 - **0.3.0, the contract**: Ed25519 signatures on check responses and on release packages, API review and freeze (deprecated aliases removed), upgrade notes
-- **0.4.0, trust**: end-to-end tests on real Cloudflare (GitHub App, private repositories, phone width, CI), backups and export, two-factor sign-in or Cloudflare Access, independent security review
-- **0.5.0, completeness**: outgoing webhooks, grace period after expiry, public documentation site and a verified Deploy button
+- **0.4.0, completeness**: outgoing webhooks, grace period after expiry, public documentation site and a verified Deploy button
+- **0.5.0, trust**: end-to-end tests on real Cloudflare (GitHub App, private repositories, phone width, CI), backups and export, two-factor sign-in or Cloudflare Access, independent security review
 - **1.0.0**: the check response and the API are frozen
 
-## 0.2.0 (unreleased)
+## 0.3.0 (unreleased)
 
 Not released yet: on the `develop` branch.
+
+What to change on your side: [docs/upgrade-notes.md](docs/upgrade-notes.md), section "0.2 to 0.3".
+
+### Added: signatures
+
+- **Ed25519 signatures.** Each installation creates a signing key pair on first use (stored in D1). Every answer of the check and download endpoints is signed with it: `X-Warden-Signature-Ed25519` (over the raw body) and `X-Warden-Key-Id`. Sites verify with the public key, which cannot create signatures, so the site's owner can no longer fake a valid answer the way the licence-keyed HMAC allowed. Answers for unknown keys are signed too
+- The check response names what it answers: `license_key`, `domain` and `nonce`. A site that sends `nonce` (8 to 64 letters, digits, `.`, `_`, `~`, `-`) with its check and compares it rejects replayed answers
+- **Signed releases**: each release carries `signature`, the Ed25519 signature of its SHA-256, in the update offer, the download list and the API, and the downloaded file carries `X-Warden-Release-Signature`, so an updater can verify a package came from your installation before installing it
+- The public key is shown on every licence page (*Integration* tab, *Public signing key*) and returned by `GET /api/v1/signing-key` (raw base64 for libsodium, and PEM)
+- The download list includes `license_key` and `checked_at`
+- docs/checking.md and docs/releases.md: verification in PHP, JavaScript and OpenSSL; docs/upgrade-notes.md: what to change when upgrading from 0.1 and from 0.2
+
+### Changed: API (review before 1.0.0)
+
+- Every list answers `{ data, next }` and pages the same way: `limit` (1 to 100, default 50) and `cursor` (the previous page's `next`). Apps, files, activations, IP blocks and repository imports are now paged; statuses, tracks and GitHub repositories are always complete and answer `next: null`. An unknown cursor answers `422 invalid_cursor`
+- `GET /licenses`: the default page size is 50 (was 25), and `cursor` replaces `before`, which is accepted until 1.0.0
+- `GET /licenses/{id}/activity`: at most 100 per page (was 200), paged with `cursor`
+- Error codes name what was not found: `GET /analytics` answers `license_not_found` or `app_not_found` (was `not_found`), `DELETE /ip-blocks/{id}` answers `ip_block_not_found`. An unsupported method on `/protection` and `/ip-blocks` answers `405 method_not_allowed` instead of 404
+- docs/api.md lists every error code and the paging rules
+- New denied downloads are logged as "Download denied: …" (was "Download refused: …"); Analytics counts both
+
+### Deprecated
+
+- `X-Warden-Signature` (HMAC-SHA256 keyed with the licence key) is still sent and is removed in 1.0.0. Move site code to `X-Warden-Signature-Ed25519`
+- `before` on `GET /licenses`, replaced by `cursor`; removed in 1.0.0
+
+### Removed
+
+- The deprecated aliases announced in 0.2.0: `in_force` and `not_in_force` in `GET /stats` (use `valid`, `invalid`), `licenses_in_force` in apps (use `licenses_valid`), and the licence list addresses `?view=in_force` and `?view=not_in_force` (use `?view=valid`, `?view=invalid`)
+
+## 0.2.0 (2026-10-10)
 
 ### Added: dashboard
 
@@ -91,7 +122,6 @@ Not released yet: on the `develop` branch.
 ### Fixed
 
 - Preview builds of pull requests (Cloudflare Workers Builds) failed with "Your Wrangler configuration is missing a `previews` block": `wrangler.jsonc` now gives previews rate limit counters of their own. Previews have no database by design, and show a notice saying so instead of "Database upgrade failed"
-- The OpenAPI description listed only the built-in statuses for `status` filters and bodies, and described `valid` as "true for active and completed"; both now reflect configurable statuses
 - The OpenAPI description listed only the built-in statuses for `status` filters and bodies, and described `valid` as "true for active and completed"; both now reflect configurable statuses
 
 ## 0.1.0 (2026-10-04)
