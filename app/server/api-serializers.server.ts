@@ -76,6 +76,8 @@ export function serializeFile(f: LicenseFile, license: License | null, origin: s
     sha256: f.sha256 || null,
     withdrawn: f.withdrawn_at !== null,
     withdrawn_at: iso(f.withdrawn_at),
+    // A release's statuses and domain check are its track's; an attachment (no version) has no track.
+    track: f.track_id,
     statuses: rule.statuses,
     check_domain: rule.check_domain,
     ...(license ? { available: f.withdrawn_at === null && evaluateFileAccess(license, rule, null, Date.now(), true, set).allowed, download_url: `${origin}/download/${license.license_key}/${f.id}` } : {}),

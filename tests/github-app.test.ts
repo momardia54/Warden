@@ -9,8 +9,9 @@ import { handleApi } from "../app/server/api.server.ts"
 import { listFiles } from "../app/server/files.server.ts"
 import { appJwt, completeManifest, getGitHubApp, listAppRepositories, removeGitHubApp, resetGitHubAppCache, type GitHubApp } from "../app/server/github-app.server.ts"
 import { createLicense, type LicenseInput } from "../app/server/licenses.server.ts"
-import { deleteSource, getSource, handleAppWebhook, listImports, saveSource } from "../app/server/sources.server.ts"
+import { deleteSource, getSourceForTrack, handleAppWebhook, listImports, saveSource } from "../app/server/sources.server.ts"
 import { hmacHex } from "../app/server/util.server.ts"
+import { createTrack, type ReleaseTrack } from "../app/server/tracks.server.ts"
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs1", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } })
 const SHA = "68e8cc77bb1bbd0bf7d629d3574b6ca70289b2cc"
@@ -42,7 +43,10 @@ async function setup() {
   const env = { DB: makeDb().DB, FILES: bucket } as unknown as Env
   const { ctx, settle } = makeCtx()
   const license = await createLicense(env, base)
-  return { env, objects, ctx, settle, owner: { license } }
+  // Repositories publish into a track: one serving the valid statuses, as before tracks existed.
+  const made = await createTrack(env, { license }, { name: "Updates", statuses: "active,completed" })
+  const track = (made as { track: ReleaseTrack }).track
+  return { env, objects, ctx, settle, track, owner: { license } }
 }
 
 async function deliver(env: Env, ctx: ExecutionContext, event: string, payload: unknown, secret = "hook-secret") {
@@ -102,12 +106,12 @@ test("the manifest code is exchanged for the app's credentials", async () => {
 })
 
 test("a repository connected through the app publishes tags pushed to the app's webhook", async () => {
-  const { env, ctx, settle, objects, owner } = await setup()
+  const { env, ctx, settle, objects, owner, track } = await setup()
   const gh = github()
   await completeManifest(env, "good-code")
 
   // With the app connected, a new source uses it by default; no token is stored.
-  const saved = await saveSource(env, owner, { repository: "harbor-studio/harbor-theme" })
+  const saved = await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme" })
   assert.ok("source" in saved)
   assert.deepEqual([saved.source.installation_id, saved.source.repository_id, saved.source.token], [77, 555, ""])
 
@@ -126,7 +130,7 @@ test("a repository connected through the app publishes tags pushed to the app's 
   const archive = gh.sent.find((s) => s.url.includes("/zipball/"))!
   assert.equal(archive.url, `https://api.github.com/repos/harbor-studio/harbor-wp-theme/zipball/${SHA}`)
   assert.equal(archive.headers.get("authorization"), "Bearer ghs_installation")
-  const source = (await getSource(env, owner))!
+  const source = (await getSourceForTrack(env, owner, track.id))!
   assert.equal(source.repository, "harbor-studio/harbor-wp-theme")
   assert.equal((await listImports(env, source.id))[0].state, "imported")
   assert.ok((await getGitHubApp(env))?.last_delivery_at)
@@ -140,12 +144,12 @@ test("a repository connected through the app publishes tags pushed to the app's 
 })
 
 test("a repository the app cannot access is reported, and a token connection stays available", async () => {
-  const { env, owner } = await setup()
+  const { env, owner, track } = await setup()
   const gh = github({ installed: false })
   await completeManifest(env, "good-code")
-  const refused = await saveSource(env, owner, { repository: "harbor-studio/harbor-theme" })
+  const refused = await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme" })
   assert.ok("error" in refused && /cannot access harbor-studio\/harbor-theme/.test(refused.error))
-  const withToken = await saveSource(env, owner, { repository: "harbor-studio/harbor-theme", connection: "token" })
+  const withToken = await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme", connection: "token" })
   assert.ok("source" in withToken)
   assert.deepEqual([withToken.source.installation_id, withToken.source.repository_id], [null, 555])
   gh.restore()

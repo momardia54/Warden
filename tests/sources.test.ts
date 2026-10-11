@@ -8,8 +8,9 @@ import { handleApi } from "../app/server/api.server.ts"
 import { createApp, deleteApp } from "../app/server/apps.server.ts"
 import { listFiles } from "../app/server/files.server.ts"
 import { createLicense, deleteLicense, type LicenseInput } from "../app/server/licenses.server.ts"
-import { getSource, handleWebhook, listImports, pruneImports, retryImport, saveSource, startImport } from "../app/server/sources.server.ts"
+import { getSourceForTrack, handleWebhook, listImports, pruneImports, retryImport, saveSource, startImport } from "../app/server/sources.server.ts"
 import { hmacHex } from "../app/server/util.server.ts"
+import { createTrack, type ReleaseTrack } from "../app/server/tracks.server.ts"
 import { buildZip, readZip } from "./helpers/zip.ts"
 
 const join = (parts: Uint8Array[]) => new Uint8Array(Buffer.concat(parts))
@@ -73,7 +74,10 @@ async function setup() {
   const env = { DB: makeDb().DB, FILES: bucket } as unknown as Env
   const { ctx, settle } = makeCtx()
   const license = await createLicense(env, base)
-  return { env, objects, ctx, settle, license, owner: { license } }
+  // Repositories publish into a track: one serving the valid statuses, as before tracks existed.
+  const made = await createTrack(env, { license }, { name: "Updates", statuses: "active,completed" })
+  const track = (made as { track: ReleaseTrack }).track
+  return { env, objects, ctx, settle, track, license, owner: { license } }
 }
 
 async function deliver(env: Env, ctx: ExecutionContext, sourceId: string, secret: string, event: string, payload: unknown, signWith = secret) {
@@ -87,14 +91,14 @@ async function deliver(env: Env, ctx: ExecutionContext, sourceId: string, secret
 }
 
 test("connecting a repository checks access, keeps the token private and defaults the package folder", async () => {
-  const { env, owner } = await setup()
+  const { env, owner, track } = await setup()
   const denied = github({ repo: () => new Response("", { status: 404 }) })
-  const missing = await saveSource(env, owner, { repository: "harbor-studio/harbor-theme", token: "github_pat_x" })
+  const missing = await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme", token: "github_pat_x" })
   denied.restore()
   assert.ok("error" in missing && /private and the access token cannot read it/.test(missing.error))
 
   const gh = github()
-  const saved = await saveSource(env, owner, { repository: "https://github.com/harbor-studio/harbor-theme", token: "github_pat_x" })
+  const saved = await saveSource(env, owner, track, { repository: "https://github.com/harbor-studio/harbor-theme", token: "github_pat_x" })
   assert.ok("source" in saved && saved.created)
   assert.equal(saved.source.package_folder, "harbor-theme")
   assert.equal(saved.source.statuses, "active,completed")
@@ -102,18 +106,18 @@ test("connecting a repository checks access, keeps the token private and default
 
   // Editing without a new token keeps the token and does not check access again.
   const calls = gh.sent.length
-  const edited = await saveSource(env, owner, { package_folder: "harbor" })
+  const edited = await saveSource(env, owner, track, { package_folder: "harbor" })
   assert.ok("source" in edited && !edited.created)
   assert.equal(edited.source.token, "github_pat_x")
   assert.equal(gh.sent.length, calls)
-  assert.ok("error" in (await saveSource(env, owner, { package_folder: ".hidden" })))
+  assert.ok("error" in (await saveSource(env, owner, track, { package_folder: ".hidden" })))
   gh.restore()
 })
 
 test("a pushed tag is published as a release, once, with a fixed folder", async () => {
-  const { env, objects, ctx, settle, owner } = await setup()
+  const { env, objects, ctx, settle, owner, track } = await setup()
   const gh = github()
-  const saved = await saveSource(env, owner, { repository: "harbor-studio/harbor-theme" })
+  const saved = await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme" })
   assert.ok("source" in saved)
   const { id, webhook_secret: secret } = saved.source
 
@@ -148,15 +152,15 @@ test("a pushed tag is published as a release, once, with a fixed folder", async 
     imports.map((i) => [i.ref, i.state]),
     [["nightly", "skipped"], ["v2.0.0-beta.1", "imported"], ["v1.4.0", "imported"]]
   )
-  assert.ok((await getSource(env, owner))!.last_delivery_at)
+  assert.ok((await getSourceForTrack(env, owner, track.id))!.last_delivery_at)
   gh.restore()
 })
 
 test("failures are recorded and can be retried; existing versions are not published twice", async () => {
-  const { env, ctx, settle, owner } = await setup()
+  const { env, ctx, settle, owner, track } = await setup()
   let broken = true
   const gh = github({ archive: () => (broken ? new Response("", { status: 404 }) : new Response(buildZip([["r-abc/readme.txt", "hi"]]))) })
-  const saved = await saveSource(env, owner, { repository: "harbor-studio/harbor-theme" })
+  const saved = await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme" })
   assert.ok("source" in saved)
   const source = saved.source
 
@@ -203,17 +207,19 @@ test("failures are recorded and can be retried; existing versions are not publis
 })
 
 test("deleting the owner removes its source", async () => {
-  const { env, license, owner } = await setup()
+  const { env, license, owner, track } = await setup()
   const gh = github()
-  await saveSource(env, owner, { repository: "harbor-studio/harbor-theme" })
+  await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme" })
   await deleteLicense(env, license.id)
   assert.equal((await env.DB.prepare("SELECT COUNT(*) AS n FROM release_sources").first<{ n: number }>())?.n, 0)
 
   const created = await createApp(env, { name: "Harbor Theme", slug: "harbor-theme", description: "", default_duration_days: null, default_status: "active", default_max_sites: null, default_message: "", notes: "" })
   assert.ok("app" in created)
-  await saveSource(env, { app: created.app }, { repository: "harbor-studio/harbor-theme" })
+  const appTrack = (await createTrack(env, { app: created.app }, { name: "Updates", statuses: "active" }) as { track: ReleaseTrack }).track
+  await saveSource(env, { app: created.app }, appTrack, { repository: "harbor-studio/harbor-theme" })
   assert.deepEqual(await deleteApp(env, created.app), { ok: true })
   assert.equal((await env.DB.prepare("SELECT COUNT(*) AS n FROM release_sources").first<{ n: number }>())?.n, 0)
+  assert.equal((await env.DB.prepare("SELECT COUNT(*) AS n FROM release_tracks").first<{ n: number }>())?.n, 0)
   gh.restore()
 })
 
@@ -227,29 +233,34 @@ test("API: connect, read without the token, import a tag and list imports", asyn
   const call = (key: string, method: string, path: string, body?: unknown) =>
     handleApi(new Request(`https://w.dev/api/v1${path}`, { method, headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }), env, ctx)
 
-  assert.equal((await call(full, "GET", "/apps/harbor-theme/source")).status, 404)
-  const put = await call(full, "PUT", "/apps/harbor-theme/source", { repository: "harbor-studio/harbor-theme", token: "github_pat_secret", package_folder: "harbor" })
+  const made = await call(full, "POST", "/apps/harbor-theme/tracks", { name: "Updates", statuses: ["active", "completed"] })
+  assert.equal(made.status, 201)
+  const trackId = ((await made.json()) as { id: string }).id
+  // A track can be addressed by id or by name.
+  assert.equal((await call(full, "GET", "/apps/harbor-theme/tracks/Updates/source")).status, 404)
+  const put = await call(full, "PUT", `/apps/harbor-theme/tracks/${trackId}/source`, { repository: "harbor-studio/harbor-theme", token: "github_pat_secret", package_folder: "harbor" })
   assert.equal(put.status, 201)
   const source = (await put.json()) as Record<string, unknown>
   assert.equal(source.token, undefined)
   assert.equal(source.has_token, true)
   assert.equal(source.package_folder, "harbor")
-  assert.deepEqual(source.statuses, ["active", "completed"])
+  assert.equal(source.track_id, trackId)
+  assert.equal(source.tag_prefix, "")
   assert.match(String(source.webhook_url), /^https:\/\/w\.dev\/hooks\/github\/src_/)
   assert.equal(typeof source.webhook_secret, "string")
-  const asReader = (await (await call(read, "GET", "/apps/harbor-theme/source")).json()) as Record<string, unknown>
+  const asReader = (await (await call(read, "GET", "/apps/harbor-theme/tracks/Updates/source")).json()) as Record<string, unknown>
   assert.equal(asReader.webhook_secret, undefined)
-  assert.equal((await call(read, "PUT", "/apps/harbor-theme/source", { package_folder: "x" })).status, 403)
+  assert.equal((await call(read, "PUT", "/apps/harbor-theme/tracks/Updates/source", { package_folder: "x" })).status, 403)
 
-  const started = await call(full, "POST", "/apps/harbor-theme/source/imports", { tag: "v1.2.0" })
+  const started = await call(full, "POST", "/apps/harbor-theme/tracks/Updates/source/imports", { tag: "v1.2.0" })
   assert.equal(started.status, 202)
   await settle()
-  const list = (await (await call(read, "GET", "/apps/harbor-theme/source/imports")).json()) as { data: { tag: string; state: string; version: string }[] }
+  const list = (await (await call(read, "GET", "/apps/harbor-theme/tracks/Updates/source/imports")).json()) as { data: { tag: string; state: string; version: string }[] }
   assert.deepEqual(list.data.map((i) => [i.tag, i.version, i.state]), [["v1.2.0", "1.2.0", "imported"]])
   const files = (await (await call(read, "GET", "/apps/harbor-theme/files")).json()) as { data: { name: string }[] }
   assert.deepEqual(files.data.map((f) => f.name), ["harbor-1.2.0.zip"])
 
-  assert.equal((await call(full, "DELETE", "/apps/harbor-theme/source")).status, 200)
-  assert.equal((await call(full, "GET", "/apps/harbor-theme/source")).status, 404)
+  assert.equal((await call(full, "DELETE", "/apps/harbor-theme/tracks/Updates/source")).status, 200)
+  assert.equal((await call(full, "GET", "/apps/harbor-theme/tracks/Updates/source")).status, 404)
   gh.restore()
 })

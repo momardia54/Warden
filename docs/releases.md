@@ -1,10 +1,34 @@
 # Releases and updates
 
-Warden can deliver the updates of what you sell. A **release** is a file with a version. It is stored in R2 like any other file ([files.md](files.md)) and keeps the same release rule: the licence statuses in which it can be downloaded, and whether the site's domain must match. On top of that, a release has a channel, public release notes and a checksum, and the check endpoint tells each site whether a newer release is waiting for it.
+Warden can deliver the updates of what you sell. A **release** is a file with a version, stored in R2 like any other file ([files.md](files.md)). Releases are grouped in **tracks**: a track decides which licence statuses receive its releases. On top of that, a release has a channel, public release notes and a checksum, and the check endpoint tells each site whether a newer release is waiting for it.
 
-![Releases of an app: the latest stable release, a beta and a withdrawn release](screenshots/releases.jpg)
+![The Releases tab of an app: the Updates track, for Active licences, with its releases](screenshots/releases.jpg)
 
 A file **without** a version is an *attachment* (a manual, a notice). It can be downloaded but is never offered as an update.
+
+## Tracks
+
+A track is what a set of licence statuses receives. An app (or a standalone licence) has one or more tracks, for example:
+
+| Track | For licences that are | Receives |
+|---|---|---|
+| Updates | Active | Regular builds, with the licence check built in |
+| Final build | Completed | The licence-free build, once paid in full |
+| Maintenance | Suspended | A maintenance version while a payment is late |
+
+- **Each status belongs to one track at most**, so a status never has two packages. Warden refuses a track that claims a status another track serves, and names that track.
+- A licence is offered **the latest release of the track that serves its current status**, nothing else: a Completed licence receives the latest Final build even when Updates has a higher version. When you change a licence's status, what its site is offered changes with it.
+- **Versions are unique per track**, not per app: the Final build can be 1.0.0 while Updates is at 1.4.0, or both can be 1.4.0.
+- A track also sets the **domain check** of its releases.
+- A track receives releases by **upload**, or from a **connected repository** ([repositories.md](repositories.md)). Several tracks can be fed by one repository, told apart by tag prefix.
+- A licence of an app follows the app's tracks. It can have **tracks of its own**: for the statuses they serve, they replace the app's tracks (for example a custom build for one client); for the other statuses, the app's tracks still apply. The licence page says which track the licence receives now.
+- A status that no track serves receives no update.
+
+Create, rename and delete tracks on the *Releases* tab (*New track*, and the track's menu). Changing a track's statuses applies to all its releases at once. Deleting a track moves its releases to another track first.
+
+Files without a version (attachments) are not in a track: each one keeps its own release rule ([files.md](files.md)).
+
+**Earlier releases** (from before tracks existed) were put into tracks automatically, one per distinct release rule, so nobody gained or lost access. If two of them serve the same status, the *Releases* tab says so: edit the tracks until each status belongs to one.
 
 ## What a release has
 
@@ -17,7 +41,7 @@ A file **without** a version is an *attachment* (a manual, a notice). It can be 
 | **Withdrawn** | A withdrawn release is no longer offered, no longer listed, and its download returns HTTP 410. It stays on record and can be restored. Use it to pull a bad build without losing its history. |
 | **Internal notes** | For you only. Never sent to sites. |
 
-Releases live where the product lives: on the **app** for a product sold to many customers (every licence of the app sees them), or on a **licence** for a one-off project.
+Releases live where the product lives: on the **app** for a product sold to many customers (every licence of the app sees them), or on a **licence** for a one-off project or a custom build.
 
 ## Offering updates through the check
 
@@ -86,12 +110,12 @@ Through the API: `GET /api/v1/licenses/{id}/activations` returns each site's `ve
 
 ## Publishing a release
 
-**Dashboard:** open the app (or the licence), *Releases* tab, *Upload*. Choose the file, enter the version, pick the channel, write the release notes and choose the statuses it is available in. The list shows releases by version, newest first, with the current latest marked; use the menu of a release to edit it, copy its checksum, withdraw or restore it, or delete it.
+**Dashboard:** open the app (or the licence), *Releases* tab, *Upload*. Choose the file, enter the version, pick the channel and the **track**, and write the release notes. Each track lists its releases by version, newest first, with its latest marked; use the menu of a release to edit it (including moving it to another track), copy its checksum, withdraw or restore it, or delete it.
 
 **API:**
 
 ```bash
-curl -X PUT "https://<worker>/api/v1/apps/harbor-theme/files?name=harbor-theme-1.4.0.zip&version=1.4.0&changelog=Faster%20gallery." \
+curl -X PUT "https://<worker>/api/v1/apps/harbor-theme/files?name=harbor-theme-1.4.0.zip&version=1.4.0&track=Updates&changelog=Faster%20gallery." \
   -H "Authorization: Bearer $WARDEN_KEY" -H "Content-Type: application/zip" --data-binary @harbor-theme-1.4.0.zip
 
 # longer release notes, or a correction, afterwards
@@ -129,7 +153,8 @@ Hook the result into the `pre_set_site_transient_update_themes` (or `_plugins`) 
 
 ## Good practice
 
-- Upload each build with its version, and keep older releases: a licence that is not allowed the newest one (for example a release published only for Completed licences) is offered the newest one it is allowed.
+- Give each audience its own track (Updates, Final build, Maintenance) rather than mixing them: what a licence receives then follows from its status, with nothing to calculate.
+- Upload each build with its version, and keep older releases in the track: they stay on record, and withdrawing the newest one makes the previous one the latest again.
 - Use the beta channel for early builds and promote a build by changing its channel to stable.
 - Withdraw instead of deleting when a release turns out to be broken: sites stop being offered it, and you keep its record and download count.
 - Have the site verify the signature of the check and the checksum of the package before installing anything.

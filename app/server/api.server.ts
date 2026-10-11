@@ -17,7 +17,10 @@ import {
 } from "./licenses.server"
 import { getGitHubApp, listAppRepositories, listInstallations, publicGitHubApp } from "./github-app.server"
 import { openApiSpec } from "./openapi.server"
-import { deleteSource, getImport, getSource, listImports, publicSource, regenerateWebhookSecret, retryImport, saveSource, startImport, type SourceImport } from "./sources.server"
+import { deleteSource, getImport, getSourceForTrack, listImports, listSources, publicSource, regenerateWebhookSecret, retryImport, saveSource, startImport, type ReleaseSource, type SourceImport } from "./sources.server"
+import { createTrack, deleteTrack, findTrack, listAppTracks, listTracks, updateTrack, type ReleaseTrack } from "./tracks.server"
+import { statusConflicts, trackForStatus } from "../lib/tracks"
+import { effectiveStatusKey } from "../lib/statuses"
 import {
   createStatus, customizeStatuses, deleteStatus, getStatusSetForApp, getStatusSetForLicense, hasCustomSet, loadStatusSets, readStatusInput, resetStatuses, setForLicense,
   setStatusOrder, statusSource, updateStatus, type StatusInput, type StatusScope,
@@ -159,7 +162,7 @@ async function licenseRoute(ctx: Context, segments: string[]): Promise<Response>
   }
 
   if (sub === "files") return filesRoute(ctx, { license }, extra)
-  if (sub === "source") return sourceRoute(ctx, { license }, rest)
+  if (sub === "tracks") return tracksRoute(ctx, { license }, rest)
   if (sub === "statuses") {
     // A licence in an app uses the app's statuses: they can be read here but are changed on the app.
     if (license.app_id) {
@@ -238,6 +241,7 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
     const stored = await storeFile(env, owner, {
       name: q.get("name") ?? "",
       statuses: q.get("statuses") ?? undefined,
+      track: q.get("track"),
       checkDomain: q.get("check_domain") !== "false",
       version: q.get("version") ?? "",
       notes: q.get("notes") ?? "",
@@ -263,6 +267,7 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
     if (body instanceof Response) return body
     const updated = await updateFile(env, owner, file, {
       statuses: body.statuses,
+      track: typeof body.track === "string" ? body.track : undefined,
       checkDomain: typeof body.check_domain === "boolean" ? body.check_domain : undefined,
       version: typeof body.version === "string" ? body.version : undefined,
       notes: typeof body.notes === "string" ? body.notes : undefined,
@@ -275,45 +280,114 @@ async function filesRoute(ctx: Context, owner: FileOwner, fileId: string | undef
   return fail(405, "method_not_allowed", "Use GET or PUT on /files, and PATCH or DELETE on /files/{fileId}.")
 }
 
-// ---- release source ---------------------------------------------------------------
+// ---- release tracks and their repositories ---------------------------------------------
 
 const serializeImport = (i: SourceImport) => ({
   id: i.id, tag: i.ref, version: i.version || null, commit: i.commit_sha || null, state: i.state, detail: i.detail, file_id: i.file_id,
   started_at: iso(i.started_at), finished_at: iso(i.finished_at),
 })
 
+async function serializeSource(ctx: Context, source: ReleaseSource) {
+  const view = await publicSource(ctx.env, source, ctx.origin)
+  const { webhook_secret, app_id: _a, license_id: _l, statuses: _s, status_keys: _k, check_domain: _c, created_at, updated_at, last_delivery_at, ...rest } = view
+  return {
+    ...rest,
+    // The secret lets a caller start imports, so only keys that can change the source see it.
+    webhook_secret: ctx.key.scope === "read" ? undefined : webhook_secret,
+    created_at: iso(created_at), updated_at: iso(updated_at), last_delivery_at: iso(last_delivery_at),
+  }
+}
+
+async function serializeTrack(ctx: Context, track: ReleaseTrack, sources: ReleaseSource[]) {
+  const stats = await ctx.env.DB.prepare("SELECT COUNT(*) AS releases FROM files WHERE track_id = ?").bind(track.id).first<{ releases: number }>()
+  const source = sources.find((s) => s.track_id === track.id)
+  return {
+    id: track.id, name: track.name, statuses: track.statuses.split(",").filter(Boolean), check_domain: track.check_domain === 1, position: track.position,
+    releases: stats?.releases ?? 0, source: source ? await serializeSource(ctx, source) : null,
+    created_at: iso(track.created_at), updated_at: iso(track.updated_at),
+  }
+}
+
 /**
- * The repository connected to a licence or an app. Paths relative to .../source:
- *   GET /  PUT /  DELETE /  POST /regenerate-secret  GET /imports  POST /imports  POST /imports/{id}/retry
+ * Release tracks of a licence or an app. Paths relative to .../tracks:
+ *   GET /  POST /  GET /{track}  PATCH /{track}  DELETE /{track}?move_to=
+ *   GET|PUT|DELETE /{track}/source  POST /{track}/source/regenerate-secret
+ *   GET|POST /{track}/source/imports  POST /{track}/source/imports/{id}/retry
  */
-async function sourceRoute(ctx: Context, owner: FileOwner, segments: string[]): Promise<Response> {
-  const { env, request, origin } = ctx
+async function tracksRoute(ctx: Context, owner: FileOwner, segments: string[]): Promise<Response> {
+  const { env, request, origin, url } = ctx
   const method = request.method
-  const [sub, importId, action] = segments
-  const shape = async (source: NonNullable<Awaited<ReturnType<typeof getSource>>>) => {
-    const view = await publicSource(env, source, origin)
-    const { webhook_secret, app_id, license_id, statuses: _statuses, status_keys, created_at, updated_at, last_delivery_at, ...rest } = view
-    return {
-      ...rest, app: app_id, license: license_id, statuses: status_keys,
-      // The secret lets a caller start imports, so only keys that can change the source see it.
-      webhook_secret: ctx.key.scope === "read" ? undefined : webhook_secret,
-      created_at: iso(created_at), updated_at: iso(updated_at), last_delivery_at: iso(last_delivery_at),
+  const [trackRef, sub, part, importId, action] = segments
+
+  if (!trackRef) {
+    if (method === "GET") {
+      const [tracks, sources] = await Promise.all([listTracks(env, owner), listSources(env, owner)])
+      const body: Record<string, unknown> = { data: await Promise.all(tracks.map((t) => serializeTrack(ctx, t, sources))), conflicts: statusConflicts(tracks).map((c) => ({ status: c.status, tracks: c.tracks.map((t) => t.id) })) }
+      // A licence of an app also receives the app's tracks, for the statuses its own tracks do not cover.
+      if ("license" in owner && owner.license.app_id) {
+        const appTracks = await listAppTracks(env, owner.license.app_id)
+        const set = await statusSetForOwner(env, owner)
+        const status = effectiveStatusKey(owner.license, set, Date.now())
+        const receives = trackForStatus(status, tracks, appTracks)
+        body.app_tracks = appTracks.map((t) => ({ id: t.id, name: t.name, statuses: t.statuses.split(",").filter(Boolean) }))
+        body.receives = receives ? { status, track: receives.track.id, name: receives.track.name, inherited: receives.inherited } : { status, track: null, name: null, inherited: false }
+      } else if ("license" in owner) {
+        const set = await statusSetForOwner(env, owner)
+        const status = effectiveStatusKey(owner.license, set, Date.now())
+        const receives = trackForStatus(status, tracks)
+        body.receives = { status, track: receives?.track.id ?? null, name: receives?.track.name ?? null, inherited: false }
+      }
+      return reply(body)
     }
+    if (method === "POST") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const created = await createTrack(env, owner, body)
+      return "error" in created ? fail(created.status, created.status === 409 ? "status_in_another_track" : "invalid_track", created.error) : reply(await serializeTrack(ctx, created.track, []), 201)
+    }
+    return fail(405, "method_not_allowed", "Use GET or POST.")
   }
 
-  if (!sub && method === "PUT") {
+  const track = await findTrack(env, owner, decodeURIComponent(trackRef))
+  if (!track) return fail(404, "track_not_found", "No track matches that id or name.")
+
+  if (!sub) {
+    if (method === "GET") return reply(await serializeTrack(ctx, track, await listSources(env, owner)))
+    if (method === "PATCH") {
+      const denied = need(ctx, "manage")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const updated = await updateTrack(env, owner, track, body)
+      return "error" in updated ? fail(updated.status, updated.status === 409 ? "status_in_another_track" : "invalid_track", updated.error) : reply(await serializeTrack(ctx, updated.track, await listSources(env, owner)))
+    }
+    if (method === "DELETE") {
+      const denied = need(ctx, "full")
+      if (denied) return denied
+      const moveTo = url.searchParams.get("move_to")
+      const target = moveTo ? await findTrack(env, owner, moveTo) : null
+      if (moveTo && !target) return fail(422, "invalid_move_to", "move_to must be another track of the same app or licence.")
+      const deleted = await deleteTrack(env, owner, track, target?.id ?? null)
+      return "error" in deleted ? fail(deleted.status, "track_not_empty", deleted.error) : reply({ deleted: true, id: track.id })
+    }
+    return fail(405, "method_not_allowed", "Use GET, PATCH or DELETE.")
+  }
+
+  if (sub !== "source") return fail(404, "not_found", `Unknown endpoint. See ${origin}/api/v1/openapi.json.`)
+  if (!part && method === "PUT") {
     const denied = need(ctx, "manage")
     if (denied) return denied
     const body = await readJson(request)
     if (body instanceof Response) return body
-    const saved = await saveSource(env, owner, body)
-    return "error" in saved ? fail(saved.status, "invalid_source", saved.error) : reply(await shape(saved.source), saved.created ? 201 : 200)
+    const saved = await saveSource(env, owner, track, body)
+    return "error" in saved ? fail(saved.status, "invalid_source", saved.error) : reply(await serializeSource(ctx, saved.source), saved.created ? 201 : 200)
   }
-  const source = await getSource(env, owner)
-  if (!source) return fail(404, "source_not_found", "No repository is connected. Connect one with PUT.")
-
-  if (!sub) {
-    if (method === "GET") return reply(await shape(source))
+  const source = await getSourceForTrack(env, owner, track.id)
+  if (!source) return fail(404, "source_not_found", "No repository is connected to this track. Connect one with PUT.")
+  if (!part) {
+    if (method === "GET") return reply(await serializeSource(ctx, source))
     if (method === "DELETE") {
       const denied = need(ctx, "manage")
       if (denied) return denied
@@ -322,14 +396,14 @@ async function sourceRoute(ctx: Context, owner: FileOwner, segments: string[]): 
     }
     return fail(405, "method_not_allowed", "Use GET, PUT or DELETE.")
   }
-  if (sub === "regenerate-secret" && !importId) {
+  if (part === "regenerate-secret" && !importId) {
     if (method !== "POST") return fail(405, "method_not_allowed", "Use POST.")
     const denied = need(ctx, "manage")
     if (denied) return denied
     await regenerateWebhookSecret(env, source)
-    return reply(await shape((await getSource(env, owner))!))
+    return reply(await serializeSource(ctx, (await getSourceForTrack(env, owner, track.id))!))
   }
-  if (sub === "imports") {
+  if (part === "imports") {
     if (!importId && method === "GET") return reply({ data: (await listImports(env, source.id, 100)).map(serializeImport) })
     if (!importId && method === "POST") {
       const denied = need(ctx, "manage")
@@ -337,7 +411,8 @@ async function sourceRoute(ctx: Context, owner: FileOwner, segments: string[]): 
       const body = await readJson(request)
       if (body instanceof Response) return body
       const tag = trimmed(body.tag, 200)
-      if (!tag) return fail(422, "invalid_tag", "tag is required, for example v1.4.0.")
+      if (!tag) return fail(422, "invalid_tag", `tag is required, for example ${source.tag_prefix}v1.4.0.`)
+      if (!tag.startsWith(source.tag_prefix)) return fail(422, "invalid_tag", `Tags of this track start with "${source.tag_prefix}".`)
       return reply(serializeImport(await startImport(env, ctx.execution, source, tag)), 202)
     }
     if (importId && action === "retry" && method === "POST") {
@@ -494,7 +569,7 @@ async function appRoute(ctx: Context, segments: string[]): Promise<Response> {
     return fail(405, "method_not_allowed", "Use GET or POST.")
   }
   if (sub === "files") return filesRoute(ctx, { app }, rest[0])
-  if (sub === "source") return sourceRoute(ctx, { app }, rest)
+  if (sub === "tracks") return tracksRoute(ctx, { app }, rest)
   if (sub === "versions" && rest.length === 0) {
     if (method !== "GET") return fail(405, "method_not_allowed", "Use GET.")
     return reply(await versionsInUse(env, app.id))

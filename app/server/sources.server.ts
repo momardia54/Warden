@@ -1,4 +1,4 @@
-import { defaultReleaseStatuses, MAX_FILE_BYTES } from "../lib/files"
+import { MAX_FILE_BYTES } from "../lib/files"
 import { generateSecret } from "../lib/random"
 import {
   channelForVersion,
@@ -16,7 +16,7 @@ import {
   type ProviderKey,
   type TriggerKey,
 } from "../lib/sources"
-import { parseStatusKeys, splitStatusKeys } from "../lib/statuses"
+import { splitStatusKeys } from "../lib/statuses"
 import { partsStream, repackZip, ZipError } from "../lib/zip"
 import { readTextUpTo } from "./api-http.server"
 import { getApp } from "./apps.server"
@@ -25,7 +25,9 @@ import { statusSetForOwner, storeFile, type FileOwner } from "./files.server"
 import { getLicense } from "./licenses.server"
 import { github } from "./source-providers/github.server"
 import type { ProviderFailure, ProviderSource, SourceProvider } from "./source-providers/types"
+import { getTrack, listTracks, type ReleaseTrack } from "./tracks.server"
 import { json, newId } from "./util.server"
+import { prefixForTag, TAG_PREFIX_PATTERN, trackView } from "../lib/tracks"
 
 /** The implementation of each provider listed in app/lib/sources.ts. */
 const PROVIDER_IMPLEMENTATIONS: Record<ProviderKey, SourceProvider> = {
@@ -51,6 +53,10 @@ export type ReleaseSource = {
   installation_id: number | null
   /** The provider's numeric id of the repository, which survives renames. */
   repository_id: number | null
+  /** The track this repository publishes into. */
+  track_id: string | null
+  /** Tags this source publishes start with this ("" for v1.4.0, "final-" for final-v1.4.0). */
+  tag_prefix: string
   created_at: number
   updated_at: number
   last_delivery_at: number | null
@@ -85,10 +91,14 @@ type Failure = { error: string; status: number }
 const ownerColumn = (owner: FileOwner) => ("license" in owner ? "license_id" : "app_id")
 const ownerId = (owner: FileOwner) => ("license" in owner ? owner.license.id : owner.app.id)
 
-export function getSource(env: Env, owner: FileOwner): Promise<ReleaseSource | null> {
-  return env.DB.prepare(`SELECT * FROM release_sources WHERE ${ownerColumn(owner)} = ?`)
-    .bind(ownerId(owner))
-    .first<ReleaseSource>()
+/** The repositories connected to an app or licence, one per track. */
+export async function listSources(env: Env, owner: FileOwner): Promise<ReleaseSource[]> {
+  return (await env.DB.prepare(`SELECT * FROM release_sources WHERE ${ownerColumn(owner)} = ? ORDER BY created_at`).bind(ownerId(owner)).all<ReleaseSource>()).results
+}
+
+/** The repository connected to a track, if any. */
+export function getSourceForTrack(env: Env, owner: FileOwner, trackId: string): Promise<ReleaseSource | null> {
+  return env.DB.prepare(`SELECT * FROM release_sources WHERE track_id = ? AND ${ownerColumn(owner)} = ?`).bind(trackId, ownerId(owner)).first<ReleaseSource>()
 }
 
 export function getSourceById(env: Env, id: string): Promise<ReleaseSource | null> {
@@ -98,13 +108,15 @@ export function getSourceById(env: Env, id: string): Promise<ReleaseSource | nul
 export async function publicSource(env: Env, source: ReleaseSource, origin: string): Promise<PublicSource> {
   const { token, options: _options, ...rest } = source
   const owner = await ownerOf(env, source)
+  const track = owner && source.track_id ? await getTrack(env, owner, source.track_id) : null
+  const statuses = track?.statuses ?? source.statuses
   return {
     ...rest,
     connection: source.installation_id ? "app" : "token",
     has_token: token !== "",
     enabled: source.enabled === 1,
-    check_domain: source.check_domain === 1,
-    status_keys: owner ? splitStatusKeys(source.statuses, await statusSetForOwner(env, owner)) : source.statuses.split(",").filter(Boolean),
+    check_domain: (track?.check_domain ?? source.check_domain) === 1,
+    status_keys: owner ? splitStatusKeys(statuses, await statusSetForOwner(env, owner)) : statuses.split(",").filter(Boolean),
     webhook_url: `${origin}/hooks/${source.provider}/${source.id}`,
   }
 }
@@ -124,6 +136,9 @@ export type SourceInput = {
   repository?: unknown
   trigger?: unknown
   package_folder?: unknown
+  /** Tags this source publishes start with this prefix ("" by default). */
+  tag_prefix?: unknown
+  /** Not accepted: a repository publishes into its track, which decides availability. */
   statuses?: unknown
   check_domain?: unknown
   /** app (through the GitHub App) or token. Default for a new source: app when a GitHub App is connected and no token is sent. */
@@ -134,11 +149,14 @@ export type SourceInput = {
 }
 
 /**
- * Connects a repository to an app or licence, or changes the connected one. The repository is checked with the
- * provider first, so a typo or a token without access is reported now rather than on the first tag.
+ * Connects a repository to a track, or changes the connected one. The repository is checked with the provider first,
+ * so a typo or a token without access is reported now rather than on the first tag.
  */
-export async function saveSource(env: Env, owner: FileOwner, input: SourceInput, now = Date.now()): Promise<{ source: ReleaseSource; created: boolean } | Failure> {
-  const current = await getSource(env, owner)
+export async function saveSource(env: Env, owner: FileOwner, track: ReleaseTrack, input: SourceInput, now = Date.now()): Promise<{ source: ReleaseSource; created: boolean } | Failure> {
+  if (input.statuses !== undefined || input.check_domain !== undefined) {
+    return { error: `A repository publishes into its track ("${track.name}"), which decides which statuses receive its releases. Change the track instead.`, status: 422 }
+  }
+  const current = await getSourceForTrack(env, owner, track.id)
   const provider = input.provider === undefined ? (current?.provider ?? "github") : input.provider
   if (!isProvider(provider))
     return {
@@ -165,21 +183,23 @@ export async function saveSource(env: Env, owner: FileOwner, input: SourceInput,
   const folderError = packageFolderError(folder)
   if (folderError) return { error: folderError, status: 422 }
 
-  const set = await statusSetForOwner(env, owner)
-  const statuses = input.statuses === undefined || input.statuses === "" ? (current ? splitStatusKeys(current.statuses, set) : defaultReleaseStatuses(set)) : parseStatusKeys(input.statuses, set)
-  if (!statuses || statuses.length === 0)
-    return {
-      error: `statuses must be a comma separated list of licence statuses: ${set.map((s) => s.key).join(", ")}.`,
-      status: 422,
-    }
-
-  if (input.check_domain !== undefined && typeof input.check_domain !== "boolean") return { error: "check_domain must be true or false.", status: 422 }
+  const rawPrefix = input.tag_prefix === undefined ? (current?.tag_prefix ?? "") : input.tag_prefix
+  if (typeof rawPrefix !== "string" || !TAG_PREFIX_PATTERN.test(rawPrefix.trim())) return { error: "The tag prefix may contain only letters, digits, dots, dashes, underscores and slashes, up to 40 characters.", status: 422 }
+  const tagPrefix = rawPrefix.trim()
   if (input.enabled !== undefined && typeof input.enabled !== "boolean") return { error: "enabled must be true or false.", status: 422 }
   if (input.token !== undefined && typeof input.token !== "string") return { error: "token must be a string.", status: 422 }
   let token = input.token === undefined ? (current?.token ?? "") : (input.token as string).trim()
   if (token.length > 500 || /\s/.test(token)) return { error: "The access token is not valid.", status: 422 }
-  const checkDomain = input.check_domain === undefined ? (current?.check_domain ?? 1) : input.check_domain ? 1 : 0
   const enabled = input.enabled === undefined ? (current?.enabled ?? 1) : input.enabled ? 1 : 0
+
+  // Two tracks fed by the same repository need different tag prefixes, or every tag would publish twice.
+  const others = (await listSources(env, owner)).filter((o) => o.id !== current?.id)
+  const clash = others.find((o) => o.provider === provider && o.repository.toLowerCase() === repository.toLowerCase() && o.tag_prefix === tagPrefix)
+  if (clash) {
+    const tracks = await listTracks(env, owner)
+    const name = tracks.find((t) => t.id === clash.track_id)?.name ?? "another track"
+    return { error: `${repository} already publishes into "${name}" with ${tagPrefix ? `the tag prefix "${tagPrefix}"` : "no tag prefix"}. Use a different tag prefix for this track, for example "final-".`, status: 409 }
+  }
 
   const githubApp = provider === "github" ? await getGitHubApp(env) : null
   const connection =
@@ -220,27 +240,29 @@ export async function saveSource(env: Env, owner: FileOwner, input: SourceInput,
 
   if (current) {
     await env.DB.prepare(
-      "UPDATE release_sources SET provider = ?, repository = ?, trigger = ?, package_folder = ?, statuses = ?, check_domain = ?, token = ?, enabled = ?, installation_id = ?, repository_id = ?, updated_at = ? WHERE id = ?",
+      "UPDATE release_sources SET provider = ?, repository = ?, trigger = ?, package_folder = ?, tag_prefix = ?, statuses = ?, check_domain = ?, token = ?, enabled = ?, installation_id = ?, repository_id = ?, updated_at = ? WHERE id = ?",
     )
-      .bind(provider, name, trigger, folder, statuses.join(","), checkDomain, token, enabled, installationId, repositoryId, now, current.id)
+      .bind(provider, name, trigger, folder, tagPrefix, track.statuses, track.check_domain, token, enabled, installationId, repositoryId, now, current.id)
       .run()
     return { source: (await getSourceById(env, current.id))!, created: false }
   }
   const id = newId("src")
   await env.DB.prepare(
-    `INSERT INTO release_sources (id, app_id, license_id, provider, repository, trigger, package_folder, statuses, check_domain, token, webhook_secret, enabled, installation_id, repository_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO release_sources (id, app_id, license_id, track_id, tag_prefix, provider, repository, trigger, package_folder, statuses, check_domain, token, webhook_secret, enabled, installation_id, repository_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
       "app" in owner ? owner.app.id : null,
       "license" in owner ? owner.license.id : null,
+      track.id,
+      tagPrefix,
       provider,
       name,
       trigger,
       folder,
-      statuses.join(","),
-      checkDomain,
+      track.statuses,
+      track.check_domain,
       token,
       generateSecret(40),
       enabled,
@@ -292,7 +314,7 @@ async function finish(env: Env, id: string, state: ImportState, detail: string, 
  */
 export async function startImport(env: Env, ctx: ExecutionContext, source: ReleaseSource, tag: string, commit = "", now = Date.now()): Promise<SourceImport> {
   const ref = tag.trim().slice(0, 200)
-  const version = versionFromTag(ref) ?? ""
+  const version = ref.startsWith(source.tag_prefix) ? (versionFromTag(ref.slice(source.tag_prefix.length)) ?? "") : ""
   const inserted = await env.DB.prepare(
     "INSERT INTO source_imports (id, source_id, ref, commit_sha, version, state, started_at) VALUES (?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT (source_id, ref) DO NOTHING RETURNING id",
   )
@@ -308,7 +330,8 @@ export async function startImport(env: Env, ctx: ExecutionContext, source: Relea
     id = existing.id
   }
   if (!version) {
-    await finish(env, id, "skipped", `"${ref}" is not a version, so nothing was published. Name release tags like v1.4.0.`)
+    const example = `${source.tag_prefix}v1.4.0`
+    await finish(env, id, "skipped", `"${ref}" is not a version tag of this track, so nothing was published. Name its release tags like ${example}.`)
   } else {
     ctx.waitUntil(runImport(env, source, id).catch((error) => console.error("Release import failed:", error)))
   }
@@ -334,10 +357,13 @@ export async function runImport(env: Env, source: ReleaseSource, importId: strin
   try {
     const owner = await ownerOf(env, source)
     if (!owner) return finish(env, row.id, "failed", "The app or licence of this source no longer exists.")
-    const duplicate = await env.DB.prepare(`SELECT name FROM files WHERE ${ownerColumn(owner)} = ? AND version = ? AND withdrawn_at IS NULL LIMIT 1`)
-      .bind(ownerId(owner), row.version)
+    const track = source.track_id ? await getTrack(env, owner, source.track_id) : null
+    if (!track) return finish(env, row.id, "failed", "This repository is not connected to a track. Connect it to a track again.")
+    // Versions are unique within a track: another track (a final build, say) may publish the same number.
+    const duplicate = await env.DB.prepare("SELECT name FROM files WHERE track_id = ? AND version = ? AND withdrawn_at IS NULL LIMIT 1")
+      .bind(track.id, row.version)
       .first<{ name: string }>()
-    if (duplicate) return finish(env, row.id, "skipped", `Version ${row.version} is already published (${duplicate.name}). Withdraw or delete it, then retry, to publish this tag instead.`)
+    if (duplicate) return finish(env, row.id, "skipped", `Version ${row.version} is already published in "${track.name}" (${duplicate.name}). Withdraw or delete it, then retry, to publish this tag instead.`)
 
     const provider = PROVIDER_IMPLEMENTATIONS[source.provider]
     const access = await credentials(env, source)
@@ -359,8 +385,7 @@ export async function runImport(env: Env, source: ReleaseSource, importId: strin
       name,
       version: row.version,
       channel: channelForVersion(row.version),
-      statuses: source.statuses,
-      checkDomain: source.check_domain === 1,
+      track: track.id,
       notes: `Published from ${PROVIDER_INFO[source.provider].host}/${source.repository}, tag ${row.ref}, commit ${commit.slice(0, 7)}.`,
       contentType: "application/zip",
       size: zip.size,
@@ -407,6 +432,11 @@ export async function handleWebhook(request: Request, env: Env, ctx: ExecutionCo
     })
   if (event.kind === "ignored") return json({ ok: true, ignored: event.reason })
   if (source.enabled !== 1) return json({ ok: true, ignored: "The source is paused in Warden." })
+  // The tag belongs to the track of this repository whose prefix it matches most specifically (as for the GitHub App).
+  const siblings = (await env.DB.prepare("SELECT tag_prefix FROM release_sources WHERE repository = ? AND provider = ? AND app_id IS ? AND license_id IS ?")
+    .bind(source.repository, source.provider, source.app_id, source.license_id)
+    .all<{ tag_prefix: string }>()).results.map((r) => r.tag_prefix)
+  if (prefixForTag(event.tag, siblings) !== source.tag_prefix) return json({ ok: true, ignored: `This tag belongs to another track. Tags of this track start with "${source.tag_prefix}".` })
   const row = await startImport(env, ctx, source, event.tag, event.commit)
   return json(
     {
@@ -430,30 +460,32 @@ export async function handleWebhook(request: Request, env: Env, ctx: ExecutionCo
 export async function applySourceForm(env: Env, ctx: ExecutionContext, owner: FileOwner, form: FormData): Promise<{ ok: true } | { error: string } | null> {
   const intent = String(form.get("intent"))
   if (!["save-source", "delete-source", "regenerate-source-secret", "import-tag", "retry-import"].includes(intent)) return null
+  const track = await getTrack(env, owner, String(form.get("trackId") ?? ""))
+  if (!track) return { error: "That track no longer exists. Reload the page." }
   if (intent === "save-source") {
     const text = (name: string) => (form.has(name) ? String(form.get(name)) : undefined)
     const flag = (name: string) => (form.has(name) ? form.get(name) === "true" : undefined)
-    const saved = await saveSource(env, owner, {
+    const saved = await saveSource(env, owner, track, {
       connection: text("connection"),
       provider: text("provider"),
       repository: text("repository"),
       trigger: text("trigger"),
       package_folder: text("package_folder"),
-      statuses: text("statuses"),
-      check_domain: flag("check_domain"),
+      tag_prefix: text("tag_prefix"),
       // An empty token field keeps the current token; removing it is a separate checkbox.
       token: form.get("remove_token") === "true" ? "" : text("token") || undefined,
       enabled: flag("enabled"),
     })
     return "error" in saved ? { error: saved.error } : { ok: true }
   }
-  const source = await getSource(env, owner)
-  if (!source) return { error: "No repository is connected. Reload the page." }
+  const source = await getSourceForTrack(env, owner, track.id)
+  if (!source) return { error: "No repository is connected to this track. Reload the page." }
   if (intent === "delete-source") await deleteSource(env, source)
   else if (intent === "regenerate-source-secret") await regenerateWebhookSecret(env, source)
   else if (intent === "import-tag") {
     const tag = String(form.get("tag") ?? "").trim()
-    if (!tag) return { error: "Enter the tag to publish, for example v1.4.0." }
+    if (!tag) return { error: `Enter the tag to publish, for example ${source.tag_prefix}v1.4.0.` }
+    if (!tag.startsWith(source.tag_prefix)) return { error: `Tags of this track start with "${source.tag_prefix}", for example ${source.tag_prefix}v1.4.0.` }
     const row = await startImport(env, ctx, source, tag)
     if (row.state === "imported") return { error: `${row.ref} is already published.` }
   } else {
@@ -488,8 +520,17 @@ export async function handleAppWebhook(request: Request, env: Env, ctx: Executio
     await env.DB.prepare("SELECT * FROM release_sources WHERE provider = 'github' AND installation_id IS NOT NULL AND repository_id = ?").bind(event.repository_id).all<ReleaseSource>()
   ).results
   if (sources.length === 0) return json({ ok: true, ignored: "No app or licence in Warden is connected to this repository." })
+  // Within one app or licence, a tag goes to the track whose tag prefix it matches most specifically.
+  const ownerKey = (s: ReleaseSource) => s.app_id ?? `l:${s.license_id}`
+  const chosen = new Set<string>()
+  for (const key of new Set(sources.map(ownerKey))) {
+    const mine = sources.filter((s) => ownerKey(s) === key)
+    const prefix = prefixForTag(event.tag, mine.map((s) => s.tag_prefix))
+    for (const s of mine) if (prefix !== null && s.tag_prefix === prefix) chosen.add(s.id)
+  }
   const imports = []
   for (const source of sources) {
+    if (!chosen.has(source.id)) continue
     // Follow a renamed repository, so the dashboard shows its current name.
     await env.DB.prepare("UPDATE release_sources SET last_delivery_at = ?, repository = CASE WHEN ? = '' THEN repository ELSE ? END WHERE id = ?")
       .bind(now, event.repository, event.repository, source.id)
@@ -499,4 +540,16 @@ export async function handleAppWebhook(request: Request, env: Env, ctx: Executio
     imports.push({ source: source.id, id: row.id, tag: row.ref, version: row.version, state: row.state })
   }
   return json({ ok: true, imports }, { status: imports.length > 0 ? 202 : 200 })
+}
+
+/** The tracks of an app or licence for its page: each with its repository (without secrets) and its latest imports. */
+export async function trackPanels(env: Env, owner: FileOwner, origin: string, importsPerSource = 5) {
+  const [tracks, sources] = await Promise.all([listTracks(env, owner), listSources(env, owner)])
+  return Promise.all(
+    tracks.map(async (track) => {
+      const source = sources.find((s) => s.track_id === track.id) ?? null
+      const [view, imports] = source ? await Promise.all([publicSource(env, source, origin), listImports(env, source.id, importsPerSource)]) : [null, []]
+      return { track: trackView(track), source: view, imports }
+    })
+  )
 }

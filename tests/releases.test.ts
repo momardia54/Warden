@@ -118,9 +118,10 @@ test("a check with a version offers the newest release the licence can download"
   assert.ok("app" in created)
   const app = created.app
   const license = await createLicense(env, { ...licenseInput, app_id: app.id, max_sites: 2 })
-  await release(env, { app }, "1.3.0")
-  const current = await release(env, { app }, "1.4.0", { changelog: "Faster gallery." })
-  await release(env, { app }, "1.5.0-beta.1", { channel: "beta" })
+  // Two tracks: updates for Active licences, the final build for Completed ones.
+  await release(env, { app }, "1.3.0", { statuses: "active" })
+  const current = await release(env, { app }, "1.4.0", { changelog: "Faster gallery.", statuses: "active" })
+  await release(env, { app }, "1.5.0-beta.1", { channel: "beta", statuses: "active" })
   await release(env, { app }, "", { name: "manual.pdf" })
   const final = await release(env, { app }, "9.0.0", { statuses: "completed" }) // not available while the licence is Active
 
@@ -243,9 +244,9 @@ test("API: release fields, withdrawal and the versions sites run", async () => {
     sites: 4,
     outdated: 2,
     data: [
-      { version: "1.2.0", sites: 1, outdated: false },
-      { version: "1.1.0", sites: 2, outdated: true },
-      { version: null, sites: 1, outdated: false },
+      { version: "1.2.0", sites: 1, behind: 0, outdated: false },
+      { version: "1.1.0", sites: 2, behind: 2, outdated: true },
+      { version: null, sites: 1, behind: 0, outdated: false },
     ],
   })
   const sites = (await call("GET", `/licenses/${lic.id}/activations`)).json.data

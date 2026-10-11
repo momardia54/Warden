@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useFetcher, useRevalidator } from "react-router"
-import { Archive, ArchiveRestore, Copy, FileUp, FlaskConical, Link2, MoreHorizontal, Paperclip, Pencil, Trash2, Upload } from "lucide-react"
+import { Archive, ArchiveRestore, Copy, FileUp, FlaskConical, Layers, Link2, MoreHorizontal, Paperclip, Pencil, Plus, Trash2, Upload } from "lucide-react"
+import { ConfirmAction } from "#/components/confirm-action"
+import { TrackSource, type ImportView, type SourceView } from "#/components/release-source"
 import { FieldLabel, HelpTip } from "#/components/help-tip"
 import { StatusPicker } from "#/components/status-picker"
 import { Ago } from "#/components/time"
@@ -14,6 +16,7 @@ import { Textarea } from "#/components/ui/textarea"
 import { defaultReleaseStatuses, evaluateFileAccess, MAX_FILE_BYTES } from "#/lib/files"
 import { CHANNELS, isValidVersion, latestRelease, MAX_CHANGELOG_LENGTH, sortForDisplay, type Channel } from "#/lib/releases"
 import { describeStatusKeys, splitStatusKeys, type StatusSet } from "#/lib/statuses"
+import { statusConflicts, trackOverlaps } from "#/lib/tracks"
 import { cn } from "#/lib/utils"
 
 export type FileRow = {
@@ -25,6 +28,8 @@ export type FileRow = {
   notes: string
   sha256: string
   withdrawn_at: number | null
+  /** The track of a release; null for an attachment. */
+  track_id: string | null
   statuses: string
   check_domain: number
   size: number
@@ -42,13 +47,21 @@ export function formatBytes(bytes: number): string {
 type LicenseState = { status: string; expires_at: number | null; domains: string }
 
 /** Files shared by the licence's app. `statuses` are the app's statuses, which the files' release rules refer to. */
-export type SharedFiles = { appName: string; appHref: string; files: FileRow[]; statuses: StatusSet }
+export type SharedFiles = { appName: string; appHref: string; files: FileRow[]; statuses: StatusSet; tracks: TrackView[] }
+
+/** A release track as the pages send it: `statuses` are status keys. */
+export type TrackView = { id: string; name: string; statuses: string[]; check_domain: boolean }
+
+/** A track of the page's owner, with the repository connected to it. */
+export type TrackPanel = { track: TrackView; source: SourceView | null; imports: ImportView[] }
 
 type ActionResult = { ok?: true; error?: string }
 
 const AVAILABILITY_HELP =
   "The file can be downloaded only while the licence has one of these statuses. Typical choices: the valid statuses for updates, only the paid-in-full status for a final release, or only the suspended status for a maintenance notice."
 const DOMAIN_HELP = "When on, the download must include a domain (?domain=) the licence allows, within its site limit. Turn it off for files someone downloads by hand. Ignored when the licence has no allowed domains and no site limit."
+const TRACK_HELP =
+  "A track is what a set of licence statuses receives. Each status belongs to one track at most, so a licence is always offered the latest release of exactly one track: for example Updates for Active licences and a Final build for Completed ones. A track receives releases by upload, or from a connected repository."
 const VERSION_HELP = "A version makes the file a release: sites that send their version with their check are offered it as an update. Leave it empty for an attachment such as a manual or a notice."
 const CHANNEL_HELP = "Stable releases are offered to every site. Beta releases are offered only to sites that check with channel=beta."
 const CHANGELOG_HELP = "Public. Returned to sites with the release, so they can show what changed before updating."
@@ -71,6 +84,9 @@ export function FilesSection({
   shared = null,
   configured,
   ownerLabel,
+  tracks,
+  receiving = null,
+  githubApp,
 }: {
   description: string
   /** Where uploads are sent, for example /licenses/<id>/files. */
@@ -87,10 +103,17 @@ export function FilesSection({
   configured: boolean
   /** "app" or "licence", for the texts. */
   ownerLabel: string
+  /** The owner's release tracks, with their repositories. */
+  tracks: TrackPanel[]
+  /** On a licence page: the track that serves the licence's current status, if any. */
+  receiving?: { trackId: string | null; status: string } | null
+  githubApp: boolean
 }) {
   const [uploading, setUploading] = useState(false)
   const [editing, setEditing] = useState<FileRow | null>(null)
   const [removing, setRemoving] = useState<FileRow | null>(null)
+  const [trackDialog, setTrackDialog] = useState<TrackView | "new" | null>(null)
+  const [deletingTrack, setDeletingTrack] = useState<TrackView | null>(null)
   const action = useFetcher<ActionResult>()
   const [copied, setCopied] = useState<string | null>(null)
 
@@ -108,10 +131,16 @@ export function FilesSection({
     const rule = { statuses: splitStatusKeys(row.file.statuses, row.statuses), check_domain: row.file.check_domain === 1 }
     return evaluateFileAccess(license, rule, null, Date.now(), true, statusSet, row.statuses).allowed
   }
-  // The release a site of this licence (or any licence, for an app) is offered: newest stable among those available.
-  const latest = latestRelease(rows.filter((r) => availability(r) !== false).map((r) => r.file))
+  // In each track, the release a site is offered: the newest stable one available (to this licence, on a licence page).
+  const latestIn = (list: Row[]) => latestRelease(list.filter((r) => availability(r) !== false).map((r) => r.file))?.id ?? null
   const releases = rows.filter((r) => r.file.version.trim() !== "")
   const attachments = rows.filter((r) => r.file.version.trim() === "")
+  const ownTracks = tracks.map((p) => p.track)
+  const appTracks = shared?.tracks ?? []
+  const knownTracks = new Set([...ownTracks, ...appTracks].map((t) => t.id))
+  const withoutTrack = releases.filter((r) => !r.file.track_id || !knownTracks.has(r.file.track_id))
+  const conflicts = statusConflicts(ownTracks.map((t) => ({ id: t.id, name: t.name, statuses: t.statuses.join(",") })))
+  const ownKeys = new Set(ownTracks.flatMap((t) => t.statuses))
 
   const copy = async (text: string, what: string) => {
     try {
@@ -130,13 +159,14 @@ export function FilesSection({
     )
   }
 
-  const table = (list: Row[], kind: "releases" | "attachments") => (
-    <ul className="divide-y rounded-lg border bg-card">
+  /** Rows of files. Releases inside a track omit their rule (the track shows it); attachments show their own. */
+  const table = (list: Row[], kind: "releases" | "attachments", latestId: string | null = null, framed = true) => (
+    <ul className={cn("divide-y", framed && "rounded-lg border bg-card")}>
       {list.map((row) => {
         const f = row.file
         const available = availability(row)
         const withdrawn = f.withdrawn_at !== null
-        const isLatest = latest?.id === f.id
+        const isLatest = latestId === f.id
         return (
           <li key={f.id} className={cn("grid gap-x-4 gap-y-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto]", withdrawn && "bg-muted/40")}>
             <div className="min-w-0 space-y-1">
@@ -153,7 +183,7 @@ export function FilesSection({
                   </Badge>
                 )}
                 {withdrawn && <Badge variant="secondary">Withdrawn</Badge>}
-                {row.shared && <Badge variant="outline">From {shared?.appName}</Badge>}
+                {row.shared && kind === "attachments" && <Badge variant="outline">From {shared?.appName}</Badge>}
                 {available !== null && !withdrawn && <Badge variant={available ? "success" : "secondary"}>{available ? "Available now" : "Not available now"}</Badge>}
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
@@ -166,10 +196,12 @@ export function FilesSection({
                   {f.download_count} download{f.download_count === 1 ? "" : "s"}
                 </span>
               </div>
-              <div className="text-xs text-muted-foreground">
-                Available when status is <span className="text-foreground">{describeStatusKeys(splitStatusKeys(f.statuses, row.statuses), row.statuses) || "no status"}</span>
-                {f.check_domain ? ", for allowed sites" : ", without a domain check"}
-              </div>
+              {kind === "attachments" && (
+                <div className="text-xs text-muted-foreground">
+                  Available when status is <span className="text-foreground">{describeStatusKeys(splitStatusKeys(f.statuses, row.statuses), row.statuses) || "no status"}</span>
+                  {f.check_domain ? ", for allowed sites" : ", without a domain check"}
+                </div>
+              )}
               {f.changelog && <p className="line-clamp-2 max-w-prose text-sm whitespace-pre-line text-muted-foreground">{f.changelog}</p>}
             </div>
             <div className="flex items-start gap-1 sm:justify-end">
@@ -223,45 +255,155 @@ export function FilesSection({
     </ul>
   )
 
+  /** A track: what it receives, its repository (own tracks) and its releases. */
+  const trackCard = (track: TrackView, list: Row[], panel: TrackPanel | null, set: StatusSet) => {
+    const isShared = panel === null
+    // On a licence page, the app's track does not apply to the statuses the licence's own tracks cover.
+    const replaced = isShared ? track.statuses.filter((k) => ownKeys.has(k)) : []
+    const serves = track.statuses.filter((k) => !replaced.includes(k))
+    return (
+      <section key={track.id} className="overflow-hidden rounded-lg border bg-card">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Layers className="size-4 text-muted-foreground" />
+              <h3 className="font-medium">{track.name}</h3>
+              {receiving?.trackId === track.id && <Badge variant="success">Receives now</Badge>}
+              {isShared && <Badge variant="outline">From {shared?.appName}</Badge>}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {serves.length > 0 ? (
+                <>
+                  For licences that are <span className="text-foreground">{describeStatusKeys(serves, set)}</span>
+                  {track.check_domain ? ", on allowed sites" : ", without a domain check"}.
+                </>
+              ) : replaced.length > 0 ? (
+                "Not used by this licence."
+              ) : (
+                "For no status yet: its releases are not available to any licence."
+              )}
+              {replaced.length > 0 && ` For ${describeStatusKeys(replaced, set)}, this licence receives its own track instead.`}
+            </p>
+          </div>
+          {isShared ? (
+            <Button asChild variant="ghost" size="sm">
+              <Link to={shared!.appHref + "?tab=releases"}>Manage on the app page</Link>
+            </Button>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="size-8" aria-label={`Actions for the track ${track.name}`}>
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem onClick={() => setTrackDialog(track)}>
+                  <Pencil /> Edit track
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onClick={() => setDeletingTrack(track)}>
+                  <Trash2 /> Delete track
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+        {panel && (
+          <div className="border-b bg-muted/20 px-4 py-3">
+            <TrackSource track={track} source={panel.source} imports={panel.imports} githubApp={githubApp} />
+          </div>
+        )}
+        {list.length > 0 ? (
+          table(list, "releases", latestIn(list), false)
+        ) : (
+          <p className="px-4 py-3 text-sm text-muted-foreground">No release in this track yet.{panel ? (panel.source ? " Push a tag, or upload a build." : " Upload a build, or connect a repository.") : ""}</p>
+        )}
+      </section>
+    )
+  }
+
+  const nothing = rows.length === 0 && tracks.length === 0 && appTracks.length === 0
+  const receivingLabel = receiving ? describeStatusKeys([receiving.status], statusSet) || receiving.status : ""
+  const receivingTrack = receiving?.trackId ? [...ownTracks, ...appTracks].find((t) => t.id === receiving.trackId) : null
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-prose text-sm text-muted-foreground">{description}</p>
-        <Button onClick={() => setUploading(true)}>
-          <Upload /> Upload
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => setTrackDialog("new")}>
+            <Plus /> New track
+          </Button>
+          <Button onClick={() => setUploading(true)}>
+            <Upload /> Upload
+          </Button>
+        </div>
       </div>
       {action.data?.error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{action.data.error}</div>}
 
-      {rows.length === 0 ? (
+      {receiving && (
+        <p className="text-sm">
+          This licence is <span className="font-medium">{receivingLabel}</span>:{" "}
+          {receivingTrack ? (
+            <>
+              it receives the track <span className="font-medium">{receivingTrack.name}</span>.
+            </>
+          ) : (
+            <span className="text-muted-foreground">no track serves this status, so it is offered no update.</span>
+          )}
+        </p>
+      )}
+
+      {conflicts.length > 0 && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          {conflicts.map((c) => (
+            <p key={c.status}>
+              {describeStatusKeys([c.status], statusSet) || c.status} belongs to {c.tracks.map((t) => `"${t.name}"`).join(" and ")}: the highest version among them is offered. Edit the tracks so
+              each status belongs to one track only.
+            </p>
+          ))}
+        </div>
+      )}
+
+      {nothing ? (
         <div className="rounded-lg border border-dashed p-8 text-center">
-          <FileUp className="mx-auto mb-2 size-6 text-muted-foreground" />
-          <p className="font-medium">No files yet</p>
+          <Layers className="mx-auto mb-2 size-6 text-muted-foreground" />
+          <p className="font-medium">No release yet</p>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Upload a build with a version to publish it as a release: sites that send their version with their check are offered it as an update.
+            A track is what a set of licence statuses receives, for example Updates for Active licences and a Final build for Completed ones. Create one, or upload a build with a version: a track
+            named Releases is created for it.
           </p>
         </div>
       ) : (
         <>
-          {releases.length > 0 && (
-            <section className="space-y-2">
-              <h3 className="flex items-center gap-1.5 text-sm font-medium">
-                Releases <HelpTip>{VERSION_HELP} &ldquo;Latest&rdquo; marks the stable release sites are offered{license ? " under this licence's current status" : ""}.</HelpTip>
-              </h3>
-              {table(releases, "releases")}
-            </section>
-          )}
+          <section className="space-y-3">
+            <h3 className="flex items-center gap-1.5 text-sm font-medium">
+              Tracks <HelpTip>{TRACK_HELP}</HelpTip>
+            </h3>
+            {tracks.map((p) => trackCard(p.track, releases.filter((r) => !r.shared && r.file.track_id === p.track.id), p, statusSet))}
+            {appTracks.map((t) => trackCard(t, releases.filter((r) => r.shared && r.file.track_id === t.id), null, shared!.statuses))}
+            {withoutTrack.length > 0 && (
+              <section className="space-y-2">
+                <h4 className="text-sm font-medium">Releases without a track</h4>
+                {table(withoutTrack, "releases", latestIn(withoutTrack))}
+              </section>
+            )}
+          </section>
           {attachments.length > 0 && (
             <section className="space-y-2">
-              <h3 className="text-sm font-medium">Attachments</h3>
+              <h3 className="flex items-center gap-1.5 text-sm font-medium">
+                Attachments <HelpTip>Files without a version, such as a manual or a notice. Each one has its own release rule and is never offered as an update.</HelpTip>
+              </h3>
               {table(attachments, "attachments")}
             </section>
           )}
         </>
       )}
 
-      <UploadDialog open={uploading} onOpenChange={setUploading} uploadPath={uploadPath} statuses={statusSet} ownerLabel={ownerLabel} />
-      <EditDialog file={editing} onClose={() => setEditing(null)} statuses={statusSet} />
+      <UploadDialog open={uploading} onOpenChange={setUploading} uploadPath={uploadPath} statuses={statusSet} ownerLabel={ownerLabel} tracks={ownTracks} />
+      <EditDialog file={editing} onClose={() => setEditing(null)} statuses={statusSet} tracks={ownTracks} />
+      <TrackDialog track={trackDialog} onClose={() => setTrackDialog(null)} statuses={statusSet} tracks={ownTracks} />
+      {deletingTrack && <DeleteTrackDialog track={deletingTrack} onClose={() => setDeletingTrack(null)} others={ownTracks.filter((t) => t.id !== deletingTrack.id)} releases={releases.filter((r) => !r.shared && r.file.track_id === deletingTrack.id).length} />}
 
       <Dialog open={removing !== null} onOpenChange={(next) => !next && setRemoving(null)}>
         <DialogContent>
@@ -345,7 +487,21 @@ function ReleaseFields({
   )
 }
 
-function UploadDialog({ open, onOpenChange, uploadPath, statuses: statusSet, ownerLabel }: { open: boolean; onOpenChange: (open: boolean) => void; uploadPath: string; statuses: StatusSet; ownerLabel: string }) {
+function UploadDialog({
+  open,
+  onOpenChange,
+  uploadPath,
+  statuses: statusSet,
+  ownerLabel,
+  tracks,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  uploadPath: string
+  statuses: StatusSet
+  ownerLabel: string
+  tracks: TrackView[]
+}) {
   const revalidator = useRevalidator()
   const notes = useFetcher<ActionResult>()
   const input = useRef<HTMLInputElement>(null)
@@ -356,6 +512,7 @@ function UploadDialog({ open, onOpenChange, uploadPath, statuses: statusSet, own
   const [changelog, setChangelog] = useState("")
   const [statuses, setStatuses] = useState<string[]>(() => defaultReleaseStatuses(statusSet))
   const [checkDomain, setCheckDomain] = useState(true)
+  const [trackId, setTrackId] = useState("")
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState("")
 
@@ -367,9 +524,13 @@ function UploadDialog({ open, onOpenChange, uploadPath, statuses: statusSet, own
     setChangelog("")
     setStatuses(defaultReleaseStatuses(statusSet))
     setCheckDomain(true)
+    setTrackId(tracks[0]?.id ?? "")
     setError("")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
+
+  const isRelease = version.trim() !== ""
+  const track = tracks.find((t) => t.id === trackId) ?? null
 
   const choose = (picked: File | undefined) => {
     if (!picked) return
@@ -383,10 +544,16 @@ function UploadDialog({ open, onOpenChange, uploadPath, statuses: statusSet, own
     if (!file) return setError("Choose a file to upload.")
     if (file.size > MAX_FILE_BYTES) return setError(`The file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB limit.`)
     if (version.trim() && !isValidVersion(version.trim())) return setError("Enter a valid version, or leave it empty for an attachment.")
-    if (statuses.length === 0) return setError("Select at least one licence status.")
+    if (!isRelease && statuses.length === 0) return setError("Select at least one licence status.")
+    if (isRelease && tracks.length > 0 && !track) return setError("Choose the track of this release.")
     setError("")
     setProgress(0)
-    const query = new URLSearchParams({ name: file.name, version: version.trim(), channel, statuses: statuses.join(","), check_domain: String(checkDomain) })
+    // A release takes its availability from its track; an attachment has its own.
+    const query = new URLSearchParams(
+      isRelease
+        ? { name: file.name, version: version.trim(), channel, ...(track ? { track: track.id } : {}) }
+        : { name: file.name, version: "", channel, statuses: statuses.join(","), check_domain: String(checkDomain) }
+    )
     const xhr = new XMLHttpRequest()
     xhr.open("PUT", `${uploadPath}?${query}`)
     xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream")
@@ -416,7 +583,8 @@ function UploadDialog({ open, onOpenChange, uploadPath, statuses: statusSet, own
         <DialogHeader>
           <DialogTitle>Upload a file</DialogTitle>
           <DialogDescription>
-            {ownerLabel === "app" ? "Every licence of this app sees the file, subject to its release rule." : "Only this licence sees the file."} Up to {MAX_FILE_BYTES / 1024 / 1024} MB.
+            {ownerLabel === "app" ? "For every licence of this app:" : "For this licence only:"} a release is available according to its track, an attachment according to its own statuses. Up to{" "}
+            {MAX_FILE_BYTES / 1024 / 1024} MB.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -453,15 +621,21 @@ function UploadDialog({ open, onOpenChange, uploadPath, statuses: statusSet, own
 
           <ReleaseFields version={version} setVersion={setVersion} channel={channel} setChannel={setChannel} changelog={changelog} setChangelog={setChangelog} disabled={busy} />
 
-          <div className="space-y-1.5">
-            <FieldLabel help={AVAILABILITY_HELP}>Available when licence status is</FieldLabel>
-            <StatusPicker statuses={statusSet} value={statuses} onChange={setStatuses} disabled={busy} />
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" className="size-4 accent-primary" checked={checkDomain} onChange={(e) => setCheckDomain(e.target.checked)} disabled={busy} />
-            Only for allowed sites (domain check)
-            <HelpTip>{DOMAIN_HELP}</HelpTip>
-          </label>
+          {isRelease ? (
+            <TrackPicker tracks={tracks} value={trackId} onChange={setTrackId} statuses={statusSet} disabled={busy} />
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <FieldLabel help={AVAILABILITY_HELP}>Available when licence status is</FieldLabel>
+                <StatusPicker statuses={statusSet} value={statuses} onChange={setStatuses} disabled={busy} />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" className="size-4 accent-primary" checked={checkDomain} onChange={(e) => setCheckDomain(e.target.checked)} disabled={busy} />
+                Only for allowed sites (domain check)
+                <HelpTip>{DOMAIN_HELP}</HelpTip>
+              </label>
+            </>
+          )}
           {busy && (
             <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round((progress ?? 0) * 100)} aria-valuemin={0} aria-valuemax={100}>
               <div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round((progress ?? 0) * 100)}%` }} />
@@ -482,7 +656,7 @@ function UploadDialog({ open, onOpenChange, uploadPath, statuses: statusSet, own
   )
 }
 
-function EditDialog({ file, onClose, statuses: statusSet }: { file: FileRow | null; onClose: () => void; statuses: StatusSet }) {
+function EditDialog({ file, onClose, statuses: statusSet, tracks }: { file: FileRow | null; onClose: () => void; statuses: StatusSet; tracks: TrackView[] }) {
   const update = useFetcher<ActionResult>()
   const [version, setVersion] = useState("")
   const [channel, setChannel] = useState<Channel>("stable")
@@ -490,10 +664,12 @@ function EditDialog({ file, onClose, statuses: statusSet }: { file: FileRow | nu
   const [notes, setNotes] = useState("")
   const [statuses, setStatuses] = useState<string[]>([])
   const [checkDomain, setCheckDomain] = useState(true)
+  const [trackId, setTrackId] = useState("")
   const [submitted, setSubmitted] = useState(false)
 
   useEffect(() => {
     if (!file) return
+    setTrackId(file.track_id ?? tracks[0]?.id ?? "")
     setVersion(file.version)
     setChannel(file.channel)
     setChangelog(file.changelog)
@@ -515,19 +691,25 @@ function EditDialog({ file, onClose, statuses: statusSet }: { file: FileRow | nu
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl" onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle className="break-all">Edit {file?.name}</DialogTitle>
-          <DialogDescription>Change the version and notes of this file, and when it can be downloaded.</DialogDescription>
+          <DialogDescription>Change the version and notes of this file, and its track (a release) or when it can be downloaded (an attachment).</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <ReleaseFields version={version} setVersion={setVersion} channel={channel} setChannel={setChannel} changelog={changelog} setChangelog={setChangelog} />
-          <div className="space-y-1.5">
-            <FieldLabel help={AVAILABILITY_HELP}>Available when licence status is</FieldLabel>
-            <StatusPicker statuses={statusSet} value={statuses} onChange={setStatuses} />
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" className="size-4 accent-primary" checked={checkDomain} onChange={(e) => setCheckDomain(e.target.checked)} />
-            Only for allowed sites (domain check)
-            <HelpTip>{DOMAIN_HELP}</HelpTip>
-          </label>
+          {version.trim() ? (
+            <TrackPicker tracks={tracks} value={trackId} onChange={setTrackId} statuses={statusSet} />
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <FieldLabel help={AVAILABILITY_HELP}>Available when licence status is</FieldLabel>
+                <StatusPicker statuses={statusSet} value={statuses} onChange={setStatuses} />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" className="size-4 accent-primary" checked={checkDomain} onChange={(e) => setCheckDomain(e.target.checked)} />
+                Only for allowed sites (domain check)
+                <HelpTip>{DOMAIN_HELP}</HelpTip>
+              </label>
+            </>
+          )}
           <div className="space-y-1.5">
             <FieldLabel htmlFor="file-notes" help="For your own reference. Never sent to sites.">
               Internal notes
@@ -541,17 +723,206 @@ function EditDialog({ file, onClose, statuses: statusSet }: { file: FileRow | nu
             Cancel
           </Button>
           <Button
-            disabled={busy || statuses.length === 0 || (version.trim() !== "" && !isValidVersion(version.trim()))}
+            disabled={busy || (version.trim() === "" && statuses.length === 0) || (version.trim() !== "" && !isValidVersion(version.trim()))}
             onClick={() => {
               if (!file) return
               setSubmitted(true)
               update.submit(
-                { intent: "update-file", fileId: file.id, version: version.trim(), channel, changelog: version.trim() ? changelog : file.changelog, notes, statuses: statuses.join(","), check_domain: String(checkDomain) },
+                version.trim()
+                  ? { intent: "update-file", fileId: file.id, version: version.trim(), channel, changelog, notes, ...(trackId ? { track: trackId } : {}) }
+                  : { intent: "update-file", fileId: file.id, version: "", channel, changelog: file.changelog, notes, statuses: statuses.join(","), check_domain: String(checkDomain) },
                 { method: "post" }
               )
             }}
           >
             {busy ? "Saving..." : "Save changes"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Chooses the track of a release, and says what that track receives. */
+function TrackPicker({ tracks, value, onChange, statuses, disabled }: { tracks: TrackView[]; value: string; onChange: (id: string) => void; statuses: StatusSet; disabled?: boolean }) {
+  const track = tracks.find((t) => t.id === value) ?? null
+  if (tracks.length === 0) {
+    return (
+      <p className="rounded-md bg-muted/50 p-3 text-sm text-muted-foreground">
+        A track named <span className="font-medium text-foreground">Releases</span> is created for this release, for licences that are {describeStatusKeys(defaultReleaseStatuses(statuses), statuses)}.
+        Change it afterwards from the track&apos;s menu.
+      </p>
+    )
+  }
+  return (
+    <div className="space-y-1.5">
+      <FieldLabel htmlFor="release-track" help={TRACK_HELP}>
+        Track
+      </FieldLabel>
+      <NativeSelect id="release-track" value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
+        {tracks.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </NativeSelect>
+      {track && (
+        <p className="text-xs text-muted-foreground">
+          {track.statuses.length > 0 ? `Available to licences that are ${describeStatusKeys(track.statuses, statuses)}${track.check_domain ? ", on allowed sites" : ""}.` : "This track serves no status yet."}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Creates or edits a track. Statuses that another track serves cannot be chosen. */
+function TrackDialog({ track, onClose, statuses: statusSet, tracks }: { track: TrackView | "new" | null; onClose: () => void; statuses: StatusSet; tracks: TrackView[] }) {
+  const save = useFetcher<ActionResult>()
+  const [name, setName] = useState("")
+  const [selected, setSelected] = useState<string[]>([])
+  const [checkDomain, setCheckDomain] = useState(true)
+  const [submitted, setSubmitted] = useState(false)
+  const editing = track !== null && track !== "new" ? track : null
+
+  useEffect(() => {
+    if (track === null) return
+    setName(editing?.name ?? (tracks.length === 0 ? "Releases" : ""))
+    setSelected(editing?.statuses ?? [])
+    setCheckDomain(editing?.check_domain ?? true)
+    setSubmitted(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [track])
+
+  useEffect(() => {
+    if (submitted && save.state === "idle" && save.data?.ok) onClose()
+  }, [submitted, save.state, save.data, onClose])
+
+  const taken = (key: string) => trackOverlaps(tracks.map((t) => ({ id: t.id, name: t.name, statuses: t.statuses.join(",") })), [key], editing?.id ?? null)[0]?.track ?? null
+  const busy = save.state !== "idle"
+  return (
+    <Dialog open={track !== null} onOpenChange={(next) => !busy && !next && onClose()}>
+      <DialogContent className="sm:max-w-lg" onOpenAutoFocus={(e) => e.preventDefault()}>
+        <DialogHeader>
+          <DialogTitle>{editing ? `Edit ${editing.name}` : "New track"}</DialogTitle>
+          <DialogDescription>A track is what a set of licence statuses receives. Each status belongs to one track at most.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <FieldLabel htmlFor="track-name">Name</FieldLabel>
+            <Input id="track-name" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="Updates, Final build, Maintenance" disabled={busy} />
+          </div>
+          <div className="space-y-1.5">
+            <FieldLabel help="Licences with one of these statuses are offered the latest release of this track. A status that another track serves is shown with that track's name: remove it there first.">
+              For licences that are
+            </FieldLabel>
+            <div className="flex flex-wrap gap-x-4 gap-y-2" role="group" aria-label="Licence statuses">
+              {statusSet.map((status) => {
+                const other = taken(status.key)
+                return (
+                  <label key={status.key} className={cn("flex items-center gap-1.5 text-sm", other && "text-muted-foreground")} title={other ? `Served by ${other.name}` : status.description}>
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-primary"
+                      checked={selected.includes(status.key)}
+                      disabled={busy || Boolean(other)}
+                      onChange={(e) => setSelected(statusSet.filter((s) => (s.key === status.key ? e.target.checked : selected.includes(s.key))).map((s) => s.key))}
+                    />
+                    {status.label}
+                    {other && <span className="text-xs">(in {other.name})</span>}
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" className="size-4 accent-primary" checked={checkDomain} onChange={(e) => setCheckDomain(e.target.checked)} disabled={busy} />
+            Only for allowed sites (domain check)
+            <HelpTip>{DOMAIN_HELP}</HelpTip>
+          </label>
+          {submitted && save.state === "idle" && save.data?.error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{save.data.error}</div>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            disabled={busy || !name.trim()}
+            onClick={() => {
+              setSubmitted(true)
+              save.submit(
+                { intent: editing ? "update-track" : "create-track", ...(editing ? { trackId: editing.id } : {}), name: name.trim(), statuses: selected.join(","), check_domain: String(checkDomain) },
+                { method: "post" }
+              )
+            }}
+          >
+            {busy ? "Saving..." : editing ? "Save changes" : "Create track"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Deletes a track; its releases move to another track, chosen here. */
+function DeleteTrackDialog({ track, onClose, others, releases }: { track: TrackView; onClose: () => void; others: TrackView[]; releases: number }) {
+  const remove = useFetcher<ActionResult>()
+  const [moveTo, setMoveTo] = useState(others[0]?.id ?? "")
+  const [submitted, setSubmitted] = useState(false)
+  useEffect(() => {
+    if (submitted && remove.state === "idle" && remove.data?.ok) onClose()
+  }, [submitted, remove.state, remove.data, onClose])
+  if (releases === 0) {
+    return (
+      <ConfirmAction
+        intent="delete-track"
+        fields={{ trackId: track.id }}
+        open
+        onOpenChange={(open) => !open && onClose()}
+        title={`Delete the track ${track.name}?`}
+        description="It has no release. Its connected repository, if any, is disconnected."
+        confirm="Delete track"
+      />
+    )
+  }
+  const busy = remove.state !== "idle"
+  return (
+    <Dialog open onOpenChange={(next) => !busy && !next && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete the track {track.name}?</DialogTitle>
+          <DialogDescription>
+            Its {releases} release{releases === 1 ? "" : "s"} move{releases === 1 ? "s" : ""} to another track and take{releases === 1 ? "s" : ""} that track&apos;s availability. Its connected repository, if
+            any, is disconnected.
+          </DialogDescription>
+        </DialogHeader>
+        {others.length === 0 ? (
+          <p className="text-sm text-muted-foreground">There is no other track to move the releases to. Create one first, or delete the releases.</p>
+        ) : (
+          <div className="space-y-1.5">
+            <FieldLabel htmlFor="move-to">Move the releases to</FieldLabel>
+            <NativeSelect id="move-to" value={moveTo} onChange={(e) => setMoveTo(e.target.value)} disabled={busy}>
+              {others.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </div>
+        )}
+        {submitted && remove.state === "idle" && remove.data?.error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{remove.data.error}</div>}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={busy || others.length === 0 || !moveTo}
+            onClick={() => {
+              setSubmitted(true)
+              remove.submit({ intent: "delete-track", trackId: track.id, move_to: moveTo }, { method: "post" })
+            }}
+          >
+            {busy ? "Deleting..." : "Move and delete"}
           </Button>
         </DialogFooter>
       </DialogContent>

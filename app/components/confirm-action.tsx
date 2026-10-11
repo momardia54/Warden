@@ -5,6 +5,8 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 
 type Props = {
   intent: string
+  /** Extra values posted with the intent, for example the id of the item concerned. */
+  fields?: Record<string, string>
   title: string
   description: string
   confirm: string
@@ -15,7 +17,7 @@ type Props = {
 }
 
 /** A confirmation dialog that, on confirmation, posts `intent` to the current route. */
-export function ConfirmAction({ intent, trigger, title, description, confirm, open: controlled, onOpenChange }: Props) {
+export function ConfirmAction({ intent, fields, trigger, title, description, confirm, open: controlled, onOpenChange }: Props) {
   const [own, setOwn] = useState(false)
   const open = controlled ?? own
   const setOpen = onOpenChange ?? setOwn
@@ -30,6 +32,9 @@ export function ConfirmAction({ intent, trigger, title, description, confirm, op
         </DialogHeader>
         <Form method="post" onSubmit={() => setOpen(false)}>
           <input type="hidden" name="intent" value={intent} />
+          {Object.entries(fields ?? {}).map(([name, value]) => (
+            <input key={name} type="hidden" name={name} value={value} />
+          ))}
           <DialogFooter>
             <DialogClose asChild>
               <Button type="button" variant="outline">

@@ -40,8 +40,9 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 
 ## Features
 
+- **Release tracks**: what each licence status receives, for example Updates for Active licences, the licence-free Final build for Completed ones and a maintenance version for Suspended ones. Each status belongs to one track, so a site is always offered the latest release of exactly one track; a licence can have its own track for a custom build ([docs/releases.md](docs/releases.md#tracks))
 - **Releases and updates**: upload a build with a version and every site that sends its version with its check is told an update is waiting, with the release notes, a SHA-256 checksum and a ready download link. Stable and beta channels, withdraw a bad release in one click, and see which version each site runs and how many are behind ([docs/releases.md](docs/releases.md))
-- **Publishing from GitHub**: connect GitHub once (Warden creates its own GitHub App in two clicks), pick a repository for an app or a licence, and every version tag you push is downloaded as a zip, repacked with a fixed folder name and published as a release. Private repositories included, no token or webhook to copy; a token-and-webhook mode remains for single repositories ([docs/repositories.md](docs/repositories.md))
+- **Publishing from GitHub**: connect GitHub once (Warden creates its own GitHub App in two clicks), pick a repository for a release track, and every version tag you push is downloaded as a zip, repacked with a fixed folder name and published as a release. Private repositories included, no token or webhook to copy; a token-and-webhook mode remains for single repositories ([docs/repositories.md](docs/repositories.md))
 - **Apps**: a product sold to many customers, with defaults for new licences (status, duration, maximum sites, message), its own licence list and releases shared by all of its licences ([docs/apps.md](docs/apps.md))
 - **Site limit**: a licence can be limited to N sites; sites register on their first check and you can release them
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence, with a customer name and email
@@ -64,7 +65,7 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 | ![Apps](docs/screenshots/apps.jpg) | ![App page](docs/screenshots/app.jpg) |
 | Apps with licence counts, valid licences, sites and outdated sites | An app: licences, sites, latest release and checks of the last 30 days |
 | ![Releases](docs/screenshots/releases.jpg) | ![Edit a release](docs/screenshots/edit-file.jpg) |
-| Releases of an app: latest, beta and withdrawn | Editing a release: version, channel, release notes and availability |
+| Release tracks of an app, each serving a set of licence statuses | Editing a release: version, channel, release notes and track |
 | ![Licences](docs/screenshots/licences.jpg) | ![Licence page](docs/screenshots/licence.jpg) |
 | Licences of all apps, with views, filters and sorting | A licence: check result, expiry, sites and last check |
 | ![Sites](docs/screenshots/sites-and-files.jpg) | ![Analytics](docs/screenshots/analytics.jpg) |
@@ -141,7 +142,7 @@ curl           "https://<worker>/api/v1/licenses?status=expired"   -H "Authoriza
 | `manage` | also create, edit, set status, renew |
 | `full` | also delete and regenerate keys |
 
-Endpoints: `GET /apps/{app}/versions`, `GET /me`, `GET /stats`, `GET /statuses`, `GET|POST|DELETE /apps/{app}/statuses` and `/licenses/{id}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`, `GET|PUT|DELETE /apps/{app}/source` and `/licenses/{id}/source` (with `/imports`), `GET /integrations/github` (with `/repositories`). Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
+Endpoints: `GET /apps/{app}/versions`, `GET /me`, `GET /stats`, `GET /statuses`, `GET|POST|DELETE /apps/{app}/statuses` and `/licenses/{id}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`, `GET|POST /apps/{app}/tracks` and `/licenses/{id}/tracks`, `GET|PATCH|DELETE .../tracks/{track}`, `GET|PUT|DELETE .../tracks/{track}/source` (with `/imports`), `GET /integrations/github` (with `/repositories`). Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
 
 ## Run and deploy
 

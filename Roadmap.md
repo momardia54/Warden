@@ -30,7 +30,8 @@ Warden uses [semantic versioning](https://semver.org/). The version is in `packa
 - Dashboard rework: tabs, needs-attention queue with one-click extend, quick search, saved list views, CSV export
 - **Analytics**: valid and invalid checks, active sites and downloads per day; top licences, files and IP addresses
 - **Protection**: client IP addresses, IP blocklist, rate limits and blocking rules configured in the dashboard
-- **Publishing from GitHub**: a GitHub App created in two clicks (or a token and a webhook); version tags published as releases with a fixed package folder
+- **Release tracks**: what each licence status receives (updates, final build, maintenance), one track per status, licence-specific tracks
+- **Publishing from GitHub**: a GitHub App created in two clicks (or a token and a webhook); version tags published into a track, with a fixed package folder and optional tag prefixes
 - Consistent terminology (valid and invalid) across the dashboard, API and docs; earlier API field names kept as deprecated aliases
 
 ## Towards 1.0.0

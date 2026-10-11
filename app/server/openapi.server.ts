@@ -10,14 +10,47 @@ export function openApiSpec(origin: string) {
   const appParam = { name: "app", in: "path", required: true, description: "App id (app_...) or slug.", schema: { type: "string" } }
 
   // A repository connected to an app or a licence (docs/repositories.md). Both owners have the same endpoints.
-  const sourceDoc = "{ id, connection (app | token), provider, repository, trigger, package_folder, statuses, check_domain, has_token, enabled, webhook_url, webhook_secret, app, license, created_at, updated_at, last_delivery_at }. webhook_secret is omitted for read keys; the access token is never returned."
+  const sourceDoc = "{ id, track_id, tag_prefix, connection (app | token), provider, repository, trigger, package_folder, has_token, enabled, webhook_url, webhook_secret, created_at, updated_at, last_delivery_at }. webhook_secret is omitted for read keys; the access token is never returned."
   const importDoc = "{ id, tag, version, commit, state (pending | imported | skipped | failed), detail, file_id, started_at, finished_at }"
-  const sourcePaths = (prefix: string, param: Record<string, unknown>) => ({
-    [`${prefix}/source`]: {
+  const trackDoc = "{ id, name, statuses, check_domain, position, releases, source (see the track's /source) | null, created_at, updated_at }"
+  const trackParam = { name: "track", in: "path", required: true, description: "Track id (trk_...) or name.", schema: { type: "string" } }
+  const trackBody = {
+    type: "object",
+    properties: {
+      name: { type: "string", maxLength: 60 },
+      statuses: { description: "Status keys this track serves (array or comma separated). Each status belongs to one track of the app or licence at most." },
+      check_domain: { type: "boolean", default: true },
+      position: { type: "integer", minimum: 0 },
+    },
+  }
+  // Release tracks of an app or a licence, each with an optional connected repository (docs/releases.md, docs/repositories.md).
+  const trackPaths = (prefix: string, param: Record<string, unknown>) => ({
+    [`${prefix}/tracks`]: {
       parameters: [param],
-      get: { summary: "The connected repository", responses: { 200: { description: sourceDoc }, 404: { description: "No repository is connected" } } },
+      get: {
+        summary: "Release tracks. For a licence, also `app_tracks` and `receives`: the track that serves its current status.",
+        responses: { 200: { description: `{ data: [${trackDoc}], conflicts: [{ status, tracks }], app_tracks?, receives? }` } },
+      },
+      post: { summary: "Create a track (permission: manage)", requestBody: body(trackBody), responses: { 201: { description: trackDoc }, 409: { description: "A status already belongs to another track" }, 422: err } },
+    },
+    [`${prefix}/tracks/{track}`]: {
+      parameters: [param, trackParam],
+      get: { summary: "A track", responses: { 200: { description: trackDoc }, 404: err } },
+      patch: { summary: "Change a track (permission: manage). Its statuses and domain check are applied to its releases.", requestBody: body(trackBody), responses: { 200: { description: trackDoc }, 409: err, 422: err } },
+      delete: {
+        summary: "Delete a track (permission: full). Its releases move to `move_to`; refused while it has releases and no `move_to` is given.",
+        parameters: [{ name: "move_to", in: "query", schema: { type: "string" } }],
+        responses: { 200: { description: "{ deleted: true, id }" }, 409: err, 422: err },
+      },
+    },
+    ...sourcePaths(`${prefix}/tracks/{track}`, [param, trackParam]),
+  })
+  const sourcePaths = (prefix: string, params: Record<string, unknown>[]) => ({
+    [`${prefix}/source`]: {
+      parameters: params,
+      get: { summary: "The repository connected to the track", responses: { 200: { description: sourceDoc }, 404: { description: "No repository is connected" } } },
       put: {
-        summary: "Connect or edit the repository (permission: manage). Fields left out keep their value; the repository is checked with the provider first.",
+        summary: "Connect or edit the track's repository (permission: manage). Fields left out keep their value; the repository is checked with the provider first. Availability comes from the track.",
         requestBody: {
           required: true,
           content: {
@@ -30,8 +63,7 @@ export function openApiSpec(origin: string) {
                   repository: { type: "string", description: "owner/name or its github.com address" },
                   trigger: { type: "string", enum: ["tag"], default: "tag" },
                   package_folder: { type: "string", description: "Top-level folder inside the published zip. Defaults to the repository name." },
-                  statuses: { description: "Release rule of published releases: comma separated status keys or an array" },
-                  check_domain: { type: "boolean", default: true },
+                  tag_prefix: { type: "string", description: "Tags of this track start with this text: \"final-\" takes final-v1.4.0. Default: no prefix." },
                   token: { type: "string", description: "Access token for a private repository; empty string removes it" },
                   enabled: { type: "boolean", default: true },
                 },
@@ -43,9 +75,9 @@ export function openApiSpec(origin: string) {
       },
       delete: { summary: "Disconnect the repository (permission: manage). Published releases stay.", responses: { 200: { description: "{ deleted: true, id }" }, 404: { description: "No repository is connected" } } },
     },
-    [`${prefix}/source/regenerate-secret`]: { parameters: [param], post: { summary: "Replace the webhook secret (permission: manage)", responses: { 200: { description: sourceDoc } } } },
+    [`${prefix}/source/regenerate-secret`]: { parameters: params, post: { summary: "Replace the webhook secret (permission: manage)", responses: { 200: { description: sourceDoc } } } },
     [`${prefix}/source/imports`]: {
-      parameters: [param],
+      parameters: params,
       get: { summary: "Latest tags and their state, newest first", responses: { 200: { description: `{ data: [${importDoc}] }` } } },
       post: {
         summary: "Publish an existing tag (permission: manage). Runs in the background; poll the list for the result.",
@@ -54,7 +86,7 @@ export function openApiSpec(origin: string) {
       },
     },
     [`${prefix}/source/imports/{importId}/retry`]: {
-      parameters: [param, { name: "importId", in: "path", required: true, schema: { type: "string" } }],
+      parameters: [...params, { name: "importId", in: "path", required: true, schema: { type: "string" } }],
       post: { summary: "Retry a failed or skipped tag (permission: manage)", responses: { 202: { description: importDoc }, 404: { description: "Unknown import" }, 409: { description: "In progress or already published" } } },
     },
   })
@@ -217,7 +249,8 @@ export function openApiSpec(origin: string) {
             "The request body is the raw file, not multipart, and the request needs a Content-Length header. Maximum size 100 MB. The file can be downloaded while the licence status is one of `statuses`.",
           parameters: [
             { name: "name", in: "query", required: true, description: "Download file name", schema: { type: "string" } },
-            { name: "statuses", in: "query", description: "Comma separated licence statuses in which the file is available", schema: { type: "string", default: "active,completed", example: "active,completed" } },
+            { name: "track", in: "query", description: "Releases (with a version): the track, by id or name. Without it: the only track, or a new track Releases when there is none.", schema: { type: "string" } },
+            { name: "statuses", in: "query", description: "Attachments: the statuses in which the file is available. Releases without `track`: picks the track with exactly these statuses, or creates one.", schema: { type: "string", default: "active,completed", example: "active,completed" } },
             { name: "check_domain", in: "query", description: "Require the requesting domain to match the licence's allowed domains", schema: { type: "boolean", default: true } },
             ...releaseParams,
           ],
@@ -274,7 +307,8 @@ export function openApiSpec(origin: string) {
           description: "Same body and query parameters as PUT /licenses/{id}/files. Licences of the app see the file in their download list, subject to the file's release statuses.",
           parameters: [
             { name: "name", in: "query", required: true, schema: { type: "string" } },
-            { name: "statuses", in: "query", schema: { type: "string", default: "active,completed" } },
+            { name: "track", in: "query", description: "Releases: the track, by id or name.", schema: { type: "string" } },
+            { name: "statuses", in: "query", description: "Attachments: availability. Releases without `track`: picks or creates a track.", schema: { type: "string", default: "active,completed" } },
             { name: "check_domain", in: "query", schema: { type: "boolean", default: true } },
             ...releaseParams,
           ],
@@ -291,8 +325,8 @@ export function openApiSpec(origin: string) {
       "/integrations/github/repositories": {
         get: { summary: "Repositories the GitHub App can access", responses: { 200: { description: "{ data: [{ id, full_name, private, account }] }" }, 404: err, 502: err } },
       },
-      ...sourcePaths("/apps/{app}", appParam),
-      ...sourcePaths("/licenses/{id}", idParam),
+      ...trackPaths("/apps/{app}", appParam),
+      ...trackPaths("/licenses/{id}", idParam),
       "/apps/{app}/versions": {
         parameters: [appParam],
         get: {
@@ -345,7 +379,7 @@ export function openApiSpec(origin: string) {
         File: {
           type: "object",
           properties: {
-            id: { type: "string" }, name: { type: "string" },
+            id: { type: "string" }, name: { type: "string" }, track: { type: ["string", "null"], description: "The track of a release; null for an attachment" },
             version: { type: "string", description: "Empty for an attachment. A file with a version is a release" },
             channel: { enum: ["stable", "beta"] }, changelog: { type: "string", description: "Public release notes" }, notes: { type: "string", description: "Internal" },
             size: { type: "integer" }, content_type: { type: "string" }, sha256: { type: ["string", "null"], description: "Hex SHA-256 of the file. null for files uploaded before checksums were recorded" },
@@ -358,7 +392,9 @@ export function openApiSpec(origin: string) {
         FileChanges: {
           type: "object",
           properties: {
-            statuses: { type: "array", items: { type: "string" } }, check_domain: { type: "boolean" },
+            statuses: { type: "array", items: { type: "string" }, description: "Attachments only: a release is available according to its track" },
+            check_domain: { type: "boolean", description: "Attachments only" },
+            track: { type: "string", description: "Releases: move the release to this track (id or name)" },
             version: { type: "string", description: "Empty string turns a release into an attachment" }, channel: { enum: ["stable", "beta"] },
             changelog: { type: "string", maxLength: 10000 }, notes: { type: "string", maxLength: 500 },
             withdrawn: { type: "boolean", description: "true withdraws the release, false restores it" },

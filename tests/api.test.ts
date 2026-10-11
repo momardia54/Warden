@@ -218,7 +218,7 @@ test("API: app files and site activations", async () => {
   assert.equal((await put("/apps/harbor-theme/files?name=x.zip", keys.read, "zz")).status, 403)
   assert.equal((await call("GET", "/apps/harbor-theme/files", keys.read)).json.data.length, 1)
   assert.equal((await call("GET", `/licenses/${lic.id}/files`, keys.read)).json.data.length, 0) // the licence's own files only
-  assert.equal((await call("PATCH", `/apps/harbor-theme/files/${file.id}`, keys.manage, { statuses: ["completed"], version: "1.0.1" })).json.version, "1.0.1")
+  assert.equal((await call("PATCH", `/apps/harbor-theme/files/${file.id}`, keys.manage, { version: "1.0.1" })).json.version, "1.0.1")
   assert.equal((await call("GET", "/apps/harbor-theme", keys.read)).json.latest_version, "1.0.1")
   assert.equal((await call("DELETE", `/apps/harbor-theme/files/${file.id}`, keys.manage)).json.deleted, true)
   assert.equal((await call("GET", "/apps/harbor-theme/files", keys.read)).json.data.length, 0)

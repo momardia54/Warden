@@ -1,9 +1,9 @@
 import { HelpTip } from "#/components/help-tip"
 import { cn } from "#/lib/utils"
 
-type Versions = { latest_version: string | null; sites: number; outdated: number; data: { version: string | null; sites: number; outdated: boolean }[] }
+type Versions = { latest_version: string | null; sites: number; outdated: number; data: { version: string | null; sites: number; behind: number; outdated: boolean }[] }
 
-/** The colour of a version's share: current versions in the foreground colour, older versions amber, unknown ones muted. */
+/** The colour of a version's share: up to date in the foreground colour, behind (for some of its sites) amber, unknown muted. */
 function tone(row: Versions["data"][number]) {
   if (row.version === null) return { bar: "bg-muted-foreground/25", dot: "bg-muted-foreground/40" }
   if (row.outdated) return { bar: "bg-amber-500", dot: "bg-amber-500" }
@@ -13,19 +13,23 @@ function tone(row: Versions["data"][number]) {
 /** How the sites of an app are spread over versions, from the versions they report with their checks. */
 export function VersionAdoption({ versions }: { versions: Versions }) {
   const { data, sites, outdated, latest_version: latest } = versions
-  const current = data.filter((r) => r.version !== null && !r.outdated).reduce((n, r) => n + r.sites, 0)
+  // Up to date: on the latest release their own licence is offered (which depends on the track of its status).
+  const current = data.filter((r) => r.version !== null).reduce((n, r) => n + r.sites - r.behind, 0)
   const pct = (n: number) => (sites === 0 ? 0 : Math.round((n / sites) * 100))
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-medium">
           Versions in use{" "}
-          <HelpTip>Built from the version each site sends with its check (?version=). A site that never sent one counts as not reported.</HelpTip>
+          <HelpTip>
+            Built from the version each site sends with its check (?version=). A site is behind when its version is older than the latest release its licence is offered, from the track
+            of the licence&apos;s status. A site that never sent a version counts as not reported.
+          </HelpTip>
         </h3>
         <p className="text-sm text-muted-foreground tabular-nums">
           {latest ? (
             <>
-              {pct(current)}% on {latest} or newer, {outdated} site{outdated === 1 ? "" : "s"} behind
+              {pct(current)}% up to date, {outdated} site{outdated === 1 ? "" : "s"} behind
             </>
           ) : (
             "No stable release yet"
