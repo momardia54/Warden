@@ -1,6 +1,6 @@
 # Roadmap
 
-Warden is **pre-1.0** (current: 0.2.0 on `develop`, 0.1.0 released). The data model, the check response and the `/api/v1` endpoints can still change between 0.x versions; changes are listed in [CHANGELOG.md](CHANGELOG.md). Version 1.0.0 means the check response and API are stable and only change in backward compatible ways.
+Warden is **pre-1.0** (current: 0.3.0 in progress on `develop`, 0.2.0 released). The data model, the check response and the `/api/v1` endpoints can still change between 0.x versions; changes are listed in [CHANGELOG.md](CHANGELOG.md). Version 1.0.0 means the check response and API are stable and only change in backward compatible ways.
 
 This is a plan, not a promise. Order can change.
 
@@ -24,7 +24,7 @@ Warden uses [semantic versioning](https://semver.org/). The version is in `packa
 - Status **completed** (paid in full) and **files** in R2: per-file release rules by licence status, gated downloads, download log, upload by dashboard or API
 - API with keys and scopes, idempotent creation with `external_ref`, OpenAPI description
 
-## 0.2.0 (ready on `develop`, not released)
+### 0.2.0 (2026-10-10)
 
 - **Releases and updates**: versions, stable and beta channels, release notes, SHA-256 checksums, withdrawal, update offers in the check response, versions in use per site and per app
 - Dashboard rework: tabs, needs-attention queue with one-click extend, quick search, saved list views, CSV export

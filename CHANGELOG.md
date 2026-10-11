@@ -9,9 +9,11 @@ All notable changes, newest first. Warden follows [semantic versioning](https://
 - **0.5.0, completeness**: outgoing webhooks, grace period after expiry, public documentation site and a verified Deploy button
 - **1.0.0**: the check response and the API are frozen
 
-## 0.2.0 (unreleased)
+## 0.3.0 (unreleased)
 
 Not released yet: on the `develop` branch.
+
+## 0.2.0 (2026-10-10)
 
 ### Added: dashboard
 
