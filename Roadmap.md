@@ -36,7 +36,7 @@ Warden uses [semantic versioning](https://semver.org/). The version is in `packa
 
 ## Towards 1.0.0
 
-Version 1.0.0 freezes the check response and the API, so everything that would change them comes first. Order agreed on 2026-10-10.
+Version 1.0.0 freezes the check response and the API, so everything that would change them comes first. Order agreed on 2026-10-10; on 2026-10-11 product completeness moved before trust, so the security work comes last, on the finished product.
 
 ### 0.3.0: the contract
 
@@ -45,18 +45,18 @@ Version 1.0.0 freezes the check response and the API, so everything that would c
 - [x] **API review and freeze**: remove the deprecated aliases (`in_force`, `not_in_force`, `licenses_in_force`, `?view=in_force`), check every name against the valid/invalid vocabulary, consistent errors and pagination on every list, final review of the tracks and source endpoints
 - [x] **Upgrade notes** from 0.1 and 0.2, listing each breaking change and what to do
 
-### 0.4.0: trust
+### 0.4.0: product completeness
+
+- [ ] **Webhooks out**: call a URL when a licence changes status, expires, or a site has not checked for N days (replaces email)
+- [ ] **Grace period** per licence or app: report `valid: true` with a warning for N days after the expiry date
+- [ ] **Public documentation site** (the `Warden-docs` repository, deployed) and the Deploy button verified on a clean account
+
+### 0.5.0: trust
 
 - [ ] **End-to-end tests on real Cloudflare**: the GitHub App flow with a real app, private repositories with a token, phone-width layout, and CI that deploys a throwaway Worker and runs the checks against it
 - [ ] **Backups and export**: documented and tested D1 export and restore, and a data export from the dashboard
 - [ ] **Dashboard sign-in hardening**: two-factor authentication for the admin, or documented use of Cloudflare Access in front of the dashboard
 - [ ] **An independent security review** of the check, download, webhook and API code
-
-### 0.5.0: product completeness
-
-- [ ] **Webhooks out**: call a URL when a licence changes status, expires, or a site has not checked for N days (replaces email)
-- [ ] **Grace period** per licence or app: report `valid: true` with a warning for N days after the expiry date
-- [ ] **Public documentation site** (the `Warden-docs` repository, deployed) and the Deploy button verified on a clean account
 
 ### 1.0.0: stable
 
