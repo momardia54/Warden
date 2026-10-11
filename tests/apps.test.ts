@@ -144,7 +144,7 @@ test("app files are shared by the licences of the app", async () => {
   const outsider = await createLicense(env, { ...baseLicense, app_id: other.id })
   const standalone = await createLicense(env, baseLicense)
 
-  const up = async (name: string, version: string, statuses = "active,completed") => {
+  const up = async (name: string, version: string, statuses = "active") => {
     const res = await storeFile(env, { app }, { name, version, statuses, checkDomain: false, size: name.length, body: body(name) })
     assert.ok("file" in res)
     return (res as { file: { id: string } }).file

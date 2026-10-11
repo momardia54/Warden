@@ -3,7 +3,6 @@ import { Link, useFetcher, useRevalidator } from "react-router"
 import { Check, Copy, ExternalLink, GitBranch, MoreHorizontal, Pause, Play, RefreshCw, Settings2, Tag, Unplug, Webhook } from "lucide-react"
 import { ConfirmAction } from "#/components/confirm-action"
 import { FieldLabel, HelpTip } from "#/components/help-tip"
-import { StatusPicker } from "#/components/status-picker"
 import { Ago } from "#/components/time"
 import { Badge } from "#/components/ui/badge"
 import { Button } from "#/components/ui/button"
@@ -11,10 +10,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "#/components/ui/dropdown-menu"
 import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
-import { defaultReleaseStatuses } from "#/lib/files"
 import type { AppRepository } from "#/lib/github-app"
 import { IMPORT_STATE_LABELS, packageFileName, packageFolderError, PROVIDER_INFO, PROVIDERS, TRIGGER_INFO, TRIGGERS, type ImportState, type ProviderKey, type TriggerKey } from "#/lib/sources"
-import { describeStatusKeys, type StatusSet } from "#/lib/statuses"
 
 /** The connected repository, as the loader sends it (without the access token). */
 export type SourceView = {
@@ -25,6 +22,9 @@ export type SourceView = {
   connection: "app" | "token"
   trigger: TriggerKey
   package_folder: string
+  /** The track this repository publishes into, and the prefix its tags start with. */
+  track_id: string | null
+  tag_prefix: string
   status_keys: string[]
   check_domain: boolean
   has_token: boolean
@@ -54,27 +54,18 @@ const STATE_BADGE: Record<ImportState, "success" | "secondary" | "warning" | "de
   failed: "destructive",
 }
 
+const PREFIX_HELP =
+  "Tags of this track start with this text. Leave it empty for tags like v1.4.0. To publish two tracks from one repository, give one a prefix: final- takes final-v1.4.0, while v1.4.0 goes to the track without prefix."
+
 const FOLDER_HELP =
   "The top-level folder inside the published zip. Archives from GitHub are wrapped in a folder named after the commit; Warden renames it to this name, so every release installs into the same folder. For a WordPress theme or plugin, use its slug."
 
 /**
- * The repository connected to an app or a licence. New tags are downloaded, repacked and published as releases.
- * Posts its intents to the current route (save-source, delete-source, regenerate-source-secret, import-tag, retry-import).
+ * The repository connected to a release track: its tags are downloaded, repacked and published into the track.
+ * Posts its intents, with the track's id, to the current route (save-source, delete-source, regenerate-source-secret,
+ * import-tag, retry-import).
  */
-export function ReleaseSource({
-  source,
-  imports,
-  statuses,
-  ownerLabel,
-  githubApp,
-}: {
-  source: SourceView | null
-  imports: ImportView[]
-  statuses: StatusSet
-  ownerLabel: "app" | "licence"
-  /** Whether the install has a GitHub App (Integrations), which makes repositories selectable without a token. */
-  githubApp: boolean
-}) {
+export function TrackSource({ track, source, imports, githubApp }: { track: { id: string; name: string }; source: SourceView | null; imports: ImportView[]; githubApp: boolean }) {
   const [editing, setEditing] = useState(false)
   const [setup, setSetup] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -102,55 +93,39 @@ export function ReleaseSource({
 
   if (!source) {
     return (
-      <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div className="space-y-0.5">
-            <h3 className="text-sm font-medium">Publish releases from a repository</h3>
-            <p className="max-w-prose text-sm text-muted-foreground">
-              Connect a GitHub repository to this {ownerLabel}. Each new version tag is downloaded as a zip, packaged with a fixed folder name and published as a release.
-            </p>
-            {!githubApp && (
-              <p className="text-xs text-muted-foreground">
-                <Link to="/integrations" className="text-foreground underline underline-offset-2">
-                  Connect GitHub
-                </Link>{" "}
-                once to pick repositories from a list, private ones included, without tokens or webhooks.
-              </p>
-            )}
-          </div>
-        </div>
-        <Button variant="outline" onClick={() => setEditing(true)}>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+        <span className="flex items-center gap-2">
+          <GitBranch className="size-4" /> No repository: releases are uploaded by hand.
+        </span>
+        <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
           <GitBranch /> Connect repository
         </Button>
-        <SourceDialog open={editing} onOpenChange={setEditing} source={null} statuses={statuses} githubApp={githubApp} />
-      </section>
+        <SourceDialog open={editing} onOpenChange={setEditing} trackId={track.id} source={null} githubApp={githubApp} />
+      </div>
     )
   }
 
   const provider = PROVIDER_INFO[source.provider]
   const repoUrl = `https://${provider.host}/${source.repository}`
-  const toggle = () => action.submit({ intent: "save-source", enabled: String(!source.enabled) }, { method: "post" })
+  const toggle = () => action.submit({ intent: "save-source", trackId: track.id, enabled: String(!source.enabled) }, { method: "post" })
+  const example = `${source.tag_prefix}v1.4.0`
 
   return (
-    <section className="space-y-3 rounded-lg border bg-card p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <GitBranch className="size-4 text-muted-foreground" />
-            <a href={repoUrl} target="_blank" rel="noreferrer" className="font-mono text-sm font-medium break-all underline-offset-2 hover:underline">
+            <a href={repoUrl} target="_blank" rel="noreferrer" className="font-mono font-medium break-all underline-offset-2 hover:underline">
               {source.repository}
             </a>
             <Badge variant="outline">{source.connection === "app" ? `${provider.label} App` : provider.label}</Badge>
             {!source.enabled && <Badge variant="warning">Paused</Badge>}
             {source.has_token && <Badge variant="secondary">Access token saved</Badge>}
           </div>
-          <p className="text-sm text-muted-foreground">
-            {TRIGGER_INFO[source.trigger].label}: publishes <span className="font-mono text-foreground">{packageFileName(source.package_folder, "<version>")}</span>, available when status is{" "}
-            <span className="text-foreground">{describeStatusKeys(source.status_keys, statuses) || "no status"}</span>
-            {source.check_domain ? ", for allowed sites" : ", without a domain check"}.
-          </p>
           <p className="text-xs text-muted-foreground">
+            Tags like <span className="font-mono text-foreground">{example}</span> publish <span className="font-mono text-foreground">{packageFileName(source.package_folder, "1.4.0")}</span>
+            {". "}
             {source.last_delivery_at ? (
               <>
                 Last webhook delivery <Ago ts={source.last_delivery_at} />.
@@ -158,17 +133,17 @@ export function ReleaseSource({
             ) : source.connection === "app" ? (
               "Push a tag to publish a release."
             ) : (
-              <span className="text-amber-700 dark:text-amber-400">No webhook delivery received yet. Add the webhook in GitHub to publish new tags automatically.</span>
+              <span className="text-amber-700 dark:text-amber-400">No webhook delivery received yet: add the webhook in GitHub.</span>
             )}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setPublishing(true)} disabled={!source.enabled}>
+          <Button variant="outline" size="sm" onClick={() => setPublishing(true)} disabled={!source.enabled}>
             <Tag /> Publish a tag
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" aria-label="Repository actions">
+              <Button variant="outline" size="icon" className="size-8" aria-label={`Repository actions for ${track.name}`}>
                 <MoreHorizontal />
               </Button>
             </DropdownMenuTrigger>
@@ -179,7 +154,7 @@ export function ReleaseSource({
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => setEditing(true)}>
-                <Settings2 /> Edit settings
+                <Settings2 /> Repository settings
               </DropdownMenuItem>
               <DropdownMenuItem onClick={toggle}>
                 {source.enabled ? <Pause /> : <Play />} {source.enabled ? "Pause publishing" : "Resume publishing"}
@@ -201,72 +176,50 @@ export function ReleaseSource({
       {action.data?.error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{action.data.error}</div>}
 
       {imports.length > 0 && (
-        <div className="space-y-1.5">
-          <h4 className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            Recent tags <HelpTip>Each tag is published once. A failed or skipped tag can be retried; a redelivered webhook does not publish a tag twice.</HelpTip>
-          </h4>
-          <ul className="divide-y rounded-md border">
-            {imports.map((row) => (
-              <li key={row.id} className="grid gap-x-3 gap-y-1 px-3 py-2 text-sm sm:grid-cols-[minmax(6rem,auto)_minmax(0,1fr)_auto] sm:items-center">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono font-medium">{row.ref}</span>
-                  <Badge variant={STATE_BADGE[row.state]}>{IMPORT_STATE_LABELS[row.state]}</Badge>
-                </div>
-                <p className="min-w-0 text-xs text-muted-foreground">
-                  {row.detail || (row.state === "pending" ? "Downloading and publishing…" : "")} {row.commit_sha && <span className="font-mono">({row.commit_sha.slice(0, 7)})</span>}
-                </p>
-                <div className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground sm:justify-end">
-                  <Ago ts={row.finished_at ?? row.started_at} />
-                  {(row.state === "failed" || row.state === "skipped") && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7"
-                      disabled={action.state !== "idle"}
-                      onClick={() => action.submit({ intent: "retry-import", importId: row.id }, { method: "post" })}
-                    >
-                      <RefreshCw /> Retry
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ul className="divide-y rounded-md border">
+          {imports.map((row) => (
+            <li key={row.id} className="grid gap-x-3 gap-y-1 px-3 py-2 text-sm sm:grid-cols-[minmax(6rem,auto)_minmax(0,1fr)_auto] sm:items-center">
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-medium">{row.ref}</span>
+                <Badge variant={STATE_BADGE[row.state]}>{IMPORT_STATE_LABELS[row.state]}</Badge>
+              </div>
+              <p className="min-w-0 text-xs text-muted-foreground">
+                {row.detail || (row.state === "pending" ? "Downloading and publishing…" : "")} {row.commit_sha && <span className="font-mono">({row.commit_sha.slice(0, 7)})</span>}
+              </p>
+              <div className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground sm:justify-end">
+                <Ago ts={row.finished_at ?? row.started_at} />
+                {(row.state === "failed" || row.state === "skipped") && (
+                  <Button variant="ghost" size="sm" className="h-7" disabled={action.state !== "idle"} onClick={() => action.submit({ intent: "retry-import", trackId: track.id, importId: row.id }, { method: "post" })}>
+                    <RefreshCw /> Retry
+                  </Button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
 
-      <SourceDialog open={editing} onOpenChange={setEditing} source={source} statuses={statuses} githubApp={githubApp} />
-      <WebhookDialog open={setup} onOpenChange={setSetup} source={source} />
-      <PublishTagDialog open={publishing} onOpenChange={setPublishing} />
+      <SourceDialog open={editing} onOpenChange={setEditing} trackId={track.id} source={source} githubApp={githubApp} />
+      <WebhookDialog open={setup} onOpenChange={setSetup} trackId={track.id} source={source} />
+      <PublishTagDialog open={publishing} onOpenChange={setPublishing} trackId={track.id} prefix={source.tag_prefix} />
       <ConfirmAction
         intent="delete-source"
+        fields={{ trackId: track.id }}
         open={disconnecting}
         onOpenChange={setDisconnecting}
-        title="Disconnect this repository?"
+        title={`Disconnect ${source.repository} from "${track.name}"?`}
         description={
           source.connection === "app"
-            ? "New tags are no longer published. Releases already published stay available."
-            : "New tags are no longer published. Releases already published stay available. Remove the webhook in GitHub as well."
+            ? "New tags are no longer published into this track. Releases already published stay available."
+            : "New tags are no longer published into this track. Releases already published stay available. Remove the webhook in GitHub as well."
         }
         confirm="Disconnect"
       />
-    </section>
+    </div>
   )
 }
 
-function SourceDialog({
-  open,
-  onOpenChange,
-  source,
-  statuses: statusSet,
-  githubApp,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  source: SourceView | null
-  statuses: StatusSet
-  githubApp: boolean
-}) {
+function SourceDialog({ open, onOpenChange, trackId, source, githubApp }: { open: boolean; onOpenChange: (open: boolean) => void; trackId: string; source: SourceView | null; githubApp: boolean }) {
   const save = useFetcher<ActionResult>()
   const repos = useFetcher<{ repositories?: AppRepository[]; error?: string }>()
   const [connection, setConnection] = useState<"app" | "token">("token")
@@ -278,8 +231,7 @@ function SourceDialog({
   const [trigger, setTrigger] = useState<TriggerKey>("tag")
   const [folder, setFolder] = useState("")
   const [folderTouched, setFolderTouched] = useState(false)
-  const [statuses, setStatuses] = useState<string[]>([])
-  const [checkDomain, setCheckDomain] = useState(true)
+  const [tagPrefix, setTagPrefix] = useState("")
   const [submitted, setSubmitted] = useState(false)
 
   useEffect(() => {
@@ -293,8 +245,7 @@ function SourceDialog({
     setTrigger(source?.trigger ?? "tag")
     setFolder(source?.package_folder ?? "")
     setFolderTouched(Boolean(source))
-    setStatuses(source?.status_keys ?? defaultReleaseStatuses(statusSet))
-    setCheckDomain(source?.check_domain ?? true)
+    setTagPrefix(source?.tag_prefix ?? "")
     setSubmitted(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -332,7 +283,18 @@ function SourceDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl" onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>{source ? "Repository settings" : "Connect a repository"}</DialogTitle>
-          <DialogDescription>Warden downloads the repository as a zip when the trigger fires and publishes it as a release. Nothing is built: the repository is published as it is.</DialogDescription>
+          <DialogDescription>
+            Warden downloads the repository as a zip when a tag is pushed and publishes it as a release of this track. Nothing is built: the repository is published as it is.
+            {!githubApp && (
+              <>
+                {" "}
+                <Link to="/integrations" className="text-foreground underline underline-offset-2">
+                  Connect GitHub
+                </Link>{" "}
+                once to pick repositories from a list instead of using an access token.
+              </>
+            )}
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-[10rem_1fr]">
@@ -428,7 +390,7 @@ function SourceDialog({
               )}
             </div>
           )}
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-1.5">
               <FieldLabel htmlFor="source-trigger" help={TRIGGER_INFO[trigger].help}>
                 Trigger
@@ -440,6 +402,12 @@ function SourceDialog({
                   </option>
                 ))}
               </NativeSelect>
+            </div>
+            <div className="space-y-1.5">
+              <FieldLabel htmlFor="source-prefix" help={PREFIX_HELP}>
+                Tag prefix
+              </FieldLabel>
+              <Input id="source-prefix" value={tagPrefix} onChange={(e) => setTagPrefix(e.target.value)} placeholder="None" className="font-mono" disabled={busy} />
             </div>
             <div className="space-y-1.5">
               <FieldLabel htmlFor="source-folder" help={FOLDER_HELP}>
@@ -464,20 +432,11 @@ function SourceDialog({
           ) : (
             shownFolder && (
               <p className="-mt-2 text-xs text-muted-foreground">
-                Tag v1.4.0 publishes <span className="font-mono">{packageFileName(shownFolder, "1.4.0")}</span>, containing <span className="font-mono">{shownFolder}/</span>.
+                Tag <span className="font-mono">{tagPrefix.trim()}v1.4.0</span> publishes <span className="font-mono">{packageFileName(shownFolder, "1.4.0")}</span>, containing{" "}
+                <span className="font-mono">{shownFolder}/</span>, into this track.
               </p>
             )
           )}
-          <div className="space-y-1.5">
-            <FieldLabel help="Published releases can be downloaded only while the licence has one of these statuses. Each release can be changed afterwards.">
-              Available when licence status is
-            </FieldLabel>
-            <StatusPicker statuses={statusSet} value={statuses} onChange={setStatuses} disabled={busy} />
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" className="size-4 accent-primary" checked={checkDomain} onChange={(e) => setCheckDomain(e.target.checked)} disabled={busy} />
-            Only for allowed sites (domain check)
-          </label>
           {submitted && save.state === "idle" && save.data?.error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{save.data.error}</div>}
         </div>
         <DialogFooter>
@@ -485,12 +444,13 @@ function SourceDialog({
             Cancel
           </Button>
           <Button
-            disabled={busy || !repository.trim() || !shownFolder || Boolean(folderError) || statuses.length === 0}
+            disabled={busy || !repository.trim() || !shownFolder || Boolean(folderError)}
             onClick={() => {
               setSubmitted(true)
               save.submit(
                 {
                   intent: "save-source",
+                  trackId,
                   connection,
                   provider,
                   repository: repository.trim(),
@@ -498,8 +458,7 @@ function SourceDialog({
                   remove_token: String(removeToken),
                   trigger,
                   package_folder: shownFolder.trim(),
-                  statuses: statuses.join(","),
-                  check_domain: String(checkDomain),
+                  tag_prefix: tagPrefix.trim(),
                 },
                 { method: "post" },
               )
@@ -541,7 +500,7 @@ function CopyField({ label, value, secret = false, help }: { label: string; valu
   )
 }
 
-function WebhookDialog({ open, onOpenChange, source }: { open: boolean; onOpenChange: (open: boolean) => void; source: SourceView }) {
+function WebhookDialog({ open, onOpenChange, trackId, source }: { open: boolean; onOpenChange: (open: boolean) => void; trackId: string; source: SourceView }) {
   const regenerate = useFetcher<ActionResult>()
   const settingsUrl = `https://${PROVIDER_INFO[source.provider].host}/${source.repository}/settings/hooks/new`
   return (
@@ -579,7 +538,7 @@ function WebhookDialog({ open, onOpenChange, source }: { open: boolean; onOpenCh
           <Button
             variant="ghost"
             disabled={regenerate.state !== "idle"}
-            onClick={() => regenerate.submit({ intent: "regenerate-source-secret" }, { method: "post" })}
+            onClick={() => regenerate.submit({ intent: "regenerate-source-secret", trackId }, { method: "post" })}
             title="Replaces the secret. Update it in GitHub afterwards."
           >
             <RefreshCw /> {regenerate.state !== "idle" ? "Generating…" : "Generate a new secret"}
@@ -591,13 +550,13 @@ function WebhookDialog({ open, onOpenChange, source }: { open: boolean; onOpenCh
   )
 }
 
-function PublishTagDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+function PublishTagDialog({ open, onOpenChange, trackId, prefix }: { open: boolean; onOpenChange: (open: boolean) => void; trackId: string; prefix: string }) {
   const publish = useFetcher<ActionResult>()
   const [tag, setTag] = useState("")
   const [submitted, setSubmitted] = useState(false)
   useEffect(() => {
     if (!open) return
-    setTag("")
+    setTag(prefix)
     setSubmitted(false)
   }, [open])
   useEffect(() => {
@@ -617,11 +576,11 @@ function PublishTagDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             e.preventDefault()
             if (!tag.trim()) return
             setSubmitted(true)
-            publish.submit({ intent: "import-tag", tag: tag.trim() }, { method: "post" })
+            publish.submit({ intent: "import-tag", trackId, tag: tag.trim() }, { method: "post" })
           }}
         >
           <FieldLabel htmlFor="publish-tag">Tag</FieldLabel>
-          <Input id="publish-tag" value={tag} onChange={(e) => setTag(e.target.value)} placeholder="v1.4.0" className="font-mono" autoFocus disabled={busy} />
+          <Input id="publish-tag" value={tag} onChange={(e) => setTag(e.target.value)} placeholder={`${prefix}v1.4.0`} className="font-mono" autoFocus disabled={busy} />
           {submitted && publish.state === "idle" && publish.data?.error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{publish.data.error}</div>}
           <DialogFooter className="pt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>

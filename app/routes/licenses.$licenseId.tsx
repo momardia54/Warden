@@ -8,7 +8,6 @@ import { IpAddress } from "#/components/ip-address"
 import { ConfirmAction } from "#/components/confirm-action"
 import { Fact, FactStrip } from "#/components/fact-strip"
 import { FilesSection } from "#/components/files-section"
-import { ReleaseSource } from "#/components/release-source"
 import { HelpTip } from "#/components/help-tip"
 import { PageHeader } from "#/components/page-header"
 import { PageTitle } from "#/components/page-title"
@@ -32,7 +31,9 @@ import { dailyTraffic } from "~/server/analytics.server"
 import { blockedAmong } from "~/server/ip-blocks.server"
 import { requireAuth } from "~/server/auth.server"
 import { applyFileForm, listFiles, storageConfigured } from "~/server/files.server"
-import { applySourceForm, getSource, listImports, publicSource } from "~/server/sources.server"
+import { applySourceForm, trackPanels } from "~/server/sources.server"
+import { applyTrackForm, listAppTracks } from "~/server/tracks.server"
+import { trackForStatus, trackView } from "#/lib/tracks"
 import { getGitHubApp } from "~/server/github-app.server"
 import { formatSites } from "#/components/licenses-table"
 import { applyStatusForm, getStatusSetForLicense, hasCustomSet, statusCounts } from "~/server/statuses.server"
@@ -46,7 +47,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   const license = await getLicense(env, params.licenseId)
   if (!license) throw new Response("Licence not found", { status: 404 })
   const origin = new URL(request.url).origin
-  const [activity, files, sharedFiles, sites, set, customStatuses, statusUsage, traffic] = await Promise.all([
+  const [activity, files, appFiles, sites, set, customStatuses, statusUsage, traffic, tracks, appTracks] = await Promise.all([
     recentActivity(env, license.id, 100),
     listFiles(env, { license }),
     license.app_id ? listFiles(env, { app: { id: license.app_id } as App }) : Promise.resolve([]),
@@ -55,13 +56,20 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     hasCustomSet(env, { license: license.id }),
     statusCounts(env, { license: license.id }),
     dailyTraffic(env, { license: license.id }, 30, Date.now(), "checks"),
+    trackPanels(env, { license }, origin),
+    license.app_id ? listAppTracks(env, license.app_id) : Promise.resolve([]),
   ])
+  // For the statuses the licence's own tracks serve, the app's releases do not apply to it (as in listFilesForLicense).
+  const ownKeys = new Set(tracks.flatMap((p) => p.track.statuses))
+  const sharedFiles = appFiles.map((f) => (f.track_id && ownKeys.size > 0 ? { ...f, statuses: f.statuses.split(",").filter((k) => k && !ownKeys.has(k)).join(",") } : f))
   // The release a site of this licence is offered now (the domain check aside): newest stable release it can download.
   const now = Date.now()
   const downloadable = [...files, ...sharedFiles].filter((f) => f.withdrawn_at === null && evaluateFileAccess(license, { statuses: splitStatusKeys(f.statuses, set), check_domain: false }, null, now, true, set).allowed)
   const latest = latestRelease(downloadable.sort((a, b) => b.uploaded_at - a.uploaded_at))
-  const source = await getSource(env, { license })
-  const [sourceView, imports] = source ? await Promise.all([publicSource(env, source, origin), listImports(env, source.id, 10)]) : [null, []]
+  // Which track serves the licence's current status: its own track for that status, otherwise its app's.
+  const currentStatus = effectiveStatusKey(license, set, now)
+  const appTrackViews = appTracks.map(trackView)
+  const receivingTrack = trackForStatus(currentStatus, tracks.map((p) => p.track).map((t) => ({ ...t, statuses: t.statuses.join(",") })), appTrackViews.map((t) => ({ ...t, statuses: t.statuses.join(",") })))
   const blockedIps = await blockedAmong(env, [...activity.map((a) => a.ip), ...sites.map((s) => s.last_ip)])
   return {
     license,
@@ -76,8 +84,9 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     statusUsage,
     latestVersion: latest?.version ?? null,
     filesConfigured: storageConfigured(env),
-    source: sourceView,
-    imports,
+    tracks,
+    appTracks: appTrackViews,
+    receiving: { trackId: receivingTrack?.track.id ?? null, status: currentStatus },
     githubApp: (await getGitHubApp(env)) !== null,
     origin,
     checkUrl: `${origin}/check/${license.license_key}`,
@@ -99,6 +108,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if ((intent.endsWith("-status") && intent !== "status") || intent.endsWith("-statuses")) return applyStatusForm(env, { license: license.id }, form)
   const fileResult = await applyFileForm(env, { license }, form)
   if (fileResult) return fileResult
+  const trackResult = await applyTrackForm(env, { license }, form)
+  if (trackResult) return trackResult
   const sourceResult = await applySourceForm(env, context.cloudflare.ctx, { license }, form)
   if (sourceResult) return sourceResult
   if (intent === "status") {
@@ -125,7 +136,7 @@ type LoaderData = Route.ComponentProps["loaderData"]
 const TABS = ["overview", "sites", "releases", "activity", "statuses"] as const
 
 export default function LicensePage({ loaderData }: Route.ComponentProps) {
-  const { license, activity, blockedIps, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, source, imports, githubApp, origin, checkUrl } = loaderData
+  const { license, activity, blockedIps, traffic, files, sharedFiles, sites, customStatuses, statusUsage, latestVersion, filesConfigured, tracks, appTracks, receiving, githubApp, origin, checkUrl } = loaderData
   const [params] = useSearchParams()
   const statuses = useStatusSetForLicense(license)
   const [tab, setTab] = useRouteTab([...TABS])
@@ -354,21 +365,23 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
 
           {tab === "releases" && (
             <div className="space-y-8">
-              {filesConfigured && <ReleaseSource source={source} imports={imports} statuses={statuses} ownerLabel="licence" githubApp={githubApp} />}
               <FilesSection
                 ownerLabel="licence"
                 description={
                   license.app_id
-                    ? "Files of this licence and of its app. Each one can be downloaded while the licence has one of its release statuses. Files of the app are managed on the app page."
-                    : "Files of this licence. Each one can be downloaded while the licence has one of its release statuses. A file with a version is a release, offered to the site as an update."
+                    ? "Releases and files of this licence and of its app. The licence is offered the latest release of the track that serves its current status. A track of the licence replaces the app's track for the statuses it serves, for example a custom build for this client."
+                    : "Releases and files of this licence. Releases are grouped in tracks: each track serves a set of statuses, and the licence is offered the latest release of its status's track."
                 }
                 uploadPath={`/licenses/${license.id}/files`}
                 downloadUrl={(fileId) => `${origin}/download/${license.license_key}/${fileId}`}
                 license={license}
                 statuses={statuses}
                 files={files}
-                shared={license.app_id && sharedFiles.length > 0 ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles, statuses } : null}
+                shared={license.app_id ? { appName: license.app_name ?? "App", appHref: `/apps/${license.app_id}`, files: sharedFiles, statuses, tracks: appTracks } : null}
                 configured={filesConfigured}
+                tracks={tracks}
+                receiving={receiving}
+                githubApp={githubApp}
               />
             </div>
           )}

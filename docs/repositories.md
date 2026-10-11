@@ -1,6 +1,8 @@
 # Publishing releases from a repository
 
-An app or a licence can be connected to a GitHub repository. Connect GitHub once under **Integrations**, then pick a repository from a list. When you push a version tag, Warden downloads the repository at that tag as a zip, renames its top-level folder and publishes it as a release, exactly as if you had uploaded the file yourself. Sites that check with their version are then offered the update.
+Each release track ([releases.md](releases.md#tracks)) can be connected to a GitHub repository. Connect GitHub once under **Integrations**, then pick a repository from a list. When you push a version tag, Warden downloads the repository at that tag as a zip, renames its top-level folder and publishes it into the track, exactly as if you had uploaded the file yourself. Sites whose licence status that track serves are then offered the update.
+
+Several tracks can each have a repository (for example `harbor-theme` for Updates and `harbor-theme-final` for the Final build), or share one repository with different **tag prefixes** (`v1.4.0` for Updates, `final-v1.4.0` for the Final build).
 
 ![Connecting GitHub on the Integrations page](screenshots/integrations.jpg)
 
@@ -20,15 +22,16 @@ The app's private key and webhook secret are stored in your D1 database. Warden 
 
 ## Connecting a repository
 
-Open the app (or the licence), *Releases* tab, *Connect repository*.
+Open the app (or the licence), *Releases* tab, and *Connect repository* in the track that should receive the releases.
 
 | Field | Meaning |
 |---|---|
 | Repository | Picked from the repositories the GitHub App can access, private ones included. A repository missing from the list is added to the installation on GitHub. |
 | Trigger | *New tag*: pushing a tag publishes a release (see below). Other triggers can be added later. |
+| Tag prefix | Optional. Tags of this track start with it: `final-` takes `final-v1.4.0`. Needed when two tracks use the same repository; each repository and prefix can feed one track only. |
 | Package folder | The top-level folder inside the published zip, for example `harbor-theme`. Defaults to the repository name. |
-| Available when licence status is | The release rule of each published release, as for an upload. Each release can be changed afterwards. |
-| Only for allowed sites | The domain check of each published release, as for an upload. |
+
+Which licences receive the published releases, and the domain check, are the track's settings, not the repository's.
 
 Warden checks that it can read the repository before saving. A repository is matched by its id, so renaming it on GitHub does not break the connection; Warden shows the new name after the next tag.
 
@@ -54,10 +57,13 @@ GitHub sends a test delivery when the webhook is created; the section then shows
 
 | Tag | Result |
 |---|---|
-| `v1.4.0` or `1.4.0` | Version `1.4.0` on the stable channel, file `<package folder>-1.4.0.zip` |
+| `v1.4.0` or `1.4.0` | Version `1.4.0` on the stable channel, file `<package folder>-1.4.0.zip`, in the track without prefix |
+| `final-v1.4.0` | Version `1.4.0` in the track whose tag prefix is `final-` |
 | `v2.0.0-beta.1` | Version `2.0.0-beta.1` on the beta channel |
-| `nightly`, or any tag that is not a version | Skipped |
-| A version that is already published (and not withdrawn) | Skipped; withdraw or delete that release, then retry |
+| `nightly`, or any tag that is not a version after the prefix | Skipped |
+| A version that is already published in the same track (and not withdrawn) | Skipped; withdraw or delete that release, then retry. Other tracks can publish the same version |
+
+With several tracks on one repository, a tag goes to the track whose prefix it matches most specifically: `final-v1.4.0` goes to `final-`, not to the track without prefix.
 | A branch push | Nothing |
 
 The internal notes of each published release record the repository, the tag and the commit.
@@ -88,17 +94,17 @@ The section lists the latest tags with their state: *In progress*, *Published*, 
 
 ## API
 
+A track's repository is managed under the track: `/apps/{app}/tracks/{track}/source` (and `/licenses/{id}/tracks/{track}/source`), where `{track}` is the track's id or name.
+
 | Method and path | Scope | Description |
 |---|---|---|
-| `GET /apps/{app}/source` | read | The connected repository. `webhook_secret` is returned to keys with `manage` or `full` only; the access token is never returned (`has_token`) |
-| `PUT /apps/{app}/source` | manage | Connect or edit: `connection` (`app` or `token`; a new source uses `app` when the GitHub App is connected and no token is sent), `provider`, `repository`, `trigger`, `package_folder`, `statuses`, `check_domain`, `token` (`""` removes it), `enabled`. Fields left out keep their value |
-| `DELETE /apps/{app}/source` | manage | Disconnect |
-| `POST /apps/{app}/source/regenerate-secret` | manage | Replace the webhook secret |
-| `GET /apps/{app}/source/imports` | read | Latest tags and their state |
-| `POST /apps/{app}/source/imports` | manage | Publish a tag: `{ "tag": "v1.4.0" }` |
-| `POST /apps/{app}/source/imports/{id}/retry` | manage | Retry a failed or skipped tag |
-
-The same endpoints exist under `/licenses/{id}/source`.
+| `GET .../tracks/{track}/source` | read | The connected repository. `webhook_secret` is returned to keys with `manage` or `full` only; the access token is never returned (`has_token`) |
+| `PUT .../tracks/{track}/source` | manage | Connect or edit: `connection` (`app` or `token`; a new source uses `app` when the GitHub App is connected and no token is sent), `provider`, `repository`, `trigger`, `tag_prefix`, `package_folder`, `token` (`""` removes it), `enabled`. Fields left out keep their value |
+| `DELETE .../tracks/{track}/source` | manage | Disconnect |
+| `POST .../tracks/{track}/source/regenerate-secret` | manage | Replace the webhook secret |
+| `GET .../tracks/{track}/source/imports` | read | Latest tags and their state |
+| `POST .../tracks/{track}/source/imports` | manage | Publish a tag: `{ "tag": "v1.4.0" }` |
+| `POST .../tracks/{track}/source/imports/{id}/retry` | manage | Retry a failed or skipped tag |
 
 | Method and path | Scope | Description |
 |---|---|---|
@@ -108,7 +114,11 @@ The same endpoints exist under `/licenses/{id}/source`.
 The GitHub App itself is created in the dashboard, because GitHub's confirmation happens in the browser.
 
 ```bash
-curl -X PUT https://<worker>/api/v1/apps/harbor-theme/source \
+# a track for the final build, fed by the same repository with tags like final-v1.0.0
+curl -X POST https://<worker>/api/v1/apps/harbor-theme/tracks \
   -H "Authorization: Bearer $WARDEN_KEY" -H "Content-Type: application/json" \
-  -d '{"repository":"harbor-studio/harbor-theme","package_folder":"harbor-theme"}'
+  -d '{"name":"Final build","statuses":["completed"]}'
+curl -X PUT "https://<worker>/api/v1/apps/harbor-theme/tracks/Final%20build/source" \
+  -H "Authorization: Bearer $WARDEN_KEY" -H "Content-Type: application/json" \
+  -d '{"repository":"harbor-studio/harbor-theme","tag_prefix":"final-","package_folder":"harbor-theme"}'
 ```

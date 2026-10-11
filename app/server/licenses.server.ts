@@ -293,6 +293,8 @@ export async function deleteLicense(env: Env, id: string): Promise<void> {
     env.DB.prepare("DELETE FROM files WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM source_imports WHERE source_id IN (SELECT id FROM release_sources WHERE license_id = ?)").bind(id),
     env.DB.prepare("DELETE FROM release_sources WHERE license_id = ?").bind(id),
+    env.DB.prepare("UPDATE files SET track_id = NULL WHERE track_id IN (SELECT id FROM release_tracks WHERE license_id = ?)").bind(id),
+    env.DB.prepare("DELETE FROM release_tracks WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM activations WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM statuses WHERE license_id = ?").bind(id),
     env.DB.prepare("DELETE FROM activity WHERE license_id = ?").bind(id),

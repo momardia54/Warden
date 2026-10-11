@@ -6,7 +6,6 @@ import { ColumnChart } from "#/components/column-chart"
 import { ConfirmAction } from "#/components/confirm-action"
 import { Fact, FactStrip } from "#/components/fact-strip"
 import { FilesSection } from "#/components/files-section"
-import { ReleaseSource } from "#/components/release-source"
 import { LicensesTable } from "#/components/licenses-table"
 import { PageHeader } from "#/components/page-header"
 import { PageTitle } from "#/components/page-title"
@@ -21,7 +20,8 @@ import { dailyTraffic } from "~/server/analytics.server"
 import { requireAuth } from "~/server/auth.server"
 import { deleteApp, getApp, getAppSummary, versionsInUse } from "~/server/apps.server"
 import { applyFileForm, listFiles, storageConfigured } from "~/server/files.server"
-import { applySourceForm, getSource, listImports, publicSource } from "~/server/sources.server"
+import { applySourceForm, trackPanels } from "~/server/sources.server"
+import { applyTrackForm } from "~/server/tracks.server"
 import { getGitHubApp } from "~/server/github-app.server"
 import { applyStatusForm, getStatusSetForApp, hasCustomSet, statusCounts } from "~/server/statuses.server"
 import { queryLicenses } from "~/server/licenses.server"
@@ -42,9 +42,8 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     versionsInUse(env, app.id),
     dailyTraffic(env, { app: app.id }, 30, Date.now(), "checks"),
   ])
-  const source = await getSource(env, { app })
-  const [sourceView, imports] = source ? await Promise.all([publicSource(env, source, new URL(request.url).origin), listImports(env, source.id, 10)]) : [null, []]
-  return { app, licenses, files, statuses, custom, usage, versions, traffic: traffic.series, filesConfigured: storageConfigured(env), source: sourceView, imports, githubApp: (await getGitHubApp(env)) !== null }
+  const tracks = await trackPanels(env, { app }, new URL(request.url).origin)
+  return { app, licenses, files, statuses, custom, usage, versions, traffic: traffic.series, filesConfigured: storageConfigured(env), tracks, githubApp: (await getGitHubApp(env)) !== null }
 }
 
 export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {
@@ -62,6 +61,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if (intent.endsWith("-status") || intent.endsWith("-statuses")) return applyStatusForm(env, { app: app.id }, form)
   const fileResult = await applyFileForm(env, { app }, form)
   if (fileResult) return fileResult
+  const trackResult = await applyTrackForm(env, { app }, form)
+  if (trackResult) return trackResult
   const sourceResult = await applySourceForm(env, context.cloudflare.ctx, { app }, form)
   if (sourceResult) return sourceResult
   if (intent === "delete") {
@@ -76,7 +77,7 @@ const TABS = ["licences", "releases", "statuses"]
 
 export default function AppPage({ loaderData, actionData }: Route.ComponentProps) {
   const actionError = actionData && "error" in actionData ? actionData.error : null
-  const { app, licenses, files, statuses, custom, usage, versions, traffic, filesConfigured, source, imports, githubApp } = loaderData
+  const { app, licenses, files, statuses, custom, usage, versions, traffic, filesConfigured, tracks, githubApp } = loaderData
   const checks = traffic.reduce((n, d) => n + d.valid + d.invalid, 0)
   const [tab, setTab] = useRouteTab(TABS)
   const [deleting, setDeleting] = useState(false)
@@ -201,14 +202,15 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
           {tab === "releases" && (
             <div className="space-y-8">
               {versions.sites > 0 && <VersionAdoption versions={versions} />}
-              {filesConfigured && <ReleaseSource source={source} imports={imports} statuses={statuses} ownerLabel="app" githubApp={githubApp} />}
               <FilesSection
                 ownerLabel="app"
-                description="Builds and files shared by every licence of this app. Each file is downloadable while a licence has one of its release statuses. A file with a version is a release, offered to sites as an update."
+                description="Releases and files shared by every licence of this app. Releases are grouped in tracks: each track serves a set of licence statuses, and a licence is offered the latest release of its status's track."
                 uploadPath={`/apps/${app.id}/files`}
                 files={files}
                 statuses={statuses}
                 configured={filesConfigured}
+                tracks={tracks}
+                githubApp={githubApp}
               />
             </div>
           )}

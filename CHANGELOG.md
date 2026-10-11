@@ -47,6 +47,17 @@ Not released yet: on the `develop` branch.
 - Migrations 0009 (IP addresses, blocklist, rejected request counts) and 0010 (settings, rule-based blocks, rule events)
 - docs/protection.md
 
+### Added: release tracks
+
+- A **track** is what a set of licence statuses receives, for example Updates for Active licences, a Final build for Completed ones and a Maintenance version for Suspended ones. Each status belongs to one track of an app or licence at most, so a licence is offered the latest release of exactly one track: the one that serves its current status, even when another track has a higher version
+- Releases belong to a track, which sets their statuses and domain check; changing a track applies to all its releases. Versions are unique per track, so two tracks can publish the same number. Files without a version (attachments) keep their own release rule
+- A licence of an app can have tracks of its own, which replace the app's tracks for the statuses they serve (a custom build for one client)
+- Each track can be fed by its own repository, or several tracks by one repository with **tag prefixes** (`v1.4.0` and `final-v1.4.0`); a tag goes to the track whose prefix it matches most specifically
+- Dashboard: the *Releases* tab groups releases by track, with *New track*, edit and delete (moving the releases), the repository of each track, and on a licence page the track it receives now. Uploads and edits choose a track instead of statuses
+- "Outdated sites" compares each site with the latest release its own licence is offered
+- API: `GET|POST .../tracks`, `GET|PATCH|DELETE .../tracks/{track}` under apps and licences; uploads take `track`; files return `track`; `/apps/{app}/versions` data gains `behind`
+- Migration 0013: existing releases are put into tracks (one per distinct release rule, so nobody gains or loses access) and connected repositories are attached to a track
+
 ### Added: publishing from a repository
 
 - **Integrations** page: *Create GitHub App* creates a GitHub App for the install through GitHub's app manifest flow (read access to contents and metadata, push events). Install it on accounts or organisations, then pick repositories from a list in the *Connect repository* dialog, private ones included, with no token or webhook to copy. Access tokens are requested per hour with the app's key; one webhook (`/hooks/github-app`) serves every repository, matched by repository id so renames are followed
@@ -55,7 +66,7 @@ Not released yet: on the `develop` branch.
 - Without the GitHub App, a repository can still be connected with an optional read-only access token and a webhook of its own, verified with a per-source secret
 - Recent tags with their state (in progress, published, skipped, failed) and the reason, **Retry**, **Publish a tag** for existing tags, pause and disconnect. A redelivered webhook publishes a tag once
 - Providers and triggers are a registry: further providers (for example GitLab) and triggers (for example a version header in a pushed file) can be added without a schema change
-- API: `GET|PUT|DELETE /apps/{app}/source`, `POST .../source/regenerate-secret`, `GET|POST .../source/imports`, `POST .../source/imports/{id}/retry`, and the same under `/licenses/{id}/source`. Webhook endpoint `POST /hooks/github/{source id}`
+- API: `GET|PUT|DELETE .../tracks/{track}/source`, `POST .../source/regenerate-secret`, `GET|POST .../source/imports`, `POST .../source/imports/{id}/retry`, under apps and licences. Webhook endpoint `POST /hooks/github/{source id}`
 - API: `GET /integrations/github`, `GET /integrations/github/repositories`; `PUT .../source` accepts `connection` (`app` or `token`)
 - Migrations 0011 (release sources and their imports) and 0012 (GitHub App installation and repository id of a source)
 - docs/repositories.md

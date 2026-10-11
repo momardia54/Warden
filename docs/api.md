@@ -235,14 +235,28 @@ An app is a product you license to many customers. See [apps.md](apps.md) for th
 
 `PUT /apps/{app}/files` uploads a file that every licence of the app can see, with the same body, query parameters and release rule as a licence file (below). The file JSON of an app has no `available` or `download_url`, because the download URL contains a licence key; licences get the URL from `GET /download/<key>` ([files.md](files.md)).
 
+### Release tracks
+
+A track is what a set of licence statuses receives ([releases.md](releases.md#tracks)). Each status belongs to one track of an app or licence at most. Endpoints under `/apps/{app}/tracks` and `/licenses/{id}/tracks`; `{track}` is a track's id or name.
+
+| Method and path | Scope | Description |
+|---|---|---|
+| `GET .../tracks` | read | `{ data: [{ id, name, statuses, check_domain, position, releases, source }], conflicts }`. For a licence, also `app_tracks` and `receives`: `{ status, track, name, inherited }`, the track that serves its current status |
+| `POST .../tracks` | manage | Create: `{ "name": "Final build", "statuses": ["completed"], "check_domain": true }`. `409 status_in_another_track` when a status is already served |
+| `GET .../tracks/{track}` | read | One track |
+| `PATCH .../tracks/{track}` | manage | Change `name`, `statuses`, `check_domain`, `position`. The statuses and domain check apply to all its releases |
+| `DELETE .../tracks/{track}?move_to={track}` | full | Delete; its releases move to `move_to` (required while it has releases) and its repository is disconnected |
+
+Uploads (`PUT .../files`) take `track` (id or name) for a release. Without it: the only track, or a new track *Releases* when there is none; with several tracks, `track` is required. `statuses` on a release upload picks the track with exactly those statuses, or creates one. `PATCH .../files/{fileId}` takes `track` to move a release; `statuses` and `check_domain` apply to attachments only. Files return `track` (null for an attachment).
+
 ### Release source
 
-A GitHub repository connected to an app or a licence publishes each version tag as a release, through the install's GitHub App or with an access token and a webhook of its own. Endpoints under `/apps/{app}/source` and `/licenses/{id}/source`:
+A track can be fed by a GitHub repository, through the install's GitHub App or with an access token and a webhook of its own. Endpoints under `.../tracks/{track}/source`:
 
 | Method and path | Scope | Description |
 |---|---|---|
 | `GET .../source` | read | The connected repository; `webhook_secret` only for `manage` and `full` keys, the access token never (`has_token`) |
-| `PUT .../source` | manage | Connect or edit: `connection` (`app` or `token`), `provider`, `repository`, `trigger`, `package_folder`, `statuses`, `check_domain`, `token`, `enabled` (201 when connected, 200 when edited). A new source uses `app` when the GitHub App is connected and no token is sent |
+| `PUT .../source` | manage | Connect or edit: `connection` (`app` or `token`), `provider`, `repository`, `trigger`, `tag_prefix`, `package_folder`, `token`, `enabled` (201 when connected, 200 when edited). A new source uses `app` when the GitHub App is connected and no token is sent |
 | `DELETE .../source` | manage | Disconnect; published releases stay |
 | `POST .../source/regenerate-secret` | manage | Replace the webhook secret |
 | `GET .../source/imports` | read | Latest tags: `{ id, tag, version, commit, state, detail, file_id, started_at, finished_at }`, `state` is `pending`, `imported`, `skipped` or `failed` |

@@ -21,7 +21,8 @@ function setup() {
 }
 const body = (text: string) => new Response(text).body
 async function upload(env: Env, license: Awaited<ReturnType<typeof createLicense>>, statuses: string, name = "theme.zip", text = "PK-zip-bytes", checkDomain = true) {
-  const res = await storeFile(env, { license }, { name, statuses, checkDomain, version: "1.0.0", size: new TextEncoder().encode(text).length, body: body(text), contentType: "application/zip" })
+  // Attachments (no version) keep a release rule of their own; releases take theirs from a track (tests/tracks.test.ts).
+  const res = await storeFile(env, { license }, { name, statuses, checkDomain, version: "", size: new TextEncoder().encode(text).length, body: body(text), contentType: "application/zip" })
   assert.ok("file" in res, JSON.stringify(res))
   return res.file
 }
@@ -158,19 +159,25 @@ test("deleting a file or a licence removes the stored objects", async () => {
   assert.equal((await env.DB.prepare("SELECT COUNT(*) AS c FROM files").first<{ c: number }>())!.c, 0)
 })
 
-test("a file's release rule can be changed afterwards", async () => {
+test("an attachment's release rule can be changed afterwards; a release follows its track", async () => {
   const { env } = setup()
   const lic = await createLicense(env, input)
   const file = await upload(env, lic, "completed", "final.zip")
   assert.equal((await updateFile(env, { license: lic }, file, { statuses: "bogus" }) as any).status, 422)
-  const changed = await updateFile(env, { license: lic }, file, { statuses: ["active", "completed"], checkDomain: false, version: "2.0.0" })
+  const changed = await updateFile(env, { license: lic }, file, { statuses: ["active", "completed"], checkDomain: false })
   assert.ok("file" in changed)
-  if ("file" in changed) {
-    assert.equal(changed.file.statuses, "active,completed")
-    assert.equal(changed.file.check_domain, 0)
-    assert.equal(changed.file.version, "2.0.0")
-  }
+  if ("file" in changed) assert.deepEqual([changed.file.statuses, changed.file.check_domain, changed.file.track_id], ["active,completed", 0, null])
   assert.match((await recentActivity(env, lic.id)).map((a) => a.detail).join("|"), /File updated: final.zip \(available when Active, Completed\)/)
+
+  // Adding a version makes it a release: it joins a track (here a new one for its statuses) and takes the track's rule.
+  const release = await updateFile(env, { license: lic }, (changed as { file: typeof file }).file, { version: "2.0.0", statuses: ["completed"] })
+  assert.ok("file" in release && release.file.track_id)
+  if ("file" in release) {
+    // The new track keeps the file's domain check (off).
+    assert.deepEqual([release.file.version, release.file.statuses, release.file.check_domain], ["2.0.0", "completed", 0])
+    // Its statuses are its track's: changing them on the release is refused.
+    assert.equal((await updateFile(env, { license: lic }, release.file, { statuses: ["active"] }) as any).status, 422)
+  }
 })
 
 test("renewing a completed licence keeps it completed; stats count it", async () => {
@@ -207,10 +214,15 @@ test("API: upload, list, update, delete, permissions", async () => {
   assert.equal((await call("POST", `/licenses/${lic.id}/status`, manage, JSON.stringify({ status: "completed" }))).json.valid, true)
   assert.equal((await call("GET", `/licenses/${lic.id}/files`, read)).json.data.find((f: any) => f.name === "theme.zip").available, true)
 
-  const patched = await call("PATCH", `/licenses/${lic.id}/files/${put.json.id}`, manage, JSON.stringify({ statuses: ["suspended"], check_domain: true }))
+  // A release's statuses are its track's; an attachment's are its own.
+  const refused = await call("PATCH", `/licenses/${lic.id}/files/${put.json.id}`, manage, JSON.stringify({ statuses: ["suspended"] }))
+  assert.equal(refused.status, 422)
+  assert.match(refused.json.error.message, /available according to its track/)
+  const attachment = (await call("GET", `/licenses/${lic.id}/files`, read)).json.data.find((f: any) => f.name === "default.zip")
+  const patched = await call("PATCH", `/licenses/${lic.id}/files/${attachment.id}`, manage, JSON.stringify({ statuses: ["suspended"], check_domain: true }))
   assert.deepEqual([patched.json.statuses, patched.json.check_domain], [["suspended"], true])
   assert.equal((await call("PATCH", `/licenses/${lic.id}/files/${put.json.id}`, read, "{}")).status, 403)
-  assert.equal((await call("PATCH", `/licenses/${lic.id}/files/${put.json.id}`, manage, JSON.stringify({ statuses: [] }))).status, 422)
+  assert.equal((await call("PATCH", `/licenses/${lic.id}/files/${attachment.id}`, manage, JSON.stringify({ statuses: [] }))).status, 422)
 
   assert.equal((await call("DELETE", `/licenses/${lic.id}/files/${put.json.id}`, read)).status, 403)
   assert.equal((await call("DELETE", `/licenses/${lic.id}/files/${put.json.id}`, manage)).json.deleted, true)
