@@ -36,33 +36,35 @@ Warden uses [semantic versioning](https://semver.org/). The version is in `packa
 
 ## Towards 1.0.0
 
-A proposed order; it can change.
+Version 1.0.0 freezes the check response and the API, so everything that would change them comes first. Order agreed on 2026-10-10.
 
-### 0.3.0: operations
+### 0.3.0: the contract
 
-- [ ] **Tests against a real Worker** in CI (today: unit tests with a local D1 stand-in, and manual runs)
-- [ ] **Webhooks out**: call a URL when a licence changes status, expires, or when a site has not checked for N days (replaces email)
-- [ ] **Grace period** per licence: report `valid: true` with a warning for N days after the expiry date
-- [ ] **Import** of licences from CSV (export is done)
+- [ ] **Public-key signatures (Ed25519) on check responses.** Today the HMAC key is the licence key, which the site also holds, so the site's owner could forge a valid response. Sites then verify with a public key only. Must come before 1.0: it changes the verification code every site runs
+- [ ] **Signed release packages (Ed25519)**, so an updater can verify a package came from you, not only that it arrived intact
+- [ ] **API review and freeze**: remove the deprecated aliases (`in_force`, `not_in_force`, `licenses_in_force`, `?view=in_force`), check every name against the valid/invalid vocabulary, consistent errors and pagination on every list, final review of the tracks and source endpoints
+- [ ] **Upgrade notes** from 0.1 and 0.2, listing each breaking change and what to do
 
 ### 0.4.0: trust
 
-- [ ] **Public-key signatures** (Ed25519) so a site holds only a public key and cannot forge responses
-- [ ] **Signed releases** (Ed25519) so an updater can verify a package came from you, not only that it arrived intact
-- [ ] **Download limits** and time-limited, signed download links
+- [ ] **End-to-end tests on real Cloudflare**: the GitHub App flow with a real app, private repositories with a token, phone-width layout, and CI that deploys a throwaway Worker and runs the checks against it
+- [ ] **Backups and export**: documented and tested D1 export and restore, and a data export from the dashboard
+- [ ] **Dashboard sign-in hardening**: two-factor authentication for the admin, or documented use of Cloudflare Access in front of the dashboard
+- [ ] **An independent security review** of the check, download, webhook and API code
 
-### 0.5.0: distribution
+### 0.5.0: product completeness
 
-- [ ] **More release sources**: GitLab and Bitbucket, a trigger on a raised `Version:` header (WordPress style) in pushed commits, and GitHub release assets for projects with a build step
-- [ ] **Staged rollouts**: offer a release to a percentage of sites first
-- [ ] **Larger files**: direct-to-R2 uploads for files over 100 MB, and range (resumable) downloads
+- [ ] **Webhooks out**: call a URL when a licence changes status, expires, or a site has not checked for N days (replaces email)
+- [ ] **Grace period** per licence or app: report `valid: true` with a warning for N days after the expiry date
+- [ ] **Public documentation site** (the `Warden-docs` repository, deployed) and the Deploy button verified on a clean account
 
 ### 1.0.0: stable
 
-- [ ] Review of the whole API surface and the check response, then freeze
-- [ ] Remove the deprecated aliases (`in_force`, `not_in_force`, `licenses_in_force`, `?view=in_force`)
-- [ ] Upgrade notes from every 0.x version
-- [ ] **Docs site** and a one-click deploy button once the repository is public
+- [ ] Freeze the check response and `/api/v1`; from here, only backward compatible changes within a major version
+
+### After 1.0.0
+
+- CSV import of licences, staged rollouts, files over 100 MB (direct-to-R2 uploads), download limits and signed download links, more release sources (GitLab, Bitbucket, a `Version:` header trigger, GitHub release assets)
 
 ## Later, if there is demand
 
