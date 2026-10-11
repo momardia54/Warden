@@ -13,7 +13,7 @@ export const meta: Route.MetaFunction = () => [{ title: "New licence | Warden" }
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env
   await requireAuth(request, env)
-  const apps = (await listApps(env)).map((a) => ({ id: a.id, name: a.name }))
+  const apps = (await listApps(env)).map((a) => ({ id: a.id, name: a.name, grace_days: a.grace_days }))
   const appId = new URL(request.url).searchParams.get("app")
   const app = appId ? await getApp(env, appId) : null
   if (!app) return { apps, values: { ...EMPTY_FORM, status: defaultStatusKey(DEFAULT_STATUSES) }, appHint: "" }

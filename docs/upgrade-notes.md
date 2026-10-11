@@ -16,6 +16,15 @@ The export contains everything Warden stores, including the private signing key 
 
 Database migrations run by themselves on the first request after the update, and only move forward: to go back to an earlier version, restore the export.
 
+## 0.3 to 0.4
+
+Migration 0014 runs on the first request: it adds grace periods and webhooks. Nothing breaks; there is nothing to change unless you use the features below.
+
+- **Cron Trigger.** It now runs every 10 minutes (`*/10 * * * *` in `wrangler.jsonc`) instead of once a day. A deploy updates it. It is still a single trigger, so it does not count against Cloudflare's per-account limit more than before.
+- **Check response.** It has a new field, `grace_ends_at` (`null` unless the licence is in its grace period). While a licence is in its grace period, `valid` is `true` and `message` holds a reminder when the licence has no public message. Site code that shows `message` when it is not empty will show that reminder: decide whether that is what you want.
+- **Licences and apps in the API** have new fields: `grace_days` (both), `effective_grace_days` and `grace_ends_at` (licences).
+- **Renewals during a grace period** extend from the expiry date, not from the day of the renewal.
+
 ## 0.2 to 0.3
 
 No database migration. The signing key is created on the first check, download or dashboard visit after the update.

@@ -7,7 +7,7 @@ import { Textarea } from "#/components/ui/textarea"
 import { NativeSelect } from "#/components/ui/native-select"
 import { useStatusSetForLicense, useStatusSets } from "#/components/status-context"
 import { StatusDraft } from "#/components/status-draft"
-import { defaultStatusKey, findStatus, type StatusSet } from "#/lib/statuses"
+import { defaultStatusKey, findStatus, MAX_GRACE_DAYS, type StatusSet } from "#/lib/statuses"
 
 export type FormValues = {
   name: string
@@ -17,14 +17,15 @@ export type FormValues = {
   status: string
   expires: string
   max_sites: string
+  grace_days: string
   domains: string
   message: string
   notes: string
 }
 
-export const EMPTY_FORM: FormValues = { name: "", customer_name: "", customer_email: "", app_id: "", status: "active", expires: "", max_sites: "", domains: "", message: "", notes: "" }
+export const EMPTY_FORM: FormValues = { name: "", customer_name: "", customer_email: "", app_id: "", status: "active", expires: "", max_sites: "", grace_days: "", domains: "", message: "", notes: "" }
 
-export type AppOption = { id: string; name: string }
+export type AppOption = { id: string; name: string; grace_days: number | null }
 
 type Props = {
   values: FormValues
@@ -55,6 +56,8 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
   const [draft, setDraft] = useState<StatusSet | null>(null)
   // Only a standalone licence can have statuses of its own; a licence in an app uses its app's.
   const statuses = !appId && draft ? draft : inherited
+  const appGrace = apps.find((a) => a.id === appId)?.grace_days ?? null
+  const gracePlaceholder = appId ? `App: ${appGrace ? `${appGrace} days` : "none"}` : "None"
 
   return (
     <Form method="post" className="max-w-2xl space-y-6">
@@ -132,12 +135,21 @@ export function LicenseForm({ values, apps, error, submitLabel, cancelTo, reload
         </div>
       </div>
 
-      <div className="space-y-2">
-        <FieldLabel htmlFor="max_sites" help="How many different sites (domains) may use this licence. Each site registers automatically on its first successful check; checks from additional sites return site_limit_reached once the limit is reached. You can release a site on the licence page to free its slot.">
-          Maximum sites
-        </FieldLabel>
-        <Input id="max_sites" name="max_sites" type="number" min={1} step={1} key={values.max_sites} defaultValue={values.max_sites} placeholder="Unlimited" className="max-w-40" />
-        <p className="text-xs text-muted-foreground">Optional. Leave empty for unlimited.</p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <FieldLabel htmlFor="max_sites" help="How many different sites (domains) may use this licence. Each site registers automatically on its first successful check; checks from additional sites return site_limit_reached once the limit is reached. You can release a site on the licence page to free its slot.">
+            Maximum sites
+          </FieldLabel>
+          <Input id="max_sites" name="max_sites" type="number" min={1} step={1} key={values.max_sites} defaultValue={values.max_sites} placeholder="Unlimited" className="max-w-40" />
+          <p className="text-xs text-muted-foreground">Optional. Leave empty for unlimited.</p>
+        </div>
+        <div className="space-y-2">
+          <FieldLabel htmlFor="grace_days" help="Days the licence stays valid after its expiry date, so a late renewal does not interrupt the site. During the grace period the check returns valid: true, grace_ends_at and a reminder in message. Leave empty to use the app's setting; 0 for no grace period.">
+            Grace period (days)
+          </FieldLabel>
+          <Input id="grace_days" name="grace_days" type="number" min={0} max={MAX_GRACE_DAYS} step={1} key={values.grace_days} defaultValue={values.grace_days} placeholder={gracePlaceholder} className="max-w-40" />
+          <p className="text-xs text-muted-foreground">{appId ? "Optional. Leave empty for the app's setting." : "Optional. Leave empty for none."}</p>
+        </div>
       </div>
 
       <div className="space-y-2">

@@ -29,3 +29,23 @@ test("migration 0005 keeps existing licences, files and activity", () => {
   assert.throws(() => insert("lic_1", "app_1"))
   assert.throws(() => insert(null, null))
 })
+
+test("migration 0014 does not report what happened before it: licences already expired or silent are marked", () => {
+  const { raw } = makeDb("0013_release_tracks.sql")
+  const now = Date.now()
+  const day = 86_400_000
+  const insert = raw.prepare(
+    "INSERT INTO licenses (id, name, customer_name, license_key, status, expires_at, domains, message, notes, created_at, updated_at, last_check_at) VALUES (?, ?, '', ?, 'active', ?, '', '', '', ?, ?, ?)",
+  )
+  insert.run("lic_old", "Expired long ago", "WRD-AAAAA-BBBBB-CCCCC-DDDD1", now - 30 * day, now - 60 * day, now, now - 10 * day)
+  insert.run("lic_new", "Expires later", "WRD-AAAAA-BBBBB-CCCCC-DDDD2", now + 30 * day, now - 60 * day, now, now)
+
+  const sql = readFileSync(join(import.meta.dirname, "..", "migrations", "0014_grace_and_webhooks.sql"), "utf8")
+  for (const statement of splitStatements(sql)) raw.exec(statement)
+
+  const row = (id: string) => raw.prepare("SELECT * FROM licenses WHERE id = ?").get(id) as Record<string, unknown>
+  const old = row("lic_old")
+  assert.deepEqual([old.grace_notified_for, old.expired_notified_for, old.silent_notified_for, old.grace_days], [now - 30 * day, now - 30 * day, now - 10 * day, null])
+  const fresh = row("lic_new")
+  assert.deepEqual([fresh.grace_notified_for, fresh.expired_notified_for, fresh.silent_notified_for], [null, null, null])
+})

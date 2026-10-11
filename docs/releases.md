@@ -60,6 +60,7 @@ GET https://<your-worker>/check/<licence key>?domain=harborstudio.com&version=1.
   "name": "Harbor Studio website",
   "app": { "slug": "harbor-theme", "name": "Harbor Theme" },
   "expires_at": "2027-10-04T23:59:59.999Z",
+  "grace_ends_at": null,
   "checked_at": "2026-10-10T09:12:44.512Z",
   "license_key": "WRD-7KQ4M-X2PHR-9TCVN-B3WZD",
   "domain": "harborstudio.com",

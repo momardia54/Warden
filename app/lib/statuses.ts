@@ -74,14 +74,47 @@ export function grantsAccess(set: StatusSet, key: string): boolean {
   return findStatus(set, key)?.grants_access ?? false
 }
 
+const DAY_MS = 86_400_000
+
+/** The longest grace period, in days. */
+export const MAX_GRACE_DAYS = 365
+
 /**
- * The status reported to sites. A licence whose status has an expiry rule and whose expiry date has passed is
- * reported with the status the rule points to (for example Active becomes Expired).
+ * What decides a licence's reported status: its stored status, its expiry date and its grace period. `grace_days` is
+ * the licence's own setting (null: its app's); `app_grace_days` is its app's, when rows are read with it.
  */
-export function effectiveStatusKey(license: { status: string; expires_at: number | null }, set: StatusSet, now = Date.now()): string {
+export type ExpiryFacts = { status: string; expires_at: number | null; grace_days?: number | null; app_grace_days?: number | null }
+
+/** Days a licence stays valid after its expiry date: its own setting, otherwise its app's, otherwise none. */
+export function graceDays(license: ExpiryFacts): number {
+  return license.grace_days ?? license.app_grace_days ?? 0
+}
+
+/** When the expiry rule of the licence's status takes effect: the expiry date plus the grace period. Null without a date. */
+export function expiryTakesEffectAt(license: ExpiryFacts): number | null {
+  return license.expires_at === null ? null : license.expires_at + graceDays(license) * DAY_MS
+}
+
+/**
+ * The status reported to sites. A licence whose status has an expiry rule is reported with the status the rule points
+ * to (for example Active becomes Expired) once its expiry date and its grace period have passed.
+ */
+export function effectiveStatusKey(license: ExpiryFacts, set: StatusSet, now = Date.now()): string {
   const def = findStatus(set, license.status)
-  if (def?.on_expiry && license.expires_at !== null && license.expires_at <= now && findStatus(set, def.on_expiry)) return def.on_expiry
+  const at = expiryTakesEffectAt(license)
+  if (def?.on_expiry && at !== null && at <= now && findStatus(set, def.on_expiry)) return def.on_expiry
   return license.status
+}
+
+/**
+ * The end of the grace period when the licence is in it now: its expiry date has passed but its status's expiry rule
+ * has not taken effect yet. Null otherwise.
+ */
+export function graceEndsAt(license: ExpiryFacts, set: StatusSet, now = Date.now()): number | null {
+  const def = findStatus(set, license.status)
+  if (!def?.on_expiry || !findStatus(set, def.on_expiry) || license.expires_at === null || license.expires_at > now) return null
+  const end = expiryTakesEffectAt(license)!
+  return end > now ? end : null
 }
 
 /** The statuses that move to `key` when their expiry date passes. */

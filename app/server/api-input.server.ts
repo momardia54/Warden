@@ -1,8 +1,8 @@
 import { normalizeDomain, parseDomains } from "../lib/license"
-import { findStatus, type StatusSet } from "../lib/statuses"
+import { findStatus, MAX_GRACE_DAYS, type StatusSet } from "../lib/statuses"
 import type { AppInput } from "./apps.server"
 import { MAX_DURATION_DAYS } from "./apps.server"
-import { parseOptionalCount, validEmail, type LicenseInput } from "./licenses.server"
+import { parseGraceDays, parseOptionalCount, validEmail, type LicenseInput } from "./licenses.server"
 import { isValidSlug, slugify } from "../lib/apps"
 import { fail, parseExpiry, trimmed } from "./api-http.server"
 
@@ -57,6 +57,11 @@ export function applyLicenseBody(body: Record<string, unknown>, base: LicenseInp
     }
     input.domains = parseDomains((list as string[]).join(" ")).join(", ")
   }
+  if ("grace_days" in body) {
+    const days = parseGraceDays(body.grace_days, 0)
+    if (days === "invalid") return { response: fail(422, "invalid_grace_days", `grace_days must be a whole number from 0 to ${MAX_GRACE_DAYS}, or null to use the app's setting.`) }
+    input.grace_days = days
+  }
   return { input }
 }
 
@@ -98,6 +103,11 @@ export function applyAppBody(body: Record<string, unknown>, base: AppInput, stat
     const sites = parseOptionalCount(body.default_max_sites)
     if (sites === "invalid") return { response: fail(422, "invalid_default_max_sites", "default_max_sites must be a whole number of 1 or more, or null for unlimited.") }
     input.default_max_sites = sites
+  }
+  if ("grace_days" in body) {
+    const days = parseGraceDays(body.grace_days, 1)
+    if (days === "invalid") return { response: fail(422, "invalid_grace_days", `grace_days must be a whole number from 1 to ${MAX_GRACE_DAYS}, or null for none.`) }
+    input.grace_days = days
   }
   return { input }
 }

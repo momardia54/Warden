@@ -29,17 +29,17 @@ Every error is the HTTP status plus `{ "error": { "code": "...", "message": "...
 | `400` | `invalid_json` (the body is not a JSON object), `invalid_domain` |
 | `401` | `unauthorized`: missing or unknown key |
 | `403` | `forbidden`: the key's scope is too low |
-| `404` | `<thing>_not_found`: `license_not_found`, `app_not_found`, `file_not_found`, `track_not_found`, `status_not_found`, `source_not_found`, `import_not_found`, `activation_not_found`, `ip_block_not_found`, `github_not_connected`; `not_found` for an unknown endpoint |
+| `404` | `<thing>_not_found`: `license_not_found`, `app_not_found`, `file_not_found`, `track_not_found`, `status_not_found`, `source_not_found`, `import_not_found`, `activation_not_found`, `ip_block_not_found`, `webhook_not_found`, `delivery_not_found`, `github_not_connected`; `not_found` for an unknown endpoint |
 | `405` | `method_not_allowed` |
-| `409` | A conflict with the current state: `slug_taken`, `app_not_empty`, `status_in_use`, `statuses_in_use`, `statuses_not_customized`, `already_customized`, `license_in_app`, `status_in_another_track`, `track_not_empty`, `already_blocked`, `cannot_retry` |
+| `409` | A conflict with the current state: `slug_taken`, `app_not_empty`, `status_in_use`, `statuses_in_use`, `statuses_not_customized`, `already_customized`, `license_in_app`, `status_in_another_track`, `track_not_empty`, `already_blocked`, `cannot_retry`, `too_many_webhooks` |
 | `413` | `too_large`: body over 64 KB (`upload_failed` for a file over 100 MB) |
-| `422` | `invalid_<field>` for the field at fault (`invalid_status`, `invalid_expires_at`, `invalid_cursor`, …), `upload_failed`, `invalid_file`, `invalid_track`, `invalid_source`, `invalid_settings` |
+| `422` | `invalid_<field>` for the field at fault (`invalid_status`, `invalid_expires_at`, `invalid_grace_days`, `invalid_url`, `invalid_events`, `invalid_cursor`, …), `upload_failed`, `invalid_file`, `invalid_track`, `invalid_source`, `invalid_settings` |
 | `429` | `rate_limited`, with `Retry-After: 60` |
 | `501`, `502` | `upload_failed` (no R2 bucket), `github_unavailable` |
 
 ## Lists and paging
 
-Every list answers `{ "data": [...], "next": ... }`. When `next` is not `null`, request the following page with `?cursor=<next>`; `limit` sets the page size (1 to 100, default 50). Lists that are never long (statuses, tracks, GitHub repositories) are returned whole with `"next": null`. A `cursor` that is not the `next` of a previous page answers `422 invalid_cursor`.
+Every list answers `{ "data": [...], "next": ... }`. When `next` is not `null`, request the following page with `?cursor=<next>`; `limit` sets the page size (1 to 100, default 50). Lists that are never long (statuses, tracks, GitHub repositories, webhooks) are returned whole with `"next": null`. A `cursor` that is not the `next` of a previous page answers `422 invalid_cursor`.
 
 ```bash
 curl "https://<worker>/api/v1/licenses?app=harbor-theme&limit=100" -H "Authorization: Bearer $WARDEN_KEY"
@@ -61,6 +61,9 @@ curl "https://<worker>/api/v1/licenses?app=harbor-theme&limit=100&cursor=lic_...
   "stored_status": "active",
   "valid": true,
   "expires_at": "2027-10-04T16:50:49.988Z",
+  "grace_days": null,
+  "effective_grace_days": 7,
+  "grace_ends_at": null,
   "domains": [],
   "max_sites": 3,
   "sites_used": 1,
@@ -75,7 +78,7 @@ curl "https://<worker>/api/v1/licenses?app=harbor-theme&limit=100&cursor=lic_...
 }
 ```
 
-`status` is what a site is told: the stored status, or the status its expiry rule points to once the expiry date has passed (by default Active becomes Expired). `stored_status` is what is saved. `valid` is `true` when that status is valid (`grants_access`). `app` is `null` for a standalone licence. `max_sites` is `null` when the number of sites is unlimited; `sites_used` is the number of sites that have registered.
+`status` is what a site is told: the stored status, or the status its expiry rule points to once the expiry date and any grace period have passed (by default Active becomes Expired). `stored_status` is what is saved. `valid` is `true` when that status is valid (`grants_access`). `app` is `null` for a standalone licence. `max_sites` is `null` when the number of sites is unlimited; `sites_used` is the number of sites that have registered. `grace_days` is the licence's own grace period (`null`: its app's; `0`: none), `effective_grace_days` the one in effect, and `grace_ends_at` is set while the licence is in its grace period ([statuses.md](statuses.md#grace-period)).
 
 In every path below, `{id}` can be the licence id (`lic_...`) or the licence key (`WRD-...`).
 
@@ -91,6 +94,11 @@ In every path below, `{id}` can be the licence id (`lic_...`) or the licence key
 | `POST /ip-blocks` | manage | Block an address or range (`ip`, `reason`, `expires_at`) |
 | `DELETE /ip-blocks/{id}` | manage | Remove a block |
 | `GET /protection` | read | Rate limits, blocking rules and allowlist ([protection.md](protection.md)) |
+| `GET /webhooks` | read | Outgoing webhooks ([webhooks.md](webhooks.md)) |
+| `POST /webhooks`, `PATCH /webhooks/{id}`, `DELETE /webhooks/{id}` | full | Create, change or delete a webhook |
+| `POST /webhooks/{id}/test` | full | Send a test event now |
+| `GET /webhooks/{id}/deliveries` | read | Recent deliveries and their results |
+| `POST /webhooks/{id}/deliveries/{delivery}/retry` | full | Send a delivery again now |
 | `PATCH /protection` | full | Change protection settings (only what you send) |
 | `GET /statuses` | read | The built-in default statuses ([statuses.md](statuses.md)) |
 | `GET /licenses` | read | List, newest first |
@@ -140,6 +148,7 @@ Returns `{ "data": [licence, ...], "next": "lic_..." | null }`, newest first. `s
 | `customer_name` | string | Optional, up to 120 characters |
 | `customer_email` | string | Optional, a valid email address |
 | `max_sites` | integer or null | Maximum number of distinct sites (domains) that may use the licence. `null`: unlimited |
+| `grace_days` | integer or null | Days the licence stays valid after its expiry date, 0 to 365. `null`: its app's setting (none for a standalone licence); `0`: none |
 | `status` | string | A status key of the statuses that apply to the licence. Default: the default status of that set (the app's default status when issued under an app) |
 | `expires_at` | string or null | `YYYY-MM-DD` (end of that day, UTC) or an ISO date-time. `null` or omitted: no expiry date |
 | `duration_days` | integer | Alternative to `expires_at`: ends this many days from now (1 to 3650) |
@@ -250,7 +259,7 @@ An app is a product you license to many customers. See [apps.md](apps.md) for th
 }
 ```
 
-`POST /apps` and `PATCH /apps/{app}` take these fields: `name` (required on create), `slug` (generated from the name if omitted: lowercase letters, digits and single hyphens, 2 to 48 characters, unique), `description`, `default_status`, `default_duration_days` (1 to 3650, or `null` for no expiry), `default_max_sites` (1 or more, or `null` for unlimited), `default_message` and `notes`. A duplicate slug returns `409`.
+`POST /apps` and `PATCH /apps/{app}` take these fields: `name` (required on create), `slug` (generated from the name if omitted: lowercase letters, digits and single hyphens, 2 to 48 characters, unique), `description`, `default_status`, `default_duration_days` (1 to 3650, or `null` for no expiry), `default_max_sites` (1 or more, or `null` for unlimited), `default_message`, `grace_days` (1 to 365, or `null` for none; applies to every licence of the app without a setting of its own) and `notes`. A duplicate slug returns `409`.
 
 `DELETE /apps/{app}` needs the `full` permission and returns `409` (`app_not_empty`) while the app still has licences. It deletes the app's files.
 

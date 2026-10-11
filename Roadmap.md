@@ -46,8 +46,8 @@ Version 1.0.0 freezes the check response and the API, so everything that would c
 
 ### 0.4.0: product completeness
 
-- [ ] **Webhooks out**: call a URL when a licence changes status, expires, or a site has not checked for N days (replaces email)
-- [ ] **Grace period** per licence or app: report `valid: true` with a warning for N days after the expiry date
+- [x] **Webhooks out**: call a URL when a licence changes status, expires, or a site has not checked for N days (replaces email)
+- [x] **Grace period** per licence or app: report `valid: true` with a warning for N days after the expiry date
 - [ ] **Public documentation site** (the `Warden-docs` repository, deployed) and the Deploy button verified on a clean account
 
 ### 0.5.0: trust

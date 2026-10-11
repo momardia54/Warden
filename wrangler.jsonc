@@ -45,5 +45,5 @@
 			{ "name": "RATE_LIMIT_1200", "namespace_id": "4206", "simple": { "limit": 1200, "period": 60 } }
 		]
 	},
-	"triggers": { "crons": ["17 3 * * *"] }
+	"triggers": { "crons": ["*/10 * * * *"] }
 }

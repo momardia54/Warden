@@ -24,7 +24,7 @@ import { useStatusSetForLicense } from "#/components/status-context"
 import { StatusSection } from "#/components/status-section"
 import { evaluateFileAccess } from "#/lib/files"
 import { isOutdated, latestRelease } from "#/lib/releases"
-import { DEFAULT_COLOR, DEFAULT_STATUSES, effectiveStatusKey, findStatus, splitStatusKeys, statusLabel } from "#/lib/statuses"
+import { DEFAULT_COLOR, DEFAULT_STATUSES, effectiveStatusKey, findStatus, graceDays, graceEndsAt, splitStatusKeys, statusLabel } from "#/lib/statuses"
 import { daysUntil, describeExpiry, EXPIRING_WINDOW_DAYS } from "#/lib/views"
 import { cn } from "#/lib/utils"
 import { dailyTraffic } from "~/server/analytics.server"
@@ -144,6 +144,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
   const [tab, setTab] = useRouteTab([...TABS])
   const [confirm, setConfirm] = useState<"regenerate" | "delete" | null>(null)
   const effective = effectiveStatusKey(license, statuses)
+  const graceEnd = graceEndsAt(license, statuses)
   const reported = findStatus(statuses, effective)
   const valid = reported?.grants_access ?? false
   const outdatedSites = sites.filter((s) => isOutdated(s.version, latestVersion)).length
@@ -265,7 +266,7 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
         <FactStrip>
           <Fact
             label="Check result"
-            help="The status a check returns now. It differs from the stored status only when the status has an expiry rule and the expiry date has passed."
+            help="The status a check returns now. It differs from the stored status only when the status has an expiry rule and the expiry date, and any grace period after it, have passed."
             value={<StatusBadge status={reported ?? { label: effective, color: DEFAULT_COLOR }} />}
             detail={valid ? "valid: true" : "valid: false"}
             tone={valid ? "success" : "danger"}
@@ -273,8 +274,14 @@ export default function LicensePage({ loaderData }: Route.ComponentProps) {
           <Fact
             label="Expires"
             value={license.expires_at ? new Date(license.expires_at).toISOString().slice(0, 10) : "Never"}
-            detail={license.expires_at ? `${describeExpiry(license.expires_at)}, end of day UTC${findStatus(statuses, license.status)?.on_expiry ? "" : ". Ignored by this status"}` : "No expiry date"}
-            tone={expiryTone}
+            detail={
+              graceEnd
+                ? `Grace period until ${new Date(graceEnd).toISOString().slice(0, 10)}`
+                : license.expires_at
+                  ? `${describeExpiry(license.expires_at)}, end of day UTC${findStatus(statuses, license.status)?.on_expiry ? (graceDays(license) ? `, then ${graceDays(license)} days of grace` : "") : ". Ignored by this status"}`
+                  : "No expiry date"
+            }
+            tone={graceEnd ? "warning" : expiryTone}
           />
           <Fact
             label="Sites"
@@ -498,6 +505,15 @@ function IntegrationTab({
             {license.domains || <span className="text-muted-foreground">Any domain</span>}
           </Detail>
           <Detail label="Site limit">{license.max_sites ?? <span className="text-muted-foreground">Unlimited</span>}</Detail>
+          <Detail label="Grace period" help="Days the licence stays valid after its expiry date. Set on the licence, or inherited from its app.">
+            {license.grace_days !== null ? (
+              license.grace_days === 0 ? "None" : `${license.grace_days} days`
+            ) : license.app_grace_days ? (
+              `${license.app_grace_days} days (app setting)`
+            ) : (
+              <span className="text-muted-foreground">None</span>
+            )}
+          </Detail>
           <Detail label="Public message" help="Returned to sites in the check response.">
             {license.message || <span className="text-muted-foreground">None</span>}
           </Detail>

@@ -1,8 +1,9 @@
 import { generateLicenseKey, normalizeDomain, parseDomains } from "../lib/license"
-import { defaultStatusKey, effectiveStatusKey, expirySources, findStatus, statusLabel, type StatusSet } from "../lib/statuses"
+import { defaultStatusKey, effectiveStatusKey, expirySources, findStatus, graceEndsAt, MAX_GRACE_DAYS, statusLabel, type StatusSet } from "../lib/statuses"
 import { deleteLicenseFiles } from "./files.server"
 import { getStatusSetForLicense, loadStatusSets, setForLicense, type StatusSets } from "./statuses.server"
 import { inView, SILENT_AFTER_DAYS } from "../lib/views"
+import { emitLicenseEvent } from "./webhooks.server"
 import { newId } from "./util.server"
 
 export type License = {
@@ -26,9 +27,16 @@ export type License = {
   last_check_domain: string | null
   check_count: number
   external_ref: string | null
+  /** Days the licence stays valid after its expiry date. Null: its app's setting; 0: none. */
+  grace_days: number | null
+  /** Expiry date (grace period) and last check (no recent check) last reported to webhooks. */
+  grace_notified_for?: number | null
+  expired_notified_for?: number | null
+  silent_notified_for?: number | null
   /** Joined from the app, when the licence belongs to one. */
   app_slug?: string | null
   app_name?: string | null
+  app_grace_days?: number | null
   /** Number of sites the licence has been used on. */
   sites_used?: number
 }
@@ -58,6 +66,8 @@ export type LicenseInput = {
   message: string
   notes: string
   external_ref?: string | null
+  /** Days the licence stays valid after its expiry date. Null: its app's setting; 0: none. Left out: unchanged (null on create). */
+  grace_days?: number | null
 }
 
 export const MAX_SITES_LIMIT = 100_000
@@ -71,6 +81,13 @@ export function parseOptionalCount(raw: unknown, max = MAX_SITES_LIMIT): number 
 
 export function validEmail(value: string): boolean {
   return value === "" || (value.length <= 200 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))
+}
+
+/** Parses a number of grace days: empty is null, otherwise a whole number from `min` to 365. */
+export function parseGraceDays(raw: unknown, min: 0 | 1): number | null | "invalid" {
+  if (raw === null || raw === undefined || raw === "") return null
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim())
+  return Number.isInteger(n) && n >= min && n <= MAX_GRACE_DAYS ? n : "invalid"
 }
 
 /** Validates the dashboard form and returns the cleaned input, or an error message. */
@@ -103,6 +120,9 @@ export function readLicenseForm(form: FormData, sets: StatusSets, licenseId = ""
   const customerEmail = String(form.get("customer_email") ?? "").trim()
   if (!validEmail(customerEmail)) return { error: "Enter a valid customer email address." }
 
+  const graceDays = parseGraceDays(form.get("grace_days"), 0)
+  if (graceDays === "invalid") return { error: `The grace period must be a whole number of days from 0 to ${MAX_GRACE_DAYS}, or empty.` }
+
   return {
     input: {
       name,
@@ -115,11 +135,12 @@ export function readLicenseForm(form: FormData, sets: StatusSets, licenseId = ""
       domains: parseDomains(domainText).join(", "),
       message: String(form.get("message") ?? "").trim().slice(0, 300),
       notes: String(form.get("notes") ?? "").trim().slice(0, 4000),
+      grace_days: graceDays,
     },
   }
 }
 
-const SELECT_LICENSES = `SELECT l.*, a.slug AS app_slug, a.name AS app_name,
+const SELECT_LICENSES = `SELECT l.*, a.slug AS app_slug, a.name AS app_name, a.grace_days AS app_grace_days,
   (SELECT COUNT(*) FROM activations x WHERE x.license_id = l.id) AS sites_used
   FROM licenses l LEFT JOIN apps a ON a.id = l.app_id`
 
@@ -128,12 +149,14 @@ export async function createLicense(env: Env, input: LicenseInput): Promise<Lice
   const id = newId("lic")
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO licenses (id, name, customer_name, customer_email, license_key, app_id, max_sites, status, expires_at, domains, message, notes, external_ref, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, input.name, input.customer_name, input.customer_email, generateLicenseKey(), input.app_id, input.max_sites, input.status, input.expires_at, input.domains, input.message, input.notes, input.external_ref ?? null, now, now),
+      `INSERT INTO licenses (id, name, customer_name, customer_email, license_key, app_id, max_sites, status, expires_at, domains, message, notes, external_ref, grace_days, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, input.name, input.customer_name, input.customer_email, generateLicenseKey(), input.app_id, input.max_sites, input.status, input.expires_at, input.domains, input.message, input.notes, input.external_ref ?? null, input.grace_days ?? null, now, now),
     logChange(env, id, now, input.status, "Licence created"),
   ])
-  return (await getLicense(env, id))!
+  const license = (await getLicense(env, id))!
+  await emitLicenseEvent(env, "license.created", license)
+  return license
 }
 
 export function getLicense(env: Env, id: string): Promise<License | null> {
@@ -220,19 +243,29 @@ export async function updateLicense(env: Env, before: License, input: LicenseInp
   if (before.status !== input.status) changes.push(`Status ${statusLabel(set, before.status)} -> ${statusLabel(set, input.status)}`)
   if (before.expires_at !== input.expires_at) changes.push(`Expiry ${formatDate(before.expires_at)} -> ${formatDate(input.expires_at)}`)
   if (before.app_id !== input.app_id) changes.push("App changed")
+  const graceDays = input.grace_days === undefined ? before.grace_days : input.grace_days
+  if (before.grace_days !== graceDays) changes.push(`Grace period ${describeGrace(before.grace_days)} -> ${describeGrace(graceDays)}`)
   if (before.max_sites !== input.max_sites) changes.push(`Site limit ${before.max_sites ?? "unlimited"} -> ${input.max_sites ?? "unlimited"}`)
   if (before.domains !== input.domains) changes.push("Allowed domains changed")
   if (before.message !== input.message) changes.push("Public message changed")
   if (before.name !== input.name || before.customer_name !== input.customer_name || before.customer_email !== input.customer_email || before.notes !== input.notes) changes.push("Details edited")
   const statements = [
     env.DB.prepare(
-      `UPDATE licenses SET name = ?, customer_name = ?, customer_email = ?, app_id = ?, max_sites = ?, status = ?, expires_at = ?, domains = ?, message = ?, notes = ?, updated_at = ? WHERE id = ?`
-    ).bind(input.name, input.customer_name, input.customer_email, input.app_id, input.max_sites, input.status, input.expires_at, input.domains, input.message, input.notes, now, before.id),
+      `UPDATE licenses SET name = ?, customer_name = ?, customer_email = ?, app_id = ?, max_sites = ?, status = ?, expires_at = ?, domains = ?, message = ?, notes = ?, grace_days = ?, updated_at = ? WHERE id = ?`
+    ).bind(input.name, input.customer_name, input.customer_email, input.app_id, input.max_sites, input.status, input.expires_at, input.domains, input.message, input.notes, graceDays, now, before.id),
   ]
   if (changes.length) statements.push(logChange(env, before.id, now, input.status, changes.join("; ")))
   // A licence that joins an app uses the app's statuses from then on, so statuses of its own are removed.
   if (input.app_id) statements.push(env.DB.prepare("DELETE FROM statuses WHERE license_id = ?").bind(before.id))
   await env.DB.batch(statements)
+  if (changes.length === 0) return
+  const after = (await getLicense(env, before.id))!
+  await emitLicenseEvent(env, "license.updated", after, { changes })
+  if (before.status !== input.status) await emitLicenseEvent(env, "license.status_changed", after, { previous_status: before.status })
+}
+
+function describeGrace(days: number | null): string {
+  return days === null ? "app setting" : days === 0 ? "none" : `${days} days`
 }
 
 function formatDate(ts: number | null): string {
@@ -247,6 +280,14 @@ export async function setStatus(env: Env, license: License, status: string): Pro
     env.DB.prepare("UPDATE licenses SET status = ?, updated_at = ? WHERE id = ?").bind(status, now, license.id),
     logChange(env, license.id, now, status, `Status ${statusLabel(set, license.status)} -> ${statusLabel(set, status)}`),
   ])
+  await emitLicenseEvent(env, "license.status_changed", (await getLicense(env, license.id))!, { previous_status: license.status })
+}
+
+/** Webhook events of a renewal: always license.renewed, and license.status_changed when the stored status changed. */
+async function emitRenewal(env: Env, before: License) {
+  const after = (await getLicense(env, before.id))!
+  await emitLicenseEvent(env, "license.renewed", after, { previous_expires_at: before.expires_at ? new Date(before.expires_at).toISOString() : null })
+  if (after.status !== before.status) await emitLicenseEvent(env, "license.status_changed", after, { previous_status: before.status })
 }
 
 /**
@@ -257,16 +298,21 @@ function renewedStatus(set: StatusSet, current: string): string {
   return expirySources(set, current).length > 0 ? defaultStatusKey(set) : current
 }
 
-/** Moves the expiry date forward by `days`, counted from today if it has already passed. */
+/**
+ * Moves the expiry date forward by `days`: from the expiry date while it has not passed or the licence is in its grace
+ * period (the days of grace used are not given again), otherwise from today.
+ */
 export async function extendLicense(env: Env, license: License, days: number): Promise<void> {
   const now = Date.now()
-  const from = license.expires_at && license.expires_at > now ? license.expires_at : now
+  const set = await getStatusSetForLicense(env, license)
+  const from = license.expires_at && (license.expires_at > now || graceEndsAt(license, set, now) !== null) ? license.expires_at : now
   const to = from + days * 86_400_000
-  const status = renewedStatus(await getStatusSetForLicense(env, license), license.status)
+  const status = renewedStatus(set, license.status)
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET expires_at = ?, status = ?, updated_at = ? WHERE id = ?").bind(to, status, now, license.id),
     logChange(env, license.id, now, status, `Extended by ${days} days, now expires ${formatDate(to)}`),
   ])
+  await emitRenewal(env, license)
 }
 
 /** Sets the expiry date. See `renewedStatus` for how the status is kept. */
@@ -277,6 +323,7 @@ export async function renewUntil(env: Env, license: License, until: number): Pro
     env.DB.prepare("UPDATE licenses SET expires_at = ?, status = ?, updated_at = ? WHERE id = ?").bind(until, status, now, license.id),
     logChange(env, license.id, now, status, `Renewed, now expires ${formatDate(until)}`),
   ])
+  await emitRenewal(env, license)
 }
 
 export async function regenerateKey(env: Env, license: License): Promise<void> {
@@ -285,9 +332,13 @@ export async function regenerateKey(env: Env, license: License): Promise<void> {
     env.DB.prepare("UPDATE licenses SET license_key = ?, updated_at = ? WHERE id = ?").bind(generateLicenseKey(), now, license.id),
     logChange(env, license.id, now, license.status, "Key regenerated. The previous key and check URL no longer work."),
   ])
+  await emitLicenseEvent(env, "license.updated", (await getLicense(env, license.id))!, { changes: ["Key regenerated"] })
 }
 
 export async function deleteLicense(env: Env, id: string): Promise<void> {
+  // The event carries the licence as it was, so it is written before the licence is gone.
+  const license = await getLicense(env, id)
+  if (license) await emitLicenseEvent(env, "license.deleted", license)
   await deleteLicenseFiles(env, id)
   await env.DB.batch([
     env.DB.prepare("DELETE FROM files WHERE license_id = ?").bind(id),
@@ -364,7 +415,11 @@ export type OverviewStats = {
 
 export async function overviewStats(env: Env, now = Date.now()): Promise<OverviewStats> {
   const sets = await loadStatusSets(env)
-  const rows = (await env.DB.prepare("SELECT id, status, expires_at, last_check_at, created_at, app_id FROM licenses").all<Pick<License, "id" | "status" | "expires_at" | "last_check_at" | "created_at" | "app_id">>()).results
+  const rows = (
+    await env.DB.prepare("SELECT l.id, l.status, l.expires_at, l.last_check_at, l.created_at, l.app_id, l.grace_days, a.grace_days AS app_grace_days FROM licenses l LEFT JOIN apps a ON a.id = l.app_id").all<
+      Pick<License, "id" | "status" | "expires_at" | "last_check_at" | "created_at" | "app_id" | "grace_days" | "app_grace_days">
+    >()
+  ).results
   const stats: OverviewStats = { total: rows.length, valid: 0, invalid: 0, endingSoon: 0, silent: 0, byStatus: {} }
   for (const row of rows) {
     const set = setForLicense(sets, row)
@@ -435,4 +490,67 @@ export async function pruneActivity(env: Env, now = Date.now()): Promise<void> {
   await env.DB.prepare("UPDATE activity SET ip = NULL WHERE event = 'download' AND ip IS NOT NULL AND at < ?").bind(now - CHECK_RETENTION_DAYS * 86_400_000).run()
   await env.DB.prepare("DELETE FROM login_attempts WHERE created_at < ?").bind(now - 86_400_000).run()
   await env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now).run()
+}
+
+// ---- time-based webhook events ------------------------------------------------------
+
+/**
+ * Finds the events that come from the passing of time and writes them: a grace period that started, an expiry rule that
+ * took effect, a valid licence that no site has checked for SILENT_AFTER_DAYS days. Run by the scheduled job. Each
+ * licence remembers the value it was reported for (its expiry date, its last check), so each event fires once, and
+ * again only after a renewal or a new check. Returns the number of events written.
+ */
+export async function scanLicenseEvents(env: Env, now = Date.now(), limit = 500): Promise<number> {
+  const sets = await loadStatusSets(env)
+  const marks: D1PreparedStatement[] = []
+  let events = 0
+
+  const expired = (
+    await env.DB.prepare(
+      `${SELECT_LICENSES} WHERE l.expires_at IS NOT NULL AND l.expires_at <= ? AND (l.grace_notified_for IS NOT l.expires_at OR l.expired_notified_for IS NOT l.expires_at) ORDER BY l.expires_at LIMIT ?`,
+    )
+      .bind(now, limit)
+      .all<License>()
+  ).results
+  for (const license of expired) {
+    const set = setForLicense(sets, license)
+    const def = findStatus(set, license.status)
+    const mark = (column: "grace_notified_for" | "expired_notified_for" | "both") =>
+      marks.push(
+        column === "both"
+          ? env.DB.prepare("UPDATE licenses SET grace_notified_for = expires_at, expired_notified_for = expires_at WHERE id = ?").bind(license.id)
+          : env.DB.prepare(`UPDATE licenses SET ${column} = expires_at WHERE id = ?`).bind(license.id),
+      )
+    // A status without an expiry rule (such as Completed) ignores the date: nothing to report.
+    if (!def?.on_expiry || !findStatus(set, def.on_expiry)) {
+      mark("both")
+      continue
+    }
+    if (graceEndsAt(license, set, now) !== null) {
+      if (license.grace_notified_for !== license.expires_at) {
+        events += await emitLicenseEvent(env, "license.grace_period_started", license, {}, now)
+        mark("grace_notified_for")
+      }
+      continue
+    }
+    if (license.expired_notified_for !== license.expires_at) events += await emitLicenseEvent(env, "license.expired", license, { previous_status: license.status }, now)
+    mark("both")
+  }
+
+  const quietSince = now - SILENT_AFTER_DAYS * 86_400_000
+  const silent = (
+    await env.DB.prepare(
+      `${SELECT_LICENSES} WHERE COALESCE(l.last_check_at, l.created_at) < ? AND l.silent_notified_for IS NOT COALESCE(l.last_check_at, l.created_at) ORDER BY COALESCE(l.last_check_at, l.created_at) LIMIT ?`,
+    )
+      .bind(quietSince, limit)
+      .all<License>()
+  ).results
+  for (const license of silent) {
+    // Only valid licences are reported; an invalid one is not expected to be checked.
+    if (inView(license, setForLicense(sets, license), "silent", now)) events += await emitLicenseEvent(env, "license.silent", license, {}, now)
+    marks.push(env.DB.prepare("UPDATE licenses SET silent_notified_for = COALESCE(last_check_at, created_at) WHERE id = ?").bind(license.id))
+  }
+
+  for (let i = 0; i < marks.length; i += 50) await env.DB.batch(marks.slice(i, i + 50))
+  return events
 }
