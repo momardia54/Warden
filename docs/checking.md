@@ -7,10 +7,10 @@ GET https://<your-worker>/check/<licence key>?domain=client-site.org
 ```
 
 ```json
-{ "valid": true, "status": "active", "message": "", "name": "Harbor Studio website", "app": null, "expires_at": "2027-03-31T23:59:59.999Z", "checked_at": "2026-10-11T16:17:30.248Z", "license_key": "WRD-7KQ4M-X2PHR-9TCVN-B3WZD", "domain": "client-site.org", "nonce": null }
+{ "valid": true, "status": "active", "message": "", "name": "Harbor Studio website", "app": null, "expires_at": "2027-03-31T23:59:59.999Z", "grace_ends_at": null, "checked_at": "2026-10-11T16:17:30.248Z", "license_key": "WRD-7KQ4M-X2PHR-9TCVN-B3WZD", "domain": "client-site.org", "nonce": null }
 ```
 
-`license_key`, `domain` and `nonce` repeat what the response answers: the key that was checked, the domain as Warden read it (`null` when none was sent), and the `nonce` the site sent (below), or `null`.
+`grace_ends_at` is set while the licence is in its grace period: its expiry date has passed, but it stays valid until then ([statuses.md](statuses.md#grace-period)). It is `null` otherwise. `license_key`, `domain` and `nonce` repeat what the response answers: the key that was checked, the domain as Warden read it (`null` when none was sent), and the `nonce` the site sent (below), or `null`.
 
 | `status` | `valid` | Meaning |
 |---|---|---|

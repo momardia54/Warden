@@ -1,7 +1,7 @@
 import type { IpBlock } from "./ip-blocks.server"
 import { evaluateFileAccess } from "../lib/files"
 import { parseDomains } from "../lib/license"
-import { effectiveStatusKey, grantsAccess, type StatusDef, type StatusSet } from "../lib/statuses"
+import { effectiveStatusKey, graceDays, graceEndsAt, grantsAccess, type StatusDef, type StatusSet } from "../lib/statuses"
 import type { AppSummary } from "./apps.server"
 import { releaseRule, type LicenseFile } from "./files.server"
 import type { Activation, Activity, License } from "./licenses.server"
@@ -21,6 +21,9 @@ export function serializeLicense(l: License, origin: string, set: StatusSet) {
     stored_status: l.status,
     valid: grantsAccess(set, status),
     expires_at: iso(l.expires_at),
+    grace_days: l.grace_days,
+    effective_grace_days: graceDays(l),
+    grace_ends_at: iso(graceEndsAt(l, set)),
     domains: parseDomains(l.domains),
     max_sites: l.max_sites,
     sites_used: l.sites_used ?? 0,
@@ -45,6 +48,7 @@ export function serializeApp(a: AppSummary) {
     default_status: a.default_status,
     default_max_sites: a.default_max_sites,
     default_message: a.default_message,
+    grace_days: a.grace_days,
     notes: a.notes,
     licenses: a.licenses,
     licenses_valid: a.valid,

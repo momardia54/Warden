@@ -181,6 +181,7 @@ export default function AppPage({ loaderData, actionData }: Route.ComponentProps
         <p className="text-sm text-muted-foreground">
           New licences {defaults}
           {app.default_message ? ", with a public message" : ""}.{" "}
+          {app.grace_days ? `Licences stay valid ${app.grace_days} days after their expiry date (grace period). ` : ""}
           <Link className="text-foreground underline-offset-2 hover:underline" to={`/apps/${app.id}/edit`}>
             Change defaults
           </Link>

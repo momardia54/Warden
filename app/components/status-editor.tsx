@@ -220,7 +220,7 @@ export function StatusEditor({ statuses, usage = {}, actionPath, onChange }: Pro
               <ColorPicker id="status-color" value={draft.color} onChange={(color) => setDraft({ ...draft, color })} />
             </div>
             <div className="space-y-1.5">
-              <FieldLabel htmlFor="status-expiry" help="What a licence with this status becomes, as seen by sites, once its expiry date has passed. Choose &quot;Nothing&quot; if the expiry date should not apply to this status, for example for a paid-in-full licence.">
+              <FieldLabel htmlFor="status-expiry" help="What a licence with this status becomes, as seen by sites, once its expiry date (and any grace period) has passed. Choose &quot;Nothing&quot; if the expiry date should not apply to this status, for example for a paid-in-full licence.">
                 When the expiry date passes
               </FieldLabel>
               <NativeSelect id="status-expiry" value={draft.on_expiry} onChange={(e) => setDraft({ ...draft, on_expiry: e.target.value })}>

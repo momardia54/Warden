@@ -4,14 +4,36 @@ All notable changes, newest first. Warden follows [semantic versioning](https://
 
 **Next, towards 1.0.0** (details in [Roadmap.md](Roadmap.md)):
 
-- **0.3.0, the contract**: Ed25519 signatures on check responses and on release packages, API review and freeze (deprecated aliases removed), upgrade notes
 - **0.4.0, completeness**: outgoing webhooks, grace period after expiry, public documentation site and a verified Deploy button
 - **0.5.0, trust**: end-to-end tests on real Cloudflare (GitHub App, private repositories, phone width, CI), backups and export, two-factor sign-in or Cloudflare Access, independent security review
 - **1.0.0**: the check response and the API are frozen
 
-## 0.3.0 (unreleased)
+## 0.4.0 (unreleased)
 
-Not released yet: on the `develop` branch.
+Not released yet: on the `develop` branch. What to change on your side: [docs/upgrade-notes.md](docs/upgrade-notes.md), section "0.3 to 0.4".
+
+### Added: grace period
+
+- A **grace period** keeps a licence valid for some days after its expiry date. During it, checks return `valid: true`, the stored status, `grace_ends_at`, and a reminder in `message` when the licence has no public message of its own; then the expiry rule of its status applies
+- Set it on an app (it applies to all of the app's licences, existing and new) or on a licence (overrides its app's; 0 for none). Dashboard: app form and licence form; the licence page shows the grace period and when it ends
+- API: `grace_days` on apps and licences (create and edit); licences also return `effective_grace_days` and `grace_ends_at`. New error code `invalid_grace_days`
+- Renewing a licence during its grace period extends it from its expiry date, so the grace days used are not given again
+- docs/statuses.md, section "Grace period"
+
+### Added: outgoing webhooks
+
+- **Webhooks** (Integrations page, or `/api/v1/webhooks`): Warden calls your URLs on `license.created`, `license.updated`, `license.status_changed`, `license.renewed`, `license.grace_period_started`, `license.expired`, `license.silent` (no check for 3 days) and `license.deleted`, with the licence as the API returns it
+- Requests are signed with the installation's Ed25519 key (`X-Warden-Signature-Ed25519`), carry an event id, and are sent right after the change. Failed deliveries are retried after 10 minutes, 30 minutes, 2, 6 and 24 hours, then marked failed
+- Dashboard: add, edit, pause and delete webhooks, see the last result and the recent deliveries of each, retry a delivery, send a test event
+- API: `GET|POST /webhooks`, `GET|PATCH|DELETE /webhooks/{id}`, `POST /webhooks/{id}/test`, `GET /webhooks/{id}/deliveries`, `POST /webhooks/{id}/deliveries/{delivery}/retry`
+- Migration 0014 (grace periods, webhooks and their deliveries); licences that had already expired or gone quiet before the upgrade are not reported
+- docs/webhooks.md
+
+### Changed
+
+- The Cron Trigger runs every 10 minutes instead of once a day, to find time-based events and send due deliveries; the clean-up still runs once a day. Still one Cron Trigger per installation
+
+## 0.3.0 (2026-10-11)
 
 What to change on your side: [docs/upgrade-notes.md](docs/upgrade-notes.md), section "0.2 to 0.3".
 

@@ -22,6 +22,7 @@ Dashboard: **Apps**, **New app**. API: `POST /api/v1/apps`.
 | Default duration (days) | A new licence expires this many days after it is issued. Empty: no expiry |
 | Default maximum sites | How many sites one licence may be used on. Empty: unlimited |
 | Default public message | The message new licences return to sites |
+| Grace period (days) | Days the app's licences stay valid after their expiry date. Unlike the defaults, it applies to every licence of the app, existing and new, unless a licence has a setting of its own. Empty: none. See [statuses.md](statuses.md#grace-period) |
 
 The defaults are a starting point. Every value can be changed on each licence.
 

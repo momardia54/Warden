@@ -12,13 +12,13 @@ and control its status, its sites and its downloads from a dashboard or an API.
 <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/momardia54/Warden"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
 </p>
 
-> **Status: pre-1.0 (latest release 0.2.0; 0.3.0 in development).** It works and is tested, but the API and data model may still change before 1.0.0; every change is listed in [CHANGELOG.md](CHANGELOG.md). Versioning and the plan to 1.0.0: [Roadmap.md](Roadmap.md). Security model: [Security.md](Security.md).
+> **Status: pre-1.0 (latest release 0.3.0; 0.4.0 in development).** It works and is tested, but the API and data model may still change before 1.0.0; every change is listed in [CHANGELOG.md](CHANGELOG.md). Versioning and the plan to 1.0.0: [Roadmap.md](Roadmap.md). Security model: [Security.md](Security.md).
 
 ![Warden overview](docs/screenshots/overview.jpg)
 
 ## Quick start
 
-1. **Deploy:** click **Deploy to Cloudflare** above. It creates the Worker, a D1 database named `<worker-name>-db`, an R2 bucket for files named `<worker-name>-files` and a daily Cron Trigger. If you install more than one copy in an account, give each Worker a different name. R2 has to be activated once in your Cloudflare account (it asks for a payment method, even for the free tier); without it everything works except the Files sections.
+1. **Deploy:** click **Deploy to Cloudflare** above. It creates the Worker, a D1 database named `<worker-name>-db`, an R2 bucket for files named `<worker-name>-files` and a Cron Trigger (every 10 minutes). If you install more than one copy in an account, give each Worker a different name. R2 has to be activated once in your Cloudflare account (it asks for a payment method, even for the free tier); without it everything works except the Files sections.
 2. **Sign in:** open your Worker's address. Until you add the admin login as runtime secrets, the login page shows what is missing and how to add it.
 
    | Name | Type | Required |
@@ -45,6 +45,8 @@ Warden **creates and manages** licences. **Enforcement lives in the site's code*
 - **Publishing from GitHub**: connect GitHub once (Warden creates its own GitHub App in two clicks), pick a repository for a release track, and every version tag you push is downloaded as a zip, repacked with a fixed folder name and published as a release. Private repositories included, no token or webhook to copy; a token-and-webhook mode remains for single repositories ([docs/repositories.md](docs/repositories.md))
 - **Apps**: a product sold to many customers, with defaults for new licences (status, duration, maximum sites, message), its own licence list and releases shared by all of its licences ([docs/apps.md](docs/apps.md))
 - **Site limit**: a licence can be limited to N sites; sites register on their first check and you can release them
+- **Grace period**: an app, or a licence, can keep licences valid for some days after their expiry date, with a reminder in the check response, so a late renewal does not interrupt a site ([docs/statuses.md](docs/statuses.md#grace-period))
+- **Webhooks**: Warden calls your URLs when a licence is created, renewed, changes status, enters its grace period, expires, goes without a check for 3 days, or is deleted. Signed with the installation's key, retried for about a day, with a delivery log and a test button ([docs/webhooks.md](docs/webhooks.md))
 - Licence key (`WRD-XXXXX-XXXXX-XXXXX-XXXXX`) and a ready-to-use check URL per licence, with a customer name and email
 - **Configurable statuses** at app level and licence level: everything starts with a built-in set (pending, active, completed, suspended, disabled, expired). An app can customise its own, shared by all of its licences, and a standalone licence can customise its own. Each status says whether it is valid, what it becomes when the expiry date passes, its colour (any colour, with presets) and its message to sites ([docs/statuses.md](docs/statuses.md))
 - Optional expiry date, optional allowed domains (subdomains match), a public message returned to the site, internal notes
@@ -142,7 +144,7 @@ curl           "https://<worker>/api/v1/licenses?status=expired"   -H "Authoriza
 | `manage` | also create, edit, set status, renew |
 | `full` | also delete and regenerate keys |
 
-Endpoints: `GET /apps/{app}/versions`, `GET /me`, `GET /stats`, `GET /signing-key`, `GET /statuses`, `GET|POST|DELETE /apps/{app}/statuses` and `/licenses/{id}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`, `GET|POST /apps/{app}/tracks` and `/licenses/{id}/tracks`, `GET|PATCH|DELETE .../tracks/{track}`, `GET|PUT|DELETE .../tracks/{track}/source` (with `/imports`), `GET /integrations/github` (with `/repositories`). Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
+Endpoints: `GET /apps/{app}/versions`, `GET /me`, `GET /stats`, `GET /signing-key`, `GET|POST /webhooks`, `GET|PATCH|DELETE /webhooks/{id}` (with `/test` and `/deliveries`), `GET /statuses`, `GET|POST|DELETE /apps/{app}/statuses` and `/licenses/{id}/statuses`, `GET|POST /licenses`, `GET|PATCH|DELETE /licenses/{id}`, `POST /licenses/{id}/status`, `/renew`, `/regenerate-key`, `GET /licenses/{id}/activity`, `GET /licenses/{id}/activations`, `DELETE /licenses/{id}/activations/{domain}`, `GET|PUT /licenses/{id}/files`, `PATCH|DELETE /licenses/{id}/files/{fileId}`, `GET|POST /apps`, `GET|PATCH|DELETE /apps/{app}`, `GET|POST /apps/{app}/licenses`, `GET|PUT /apps/{app}/files`, `PATCH|DELETE /apps/{app}/files/{fileId}`, `GET|POST /apps/{app}/tracks` and `/licenses/{id}/tracks`, `GET|PATCH|DELETE .../tracks/{track}`, `GET|PUT|DELETE .../tracks/{track}/source` (with `/imports`), `GET /integrations/github` (with `/repositories`). Reference: [docs/api.md](docs/api.md), or `/api/v1/openapi.json` on your own install.
 
 ## Run and deploy
 
@@ -159,7 +161,7 @@ npm test             # unit and API tests
 Deploy to your own account from the command line instead of the button:
 
 ```bash
-npm run deploy       # builds, creates the D1 database "<worker-name>-db", the R2 bucket for files and a daily Cron Trigger, deploys the Worker
+npm run deploy       # builds, creates the D1 database "<worker-name>-db", the R2 bucket for files and the Cron Trigger, deploys the Worker
 npx wrangler secret put ADMIN_USERNAME
 npx wrangler secret put ADMIN_PASSWORD
 npx wrangler secret put SESSION_SECRET     # optional but recommended: openssl rand -hex 32
@@ -175,13 +177,14 @@ If your Worker is connected to a GitHub repository, Cloudflare also builds a **p
 
 ## Under the hood
 
-React Router 7 (SSR) on Cloudflare Workers, Cloudflare D1 (data) and R2 (files), Tailwind and shadcn/ui, TypeScript. One daily Cron Trigger deletes check history older than 90 days. The public check endpoint and the API are served by the Worker before the dashboard, and do not use cookies.
+React Router 7 (SSR) on Cloudflare Workers, Cloudflare D1 (data) and R2 (files), Tailwind and shadcn/ui, TypeScript. One Cron Trigger runs every 10 minutes: it finds the time-based webhook events (grace periods, expiries, licences without a recent check), sends due webhook deliveries, and once a day deletes check history older than 90 days. The public check endpoint and the API are served by the Worker before the dashboard, and do not use cookies.
 
 ```
 workers/app.ts              entry: migrations, /api/v1, /check/<key>, dashboard
 app/server/check.server.ts  the check endpoint
 app/server/download.server.ts  gated file downloads
 app/server/signing.server.ts   the installation's Ed25519 signing key
+app/server/webhooks.server.ts  outgoing webhooks: endpoints, the outbox, delivery and retries
 app/server/files.server.ts  file storage in R2, checksums, releases
 app/lib/releases.ts         versions, channels, the latest release
 app/server/api.server.ts    API: keys, routes, validation

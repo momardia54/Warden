@@ -14,7 +14,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   await requireAuth(request, env)
   const license = await getLicense(env, params.licenseId)
   if (!license) throw new Response("Not found", { status: 404 })
-  return { license, apps: (await listApps(env)).map((a) => ({ id: a.id, name: a.name })) }
+  return { license, apps: (await listApps(env)).map((a) => ({ id: a.id, name: a.name, grace_days: a.grace_days })) }
 }
 
 export async function action({ request, context, params }: Route.ActionArgs) {
@@ -37,6 +37,7 @@ export default function EditLicense({ loaderData, actionData }: Route.ComponentP
     customer_email: license.customer_email,
     app_id: license.app_id ?? "",
     max_sites: license.max_sites?.toString() ?? "",
+    grace_days: license.grace_days?.toString() ?? "",
     status: license.status,
     expires: license.expires_at ? new Date(license.expires_at).toISOString().slice(0, 10) : "",
     domains: license.domains,

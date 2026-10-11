@@ -18,6 +18,9 @@ import {
 import { getGitHubApp, listAppRepositories, listInstallations, publicGitHubApp } from "./github-app.server"
 import { openApiSpec } from "./openapi.server"
 import { getSigningKey, publicSigningKey, signRelease } from "./signing.server"
+import {
+  createWebhook, deleteWebhook, getWebhook, listDeliveries, listWebhooks, readWebhookInput, retryDelivery, sendTest, serializeDelivery, serializeWebhook, updateWebhook,
+} from "./webhooks.server"
 import { deleteSource, getImport, getSourceForTrack, listImports, listSources, publicSource, regenerateWebhookSecret, retryImport, saveSource, startImport, type ReleaseSource, type SourceImport } from "./sources.server"
 import { createTrack, deleteTrack, findTrack, listAppTracks, listTracks, updateTrack, type ReleaseTrack } from "./tracks.server"
 import { statusConflicts, trackForStatus } from "../lib/tracks"
@@ -41,12 +44,12 @@ const APP_DEFAULTS: AppInput = {
 
 const toInput = (l: License): LicenseInput => ({
   name: l.name, customer_name: l.customer_name, customer_email: l.customer_email, app_id: l.app_id, max_sites: l.max_sites, status: l.status,
-  expires_at: l.expires_at, domains: l.domains, message: l.message, notes: l.notes,
+  expires_at: l.expires_at, domains: l.domains, message: l.message, notes: l.notes, grace_days: l.grace_days,
 })
 
 const toAppInput = (a: App): AppInput => ({
   name: a.name, slug: a.slug, description: a.description, default_duration_days: a.default_duration_days, default_status: a.default_status,
-  default_max_sites: a.default_max_sites, default_message: a.default_message, notes: a.notes,
+  default_max_sites: a.default_max_sites, default_message: a.default_message, notes: a.notes, grace_days: a.grace_days,
 })
 
 /** Finds a licence by its id (lic_...) or its licence key (WRD-...). */
@@ -656,6 +659,77 @@ async function ipBlockRoute(ctx: Context, rest: string[]): Promise<Response> {
   return unknownEndpoint()
 }
 
+// ---- outgoing webhooks --------------------------------------------------------------
+
+/**
+ * Paths relative to /webhooks:
+ *   GET /  POST /  GET /{id}  PATCH /{id}  DELETE /{id}  POST /{id}/test
+ *   GET /{id}/deliveries  POST /{id}/deliveries/{delivery}/retry
+ * Endpoints receive licence data, so changing them needs the full permission.
+ */
+async function webhookRoute(ctx: Context, segments: string[]): Promise<Response> {
+  const { env, request, url } = ctx
+  const method = request.method
+  const [id, sub, deliveryId, action] = segments
+
+  if (!id) {
+    if (method === "GET") return reply({ data: (await listWebhooks(env)).map(serializeWebhook), next: null })
+    if (method === "POST") {
+      const denied = need(ctx, "full")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const parsed = readWebhookInput(body)
+      if ("error" in parsed) return fail(422, `invalid_${parsed.field}`, parsed.error)
+      const created = await createWebhook(env, parsed.input)
+      return "error" in created ? fail(409, "too_many_webhooks", created.error) : reply(serializeWebhook(created.webhook), 201)
+    }
+    return fail(405, "method_not_allowed", "Use GET or POST.")
+  }
+
+  const webhook = await getWebhook(env, id)
+  if (!webhook) return fail(404, "webhook_not_found", "No webhook with this id.")
+
+  if (!sub) {
+    if (method === "GET") return reply(serializeWebhook(webhook))
+    if (method === "PATCH") {
+      const denied = need(ctx, "full")
+      if (denied) return denied
+      const body = await readJson(request)
+      if (body instanceof Response) return body
+      const parsed = readWebhookInput(body, webhook)
+      if ("error" in parsed) return fail(422, `invalid_${parsed.field}`, parsed.error)
+      return reply(serializeWebhook(await updateWebhook(env, webhook, parsed.input)))
+    }
+    if (method === "DELETE") {
+      const denied = need(ctx, "full")
+      if (denied) return denied
+      await deleteWebhook(env, webhook)
+      return reply({ deleted: true, id: webhook.id })
+    }
+    return fail(405, "method_not_allowed", "Use GET, PATCH or DELETE.")
+  }
+  if (sub === "test" && !deliveryId) {
+    if (method !== "POST") return fail(405, "method_not_allowed", "Use POST.")
+    const denied = need(ctx, "full")
+    if (denied) return denied
+    return reply(serializeDelivery(await sendTest(env, webhook)))
+  }
+  if (sub === "deliveries") {
+    if (!deliveryId && method === "GET") {
+      const page = pageOf(await listDeliveries(env, webhook.id, 1000), (d) => d.id, url.searchParams)
+      return page instanceof Response ? page : reply({ data: page.data.map(serializeDelivery), next: page.next })
+    }
+    if (deliveryId && action === "retry" && method === "POST") {
+      const denied = need(ctx, "full")
+      if (denied) return denied
+      const retried = await retryDelivery(env, webhook, deliveryId)
+      return "error" in retried ? fail(retried.status, retried.status === 404 ? "delivery_not_found" : "cannot_retry", retried.error) : reply(serializeDelivery(retried.delivery), 202)
+    }
+  }
+  return unknownEndpoint()
+}
+
 // ---- entry point ------------------------------------------------------------------
 
 export async function handleApi(request: Request, env: Env, execution: ExecutionContext): Promise<Response> {
@@ -708,6 +782,7 @@ export async function handleApi(request: Request, env: Env, execution: Execution
       return "error" in repositories ? fail(repositories.status, "github_unavailable", repositories.error) : reply({ data: repositories, next: null })
     }
   }
+  if (resource === "webhooks") return webhookRoute(ctx, rest)
   if (resource === "licenses") return licenseRoute(ctx, rest)
   if (resource === "apps") return appRoute(ctx, rest)
   if (resource === "statuses" && rest.length === 0 && request.method === "GET") return reply({ data: DEFAULT_STATUSES.map(serializeStatus), next: null })

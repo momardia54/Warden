@@ -1,4 +1,4 @@
-import { effectiveStatusKey, findStatus, grantsAccess, type StatusSet } from "./statuses"
+import { effectiveStatusKey, findStatus, graceEndsAt, grantsAccess, type ExpiryFacts, type StatusSet } from "./statuses"
 
 /** Uppercase letters and digits without the look-alikes 0, O, 1, I and L. */
 const KEY_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789"
@@ -52,6 +52,8 @@ export type CheckResponse = {
   name?: string
   app?: { slug: string; name: string } | null
   expires_at?: string | null
+  /** Set while the licence is in its grace period (expiry date passed, still valid): when the grace period ends. Null otherwise. */
+  grace_ends_at?: string | null
   checked_at: string
   /** Set by the check endpoint: the licence key that was checked, so a response cannot be passed off as another licence's. */
   license_key?: string
@@ -87,10 +89,8 @@ export type UpdateInfo = {
   latest: ReleaseInfo | null
 }
 
-type LicenseForCheck = {
+type LicenseForCheck = ExpiryFacts & {
   name: string
-  status: string
-  expires_at: number | null
   domains: string
   message: string
   max_sites?: number | null
@@ -112,10 +112,12 @@ export function buildCheckResponse(license: LicenseForCheck | null, domain: stri
   const checked_at = new Date(now).toISOString()
   if (!license) return { valid: false, status: "unknown", message: MESSAGE.unknown, checked_at }
   const status = effectiveStatusKey(license, statuses, now)
+  const graceEnd = graceEndsAt(license, statuses, now)
   const base = {
     name: license.name,
     app: license.app_slug ? { slug: license.app_slug, name: license.app_name ?? license.app_slug } : null,
     expires_at: license.expires_at ? new Date(license.expires_at).toISOString() : null,
+    grace_ends_at: graceEnd ? new Date(graceEnd).toISOString() : null,
     checked_at,
   }
   if (grantsAccess(statuses, status)) {
@@ -133,7 +135,14 @@ export function buildCheckResponse(license: LicenseForCheck | null, domain: stri
       }
     }
   }
-  return { ...base, valid: grantsAccess(statuses, status), status, message: license.message.trim() || (findStatus(statuses, status)?.check_message ?? "") }
+  const fallback = graceEnd ? graceMessage(license.expires_at!, graceEnd) : (findStatus(statuses, status)?.check_message ?? "")
+  return { ...base, valid: grantsAccess(statuses, status), status, message: license.message.trim() || fallback }
+}
+
+/** The message of a licence in its grace period, when it has no public message of its own. Dates in UTC. */
+export function graceMessage(expiresAt: number, graceEnd: number): string {
+  const day = (ts: number) => new Date(ts).toISOString().slice(0, 10)
+  return `This licence expired on ${day(expiresAt)}. It remains valid until ${day(graceEnd)}; renew it to keep using it.`
 }
 
 /** API key permission levels, lowest first: read (GET only), manage (also create, edit, set status, renew), full (also delete licences and regenerate keys). */

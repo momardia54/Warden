@@ -1,5 +1,5 @@
 import { domainAllowed, parseDomains } from "./license"
-import { defaultStatusKey, effectiveStatusKey, type StatusSet } from "./statuses"
+import { defaultStatusKey, effectiveStatusKey, type ExpiryFacts, type StatusSet } from "./statuses"
 
 /** 100 MB: the largest request body a Worker accepts on the Free plan. */
 export const MAX_FILE_BYTES = 100 * 1024 * 1024
@@ -19,7 +19,7 @@ export function cleanFileName(raw: string): string | null {
 
 export type FileAccess = { allowed: boolean; status: string; message: string }
 
-type LicenseLike = { status: string; expires_at: number | null; domains: string }
+type LicenseLike = ExpiryFacts & { domains: string }
 type ReleaseRule = { statuses: string[]; check_domain: boolean }
 
 /**

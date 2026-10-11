@@ -53,6 +53,23 @@ Once customised, these are ordinary statuses: you can delete any of them, includ
 
 The licence keeps its stored status; the expiry rule is applied when the licence is read. A licence stored as Active with a past expiry date is reported to sites as Expired, shown as Expired in the dashboard, and extending its expiry date makes it Active again without any change to the stored status.
 
+## Grace period
+
+A grace period keeps a licence valid for some days after its expiry date, so a renewal paid a little late does not interrupt the customer's site. During the grace period:
+
+- the expiry rule waits: the check reports the stored status (Active) with `valid: true`;
+- the check response carries `grace_ends_at`, the end of the grace period, and, when the licence has no public message of its own, a reminder in `message`: "This licence expired on 2026-10-09. It remains valid until 2026-10-16; renew it to keep using it.";
+- the dashboard shows the licence as expiring, with the end of its grace period, and lists it in the *Expiring* view;
+- downloads and update offers work as for any valid licence.
+
+When the grace period ends, the expiry rule applies (Active becomes Expired). Statuses without an expiry rule, such as Completed, are not affected.
+
+The grace period is set on an app, for all of its licences, and can be set on a licence to override its app's (0 for none). A standalone licence has none unless it sets one. Up to 365 days. Through the API: `grace_days` on apps and licences; licences also return `effective_grace_days` (the setting in effect) and `grace_ends_at`.
+
+Renewing a licence during its grace period extends it from its expiry date, not from the day of the renewal: the grace days already used are not given again. A licence whose grace period has ended is extended from the day of the renewal, as before.
+
+Outgoing webhooks report the start of a grace period (`license.grace_period_started`) and the expiry once it has ended (`license.expired`); see [webhooks.md](webhooks.md).
+
 ## Editing
 
 In the editor you can reorder statuses (the order is the order of menus), edit, delete and add. Each row shows what the status does and how many licences use it.

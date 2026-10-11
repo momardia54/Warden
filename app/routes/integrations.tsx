@@ -15,6 +15,8 @@ import { ACCOUNT_PATTERN, appManifest, defaultAppName, manifestTarget, STATE_COO
 import { generateSecret } from "#/lib/random"
 import { requireAuth } from "~/server/auth.server"
 import { getGitHubApp, listInstallations, publicGitHubApp, removeGitHubApp } from "~/server/github-app.server"
+import { WebhooksSection } from "#/components/webhooks-section"
+import { createWebhook, deleteWebhook, deliveryCounts, getWebhook, listDeliveries, listWebhooks, readWebhookInput, retryDelivery, sendTest, updateWebhook, webhookEvents } from "~/server/webhooks.server"
 
 export const meta: Route.MetaFunction = () => [{ title: "Integrations | Warden" }]
 
@@ -24,7 +26,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const app = await getGitHubApp(env)
   const installations = app ? await listInstallations(app) : []
   const used = app ? await env.DB.prepare("SELECT COUNT(*) AS n FROM release_sources WHERE installation_id IS NOT NULL").first<{ n: number }>() : null
+  const [hooks, counts] = await Promise.all([listWebhooks(env), deliveryCounts(env)])
+  const webhooks = await Promise.all(
+    hooks.map(async (w) => ({
+      id: w.id,
+      url: w.url,
+      description: w.description,
+      events: webhookEvents(w),
+      enabled: w.enabled === 1,
+      pending: counts[w.id]?.pending ?? 0,
+      failed: counts[w.id]?.failed ?? 0,
+      deliveries: (await listDeliveries(env, w.id, 25)).map(({ payload, webhook_id: _w, event_id: _e, license_id: _l, ...d }) => ({ ...d, license: licenseName(payload) })),
+    })),
+  )
   return {
+    webhooks,
     origin: new URL(request.url).origin,
     app: app ? publicGitHubApp(app) : null,
     installations: Array.isArray(installations) ? installations : [],
@@ -50,9 +66,55 @@ export async function action({ request, context }: Route.ActionArgs) {
       { headers: { "set-cookie": `${STATE_COOKIE}=${state}; Path=/integrations; HttpOnly; SameSite=Lax; Max-Age=3600${secure}` } },
     )
   }
+  if (intent.endsWith("-webhook") || intent === "retry-delivery") return webhookAction(env, intent, form)
   if (intent === "remove-github") {
     const removed = await removeGitHubApp(env)
     return "error" in removed ? data({ error: removed.error }, { status: 409 }) : { ok: true as const }
+  }
+  return data({ error: "Unknown action." }, { status: 400 })
+}
+
+/** The name of the licence an event is about, read from its payload. */
+function licenseName(payload: string): string | null {
+  try {
+    return (JSON.parse(payload) as { data?: { license?: { name?: string } } }).data?.license?.name ?? null
+  } catch {
+    return null
+  }
+}
+
+async function webhookAction(env: Env, intent: string, form: FormData) {
+  if (intent === "create-webhook") {
+    const parsed = readWebhookInput({ url: form.get("url") ?? "", description: form.get("description") ?? "", events: form.getAll("events").map(String) })
+    if ("error" in parsed) return data({ error: parsed.error }, { status: 400 })
+    const created = await createWebhook(env, parsed.input)
+    return "error" in created ? data({ error: created.error }, { status: 409 }) : { ok: true as const }
+  }
+  const webhook = await getWebhook(env, String(form.get("id") ?? ""))
+  if (!webhook) return data({ error: "This webhook no longer exists." }, { status: 404 })
+  if (intent === "update-webhook") {
+    const parsed = readWebhookInput({ url: form.get("url") ?? "", description: form.get("description") ?? "", events: form.getAll("events").map(String) }, webhook)
+    if ("error" in parsed) return data({ error: parsed.error }, { status: 400 })
+    await updateWebhook(env, webhook, parsed.input)
+    return { ok: true as const }
+  }
+  if (intent === "toggle-webhook") {
+    const parsed = readWebhookInput({ enabled: form.get("enabled") === "true" }, webhook)
+    if ("error" in parsed) return data({ error: parsed.error }, { status: 400 })
+    await updateWebhook(env, webhook, parsed.input)
+    return { ok: true as const }
+  }
+  if (intent === "delete-webhook") {
+    await deleteWebhook(env, webhook)
+    return { ok: true as const }
+  }
+  if (intent === "test-webhook") {
+    const { payload: _p, webhook_id: _w, event_id: _e, license_id: _l, ...test } = await sendTest(env, webhook)
+    return { ok: true as const, test: { ...test, license: null } }
+  }
+  if (intent === "retry-delivery") {
+    const retried = await retryDelivery(env, webhook, String(form.get("delivery") ?? ""))
+    return "error" in retried ? data({ error: retried.error }, { status: retried.status }) : { ok: true as const }
   }
   return data({ error: "Unknown action." }, { status: 400 })
 }
@@ -62,7 +124,7 @@ const ERRORS: Record<string, string> = {
 }
 
 export default function Integrations({ loaderData, actionData }: Route.ComponentProps) {
-  const { origin, app, installations, installationsError, sources } = loaderData
+  const { origin, app, installations, installationsError, sources, webhooks } = loaderData
   const [params] = useSearchParams()
   const error = params.get("error")
   const removeError = actionData && "error" in actionData ? actionData.error : null
@@ -72,7 +134,7 @@ export default function Integrations({ loaderData, actionData }: Route.Component
     <>
       <PageHeader crumbs={[{ label: "Integrations" }]} />
       <div className="max-w-4xl space-y-6 p-4 pt-0 lg:px-6">
-        <PageTitle title="Integrations" description="Services Warden connects to." />
+        <PageTitle title="Integrations" description="Services Warden connects to, and the addresses it notifies." />
 
         {error && (
           <Alert variant="destructive">
@@ -109,6 +171,8 @@ export default function Integrations({ loaderData, actionData }: Route.Component
 
           {app ? <ConnectedApp app={app} installations={installations} installationsError={installationsError} sources={sources} onRemove={() => setRemoving(true)} /> : <CreateApp origin={origin} />}
         </section>
+
+        <WebhooksSection webhooks={webhooks} />
 
         <ConfirmAction
           intent="remove-github"

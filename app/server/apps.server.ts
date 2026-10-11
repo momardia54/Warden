@@ -1,8 +1,8 @@
 import { isValidSlug, slugify } from "../lib/apps"
 import { compareVersions, isOutdated, latestRelease } from "../lib/releases"
-import { defaultStatusKey, effectiveStatusKey, findStatus, type StatusSet } from "../lib/statuses"
+import { defaultStatusKey, effectiveStatusKey, findStatus, MAX_GRACE_DAYS, type StatusSet } from "../lib/statuses"
 import { deleteAppFiles } from "./files.server"
-import { parseOptionalCount, type LicenseInput } from "./licenses.server"
+import { parseGraceDays, parseOptionalCount, type LicenseInput } from "./licenses.server"
 import { getStatusSetForApp, loadStatusSets, setForApp } from "./statuses.server"
 import { newId } from "./util.server"
 
@@ -17,11 +17,14 @@ export type App = {
   default_max_sites: number | null
   default_message: string
   notes: string
+  /** Days the app's licences stay valid after their expiry date, unless a licence has its own setting. Null: none. */
+  grace_days: number | null
   created_at: number
   updated_at: number
 }
 
-export type AppInput = Omit<App, "id" | "created_at" | "updated_at">
+/** `grace_days` left out: unchanged (none on create). */
+export type AppInput = Omit<App, "id" | "created_at" | "updated_at" | "grace_days"> & { grace_days?: number | null }
 
 export type AppSummary = App & {
   licenses: number
@@ -50,6 +53,8 @@ export function readAppForm(form: FormData, statuses: StatusSet): { input: AppIn
   if (duration === "invalid") return { error: `Default duration must be a whole number of days from 1 to ${MAX_DURATION_DAYS}, or empty for no expiry.` }
   const maxSites = parseOptionalCount(form.get("default_max_sites"))
   if (maxSites === "invalid") return { error: "Default maximum sites must be a whole number of 1 or more, or empty for unlimited." }
+  const graceDays = parseGraceDays(form.get("grace_days"), 1)
+  if (graceDays === "invalid") return { error: `The grace period must be a whole number of days from 1 to ${MAX_GRACE_DAYS}, or empty for none.` }
   return {
     input: {
       name,
@@ -60,6 +65,7 @@ export function readAppForm(form: FormData, statuses: StatusSet): { input: AppIn
       default_max_sites: maxSites,
       default_message: String(form.get("default_message") ?? "").trim().slice(0, 300),
       notes: String(form.get("notes") ?? "").trim().slice(0, 4000),
+      grace_days: graceDays,
     },
   }
 }
@@ -79,9 +85,9 @@ export async function createApp(env: Env, input: AppInput): Promise<{ app: App }
   const now = Date.now()
   try {
     await env.DB.prepare(
-      `INSERT INTO apps (id, name, slug, description, default_duration_days, default_status, default_max_sites, default_message, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, input.name, input.slug, input.description, input.default_duration_days, input.default_status, input.default_max_sites, input.default_message, input.notes, now, now).run()
+      `INSERT INTO apps (id, name, slug, description, default_duration_days, default_status, default_max_sites, default_message, notes, grace_days, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, input.name, input.slug, input.description, input.default_duration_days, input.default_status, input.default_max_sites, input.default_message, input.notes, input.grace_days ?? null, now, now).run()
   } catch (error) {
     // Another request created an app with the same identifier between the check above and this insert.
     if (/UNIQUE/i.test(String(error instanceof Error ? error.message : error))) return { error: "Another app already uses this identifier." }
@@ -95,8 +101,8 @@ export async function updateApp(env: Env, app: App, input: AppInput): Promise<{ 
     return { error: "Another app already uses this identifier." }
   }
   await env.DB.prepare(
-    `UPDATE apps SET name = ?, slug = ?, description = ?, default_duration_days = ?, default_status = ?, default_max_sites = ?, default_message = ?, notes = ?, updated_at = ? WHERE id = ?`
-  ).bind(input.name, input.slug, input.description, input.default_duration_days, input.default_status, input.default_max_sites, input.default_message, input.notes, Date.now(), app.id).run()
+    `UPDATE apps SET name = ?, slug = ?, description = ?, default_duration_days = ?, default_status = ?, default_max_sites = ?, default_message = ?, notes = ?, grace_days = ?, updated_at = ? WHERE id = ?`
+  ).bind(input.name, input.slug, input.description, input.default_duration_days, input.default_status, input.default_max_sites, input.default_message, input.notes, input.grace_days === undefined ? app.grace_days : input.grace_days, Date.now(), app.id).run()
   return { app: (await getApp(env, app.id))! }
 }
 
@@ -131,7 +137,15 @@ export async function listApps(env: Env, now = Date.now()): Promise<AppSummary[]
     await env.DB.prepare("SELECT app_id, version, channel, withdrawn_at FROM files WHERE app_id IS NOT NULL AND version != '' AND withdrawn_at IS NULL").all<{ app_id: string; version: string; channel: string; withdrawn_at: null }>()
   ).results
   const sets = await loadStatusSets(env)
-  const licenses = (await env.DB.prepare("SELECT app_id, status, expires_at FROM licenses WHERE app_id IS NOT NULL").all<{ app_id: string; status: string; expires_at: number | null }>()).results
+  const licenses = (
+    await env.DB.prepare("SELECT l.app_id, l.status, l.expires_at, l.grace_days, a.grace_days AS app_grace_days FROM licenses l JOIN apps a ON a.id = l.app_id").all<{
+      app_id: string
+      status: string
+      expires_at: number | null
+      grace_days: number | null
+      app_grace_days: number | null
+    }>()
+  ).results
   return apps.map((app) => {
     const set = setForApp(sets, app.id)
     const valid = licenses.filter((l) => l.app_id === app.id && findStatus(set, effectiveStatusKey(l, set, now))?.grants_access).length
@@ -164,7 +178,7 @@ export type VersionsInUse = {
   data: { version: string | null; sites: number; behind: number; outdated: boolean }[]
 }
 
-type SiteRow = { license_id: string; version: string | null; status: string; expires_at: number | null; last_check_at: number | null; created_at: number }
+type SiteRow = { license_id: string; version: string | null; status: string; expires_at: number | null; grace_days: number | null; app_grace_days: number | null; last_check_at: number | null; created_at: number }
 type ReleaseRow = { license_id: string | null; app_id: string | null; track_id: string | null; version: string; channel: string; statuses: string; withdrawn_at: null }
 
 /**
@@ -175,7 +189,7 @@ type ReleaseRow = { license_id: string | null; app_id: string | null; track_id: 
 export async function versionsInUse(env: Env, appId: string, now = Date.now()): Promise<VersionsInUse> {
   const [sites, releases, ownTracks, set] = await Promise.all([
     env.DB.prepare(
-      "SELECT x.license_id, x.version, l.status, l.expires_at, l.last_check_at, l.created_at FROM activations x JOIN licenses l ON l.id = x.license_id WHERE l.app_id = ?"
+      "SELECT x.license_id, x.version, l.status, l.expires_at, l.grace_days, a.grace_days AS app_grace_days, l.last_check_at, l.created_at FROM activations x JOIN licenses l ON l.id = x.license_id JOIN apps a ON a.id = l.app_id WHERE l.app_id = ?"
     ).bind(appId).all<SiteRow>(),
     env.DB.prepare(
       "SELECT license_id, app_id, track_id, version, channel, statuses, withdrawn_at FROM files WHERE (app_id = ? OR license_id IN (SELECT id FROM licenses WHERE app_id = ?)) AND version != '' AND withdrawn_at IS NULL ORDER BY uploaded_at DESC"

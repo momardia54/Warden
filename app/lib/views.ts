@@ -1,4 +1,4 @@
-import { effectiveStatusKey, findStatus, type StatusSet } from "./statuses"
+import { effectiveStatusKey, findStatus, type ExpiryFacts, type StatusSet } from "./statuses"
 
 /** Licences whose expiry date falls within this many days count as expiring soon. */
 export const EXPIRING_WINDOW_DAYS = 14
@@ -28,7 +28,7 @@ export function isLicenseView(value: unknown): value is LicenseView {
   return typeof value === "string" && (LICENSE_VIEWS as readonly string[]).includes(value)
 }
 
-type LicenseFacts = { status: string; expires_at: number | null; last_check_at: number | null; created_at: number }
+type LicenseFacts = ExpiryFacts & { last_check_at: number | null; created_at: number }
 
 export function inView(license: LicenseFacts, set: StatusSet, view: LicenseView, now = Date.now()): boolean {
   const valid = findStatus(set, effectiveStatusKey(license, set, now))?.grants_access ?? false

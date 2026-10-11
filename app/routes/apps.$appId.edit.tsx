@@ -37,6 +37,7 @@ export default function EditApp({ loaderData, actionData }: Route.ComponentProps
     default_status: app.default_status,
     default_duration_days: app.default_duration_days?.toString() ?? "",
     default_max_sites: app.default_max_sites?.toString() ?? "",
+    grace_days: app.grace_days?.toString() ?? "",
     default_message: app.default_message,
     notes: app.notes,
   }

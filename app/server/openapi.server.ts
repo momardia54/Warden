@@ -1,4 +1,5 @@
 import { VERSION } from "../lib/version"
+import { EVENT_TYPES } from "../lib/webhooks"
 
 /** OpenAPI 3.1 description of the API, served at /api/v1/openapi.json. */
 export function openApiSpec(origin: string) {
@@ -156,6 +157,37 @@ export function openApiSpec(origin: string) {
             "Ed25519 public key that signs check responses and download responses (`X-Warden-Signature-Ed25519` over the raw body, with `X-Warden-Key-Id`) and releases (`signature` over the 64 hex characters of `sha256`). Put it in the site's code. `public_key` is the raw 32-byte key in base64 (libsodium); `public_key_pem` is the same key as SubjectPublicKeyInfo PEM (OpenSSL, Node.js, WebCrypto). Created on first use; it does not change.",
           responses: { 200: { description: "{ algorithm: \"Ed25519\", key_id, public_key, public_key_pem, created_at }" }, 401: err },
         },
+      },
+      "/webhooks": {
+        get: { summary: "Outgoing webhooks (docs/webhooks.md)", responses: { 200: { description: "{ data: Webhook[], next: null }" }, 401: err } },
+        post: {
+          summary: "Create a webhook (permission: full)",
+          description: "Warden sends a signed POST (X-Warden-Signature-Ed25519 over the body, verified with GET /signing-key) to `url` for each event in `events`, retrying failures for about a day. At most 10 webhooks.",
+          requestBody: body({ $ref: "#/components/schemas/WebhookInput" }),
+          responses: { 201: { description: "The webhook" }, 403: err, 409: { description: "`too_many_webhooks`" }, 422: err },
+        },
+      },
+      "/webhooks/{id}": {
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        get: { summary: "A webhook", responses: { 200: { description: "{ id, url, description, events, enabled, created_at, updated_at }" }, 404: err } },
+        patch: { summary: "Change a webhook (permission: full). Only the fields sent", requestBody: body({ $ref: "#/components/schemas/WebhookInput" }), responses: { 200: { description: "The webhook" }, 403: err, 404: err, 422: err } },
+        delete: { summary: "Delete a webhook and its deliveries (permission: full)", responses: { 200: { description: "{ deleted: true, id }" }, 403: err, 404: err } },
+      },
+      "/webhooks/{id}/test": {
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        post: { summary: "Send a webhook.test event to this webhook now, even when paused (permission: full)", responses: { 200: { description: "The delivery, with its result" }, 403: err, 404: err } },
+      },
+      "/webhooks/{id}/deliveries": {
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        get: {
+          summary: "Deliveries of a webhook, newest first (kept 30 days)",
+          parameters: pageParams,
+          responses: { 200: { description: "{ data: [{ id, event, event_id, license_id, state (pending | sending | delivered | failed), attempts, last_status, last_error, last_attempt_at, next_attempt_at, created_at, delivered_at }], next }" }, 404: err },
+        },
+      },
+      "/webhooks/{id}/deliveries/{delivery}/retry": {
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }, { name: "delivery", in: "path", required: true, schema: { type: "string" } }],
+        post: { summary: "Send a waiting or failed delivery again now (permission: full)", responses: { 202: { description: "The delivery" }, 404: err, 409: { description: "`cannot_retry`: delivered already, or being sent" } } },
       },
       "/ip-blocks": {
         get: {
@@ -375,6 +407,7 @@ export function openApiSpec(origin: string) {
             customer_email: { type: "string", maxLength: 200 },
             app: { type: ["string", "null"], description: "App id or slug, or null for a standalone licence. On create, the app's defaults fill every field not sent" },
             max_sites: { type: ["integer", "null"], minimum: 1, description: "Maximum number of distinct sites (domains) that may use the licence. null for unlimited" },
+            grace_days: { type: ["integer", "null"], minimum: 0, maximum: 365, description: "Days the licence stays valid after its expiry date. null: its app's setting; 0: none" },
             status: { type: "string", description: "A status key of the licence's status set (GET /statuses, or GET /apps/{app}/statuses). Defaults to the default status of the set" },
             expires_at: { type: ["string", "null"], description: "YYYY-MM-DD (end of that day, UTC), an ISO date-time, or null for no end date" },
             duration_days: { type: "integer", description: "On create or edit: end date = today + this many days (ignored when expires_at is sent)" },
@@ -432,15 +465,28 @@ export function openApiSpec(origin: string) {
             default_duration_days: { type: ["integer", "null"], description: "Days a new licence is valid. null for no expiry" },
             default_max_sites: { type: ["integer", "null"], description: "Maximum sites of a new licence. null for unlimited" },
             default_message: { type: "string", maxLength: 300 },
+            grace_days: { type: ["integer", "null"], minimum: 1, maximum: 365, description: "Days the app's licences stay valid after their expiry date, unless a licence has its own setting. null: none" },
             notes: { type: "string", maxLength: 4000 },
+          },
+        },
+        WebhookInput: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: "https:// address (http:// only for localhost). Required on create" },
+            events: { type: "array", items: { enum: [...EVENT_TYPES] }, description: "Required on create, at least one" },
+            description: { type: "string", maxLength: 200 },
+            enabled: { type: "boolean", default: true },
           },
         },
         License: {
           type: "object",
           properties: {
             id: { type: "string" }, name: { type: "string" }, customer_name: { type: "string" }, customer_email: { type: "string" }, app: { type: ["object", "null"], properties: { id: { type: "string" }, slug: { type: "string" }, name: { type: "string" } } }, max_sites: { type: ["integer", "null"] }, sites_used: { type: "integer" }, key: { type: "string" }, check_url: { type: "string" },
-            status: { type: "string", description: "The status reported to sites: the stored status, or the status its expiry rule points to once the expiry date has passed" },
-            stored_status: { type: "string" }, valid: { type: "boolean", description: "true when the reported status is valid (grants_access; by default Active and Completed)" }, expires_at: { type: ["string", "null"] }, domains: { type: "array", items: { type: "string" } },
+            status: { type: "string", description: "The status reported to sites: the stored status, or the status its expiry rule points to once the expiry date and any grace period have passed" },
+            stored_status: { type: "string" }, valid: { type: "boolean", description: "true when the reported status is valid (grants_access; by default Active and Completed)" }, expires_at: { type: ["string", "null"] },
+            grace_days: { type: ["integer", "null"], description: "The licence's own grace period; null: its app's" },
+            effective_grace_days: { type: "integer", description: "The grace period in effect, in days" },
+            grace_ends_at: { type: ["string", "null"], description: "Set while the licence is in its grace period: expiry date passed, still valid until then" }, domains: { type: "array", items: { type: "string" } },
             message: { type: "string" }, notes: { type: "string" }, external_ref: { type: ["string", "null"] },
             created_at: { type: "string" }, updated_at: { type: "string" }, last_check_at: { type: ["string", "null"] }, last_check_domain: { type: ["string", "null"] }, check_count: { type: "integer" },
           },

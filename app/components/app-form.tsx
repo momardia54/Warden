@@ -7,7 +7,7 @@ import { NativeSelect } from "#/components/ui/native-select"
 import { Textarea } from "#/components/ui/textarea"
 import { slugify } from "#/lib/apps"
 import { StatusDraft } from "#/components/status-draft"
-import { defaultStatusKey, findStatus, type StatusSet } from "#/lib/statuses"
+import { defaultStatusKey, findStatus, MAX_GRACE_DAYS, type StatusSet } from "#/lib/statuses"
 
 export type AppFormValues = {
   name: string
@@ -16,11 +16,12 @@ export type AppFormValues = {
   default_status: string
   default_duration_days: string
   default_max_sites: string
+  grace_days: string
   default_message: string
   notes: string
 }
 
-export const EMPTY_APP_FORM: AppFormValues = { name: "", slug: "", description: "", default_status: "active", default_duration_days: "", default_max_sites: "", default_message: "", notes: "" }
+export const EMPTY_APP_FORM: AppFormValues = { name: "", slug: "", description: "", default_status: "active", default_duration_days: "", default_max_sites: "", grace_days: "", default_message: "", notes: "" }
 
 export function AppForm({ values, statuses: inherited, error, submitLabel, cancelTo, allowStatusCustomisation = false }: { values: AppFormValues; statuses: StatusSet; error?: string; submitLabel: string; cancelTo: string; allowStatusCustomisation?: boolean }) {
   const busy = useNavigation().state === "submitting"
@@ -113,6 +114,19 @@ export function AppForm({ values, statuses: inherited, error, submitLabel, cance
             Public message
           </FieldLabel>
           <Input id="default_message" name="default_message" defaultValue={values.default_message} placeholder="Optional" maxLength={300} />
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-lg border p-4">
+        <div>
+          <h2 className="text-sm font-semibold">Grace period</h2>
+          <p className="text-xs text-muted-foreground">Applies to every licence of the app, existing and new, unless a licence has a setting of its own.</p>
+        </div>
+        <div className="space-y-2">
+          <FieldLabel htmlFor="grace_days" help="Days a licence stays valid after its expiry date, so a late renewal does not interrupt the site. During the grace period the check returns valid: true, grace_ends_at and a reminder in message; then the expiry rule of the licence's status applies. Leave empty for no grace period.">
+            Days after the expiry date
+          </FieldLabel>
+          <Input id="grace_days" name="grace_days" type="number" min={1} max={MAX_GRACE_DAYS} step={1} defaultValue={values.grace_days} placeholder="None" className="max-w-40" />
         </div>
       </div>
 

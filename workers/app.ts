@@ -5,7 +5,8 @@ import { handleDownload } from "../app/server/download.server"
 import { guardPublic } from "../app/server/guard.server"
 import { pruneBlocks } from "../app/server/ip-blocks.server"
 import { pruneIpEvents } from "../app/server/protection.server"
-import { pruneActivity } from "../app/server/licenses.server"
+import { pruneActivity, scanLicenseEvents } from "../app/server/licenses.server"
+import { deliverDue, flushAfterResponse, pruneDeliveries, rememberOrigin } from "../app/server/webhooks.server"
 import { handleAppWebhook, handleWebhook, pruneImports } from "../app/server/sources.server"
 import { withDashboardHeaders } from "../app/server/headers.server"
 import { initRequestCache } from "../app/server/request-cache.server"
@@ -45,7 +46,12 @@ export default {
       return migrationFailureResponse(request, error)
     }
 
-    if (url.pathname.startsWith("/api/v1")) return handleApi(request, env, ctx)
+    if (url.pathname.startsWith("/api/v1")) {
+      rememberOrigin(env, ctx, url.origin)
+      const response = await handleApi(request, env, ctx)
+      flushAfterResponse(env, ctx)
+      return response
+    }
 
     // Public endpoint that authenticates with the licence key in the address.
     const check = url.pathname.match(/^\/check\/([A-Za-z0-9-]{10,40})\/?$/)
@@ -63,16 +69,30 @@ export default {
     // A per-request copy of env: it is the key of the request-scoped cache (see request-cache.server.ts).
     const requestEnv = { ...env } as Env
     initRequestCache(requestEnv, request)
+    rememberOrigin(env, ctx, url.origin)
     const response = await requestHandler(request, { cloudflare: { env: requestEnv, ctx, nonce } })
+    // Changes made in the dashboard can write webhook events: send them once the page is out.
+    flushAfterResponse(env, ctx)
     return withDashboardHeaders(response, request)
   },
 
-  async scheduled(_controller, env, ctx) {
+  // Runs every 10 minutes (wrangler.jsonc): time-based webhook events and due deliveries each time, the clean-up once
+  // a day. One cron trigger only, since an account has a limited number of them.
+  async scheduled(controller, env, ctx) {
     await ensureMigrated(env.DB, migrations)
+    const now = controller.scheduledTime
+    ctx.waitUntil(
+      scanLicenseEvents(env, now)
+        .then(() => deliverDue(env, now, 100))
+        .catch((error) => console.error("Warden webhooks failed:", error)),
+    )
+    const at = new Date(now)
+    if (at.getUTCHours() !== 3 || at.getUTCMinutes() >= 10) return
     ctx.waitUntil(pruneActivity(env).catch((error) => console.error("Warden prune failed:", error)))
     ctx.waitUntil(pruneBlocks(env).catch((error) => console.error("Warden block clean-up failed:", error)))
     ctx.waitUntil(pruneIpEvents(env).catch((error) => console.error("Warden event clean-up failed:", error)))
     ctx.waitUntil(pruneImports(env).catch((error) => console.error("Warden import clean-up failed:", error)))
+    ctx.waitUntil(pruneDeliveries(env, now).catch((error) => console.error("Warden delivery clean-up failed:", error)))
   },
 } satisfies ExportedHandler<Env>
 
