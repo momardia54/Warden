@@ -1,6 +1,6 @@
 # Roadmap
 
-Warden is **pre-1.0** (current: 0.3.0 in progress on `develop`, 0.2.0 released). The data model, the check response and the `/api/v1` endpoints can still change between 0.x versions; changes are listed in [CHANGELOG.md](CHANGELOG.md). Version 1.0.0 means the check response and API are stable and only change in backward compatible ways.
+Warden is **pre-1.0** (current: 0.4.0 in progress on `develop`, 0.3.0 released). The data model, the check response and the `/api/v1` endpoints can still change between 0.x versions; changes are listed in [CHANGELOG.md](CHANGELOG.md). Version 1.0.0 means the check response and API are stable and only change in backward compatible ways.
 
 This is a plan, not a promise. Order can change.
 
@@ -34,16 +34,15 @@ Warden uses [semantic versioning](https://semver.org/). The version is in `packa
 - **Publishing from GitHub**: a GitHub App created in two clicks (or a token and a webhook); version tags published into a track, with a fixed package folder and optional tag prefixes
 - Consistent terminology (valid and invalid) across the dashboard, API and docs; earlier API field names kept as deprecated aliases
 
+### 0.3.0 (2026-10-11)
+
+- **Ed25519 signatures** on every check and download answer and on every release; sites verify with the installation's public key, and a nonce rejects replayed answers
+- **API review**: one paging scheme for every list, specific error codes, the 0.2.0 aliases removed
+- **Upgrade notes** from 0.1 and 0.2 (docs/upgrade-notes.md)
+
 ## Towards 1.0.0
 
 Version 1.0.0 freezes the check response and the API, so everything that would change them comes first. Order agreed on 2026-10-10; on 2026-10-11 product completeness moved before trust, so the security work comes last, on the finished product.
-
-### 0.3.0: the contract
-
-- [x] **Public-key signatures (Ed25519) on check responses.** The HMAC key was the licence key, which the site also holds, so the site's owner could forge a valid response; sites now verify with a public key only, and a nonce rejects replayed answers. Must come before 1.0: it changes the verification code every site runs
-- [x] **Signed release packages (Ed25519)**, so an updater can verify a package came from you, not only that it arrived intact
-- [x] **API review and freeze**: remove the deprecated aliases (`in_force`, `not_in_force`, `licenses_in_force`, `?view=in_force`), check every name against the valid/invalid vocabulary, consistent errors and pagination on every list, final review of the tracks and source endpoints
-- [x] **Upgrade notes** from 0.1 and 0.2, listing each breaking change and what to do
 
 ### 0.4.0: product completeness
 

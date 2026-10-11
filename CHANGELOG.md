@@ -4,14 +4,15 @@ All notable changes, newest first. Warden follows [semantic versioning](https://
 
 **Next, towards 1.0.0** (details in [Roadmap.md](Roadmap.md)):
 
-- **0.3.0, the contract**: Ed25519 signatures on check responses and on release packages, API review and freeze (deprecated aliases removed), upgrade notes
 - **0.4.0, completeness**: outgoing webhooks, grace period after expiry, public documentation site and a verified Deploy button
 - **0.5.0, trust**: end-to-end tests on real Cloudflare (GitHub App, private repositories, phone width, CI), backups and export, two-factor sign-in or Cloudflare Access, independent security review
 - **1.0.0**: the check response and the API are frozen
 
-## 0.3.0 (unreleased)
+## 0.4.0 (unreleased)
 
 Not released yet: on the `develop` branch.
+
+## 0.3.0 (2026-10-11)
 
 What to change on your side: [docs/upgrade-notes.md](docs/upgrade-notes.md), section "0.2 to 0.3".
 
