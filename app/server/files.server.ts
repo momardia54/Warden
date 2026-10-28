@@ -1,5 +1,5 @@
 import { cleanFileName, defaultReleaseStatuses, MAX_FILE_BYTES } from "../lib/files"
-import { CHANNELS, isChannel, isValidVersion, MAX_CHANGELOG_LENGTH, MAX_VERSION_LENGTH, type Channel } from "../lib/releases"
+import { CHANNELS, compareVersions, isChannel, isValidVersion, MAX_CHANGELOG_LENGTH, MAX_VERSION_LENGTH, type Channel } from "../lib/releases"
 import { describeStatusKeys, parseStatusKeys, splitStatusKeys, type StatusSet } from "../lib/statuses"
 import type { App } from "./apps.server"
 import type { License } from "./licenses.server"
@@ -127,6 +127,21 @@ function readVersion(raw: string | undefined): { version: string } | { error: st
   return { version }
 }
 
+/**
+ * The release of a track that already has this version, other than `exceptId`. Versions are compared by precedence,
+ * so 1.4.0, v1.4.0 and 1.4 are the same version. Withdrawn releases do not count: a version can be published again
+ * after its release is withdrawn.
+ */
+export async function releaseWithVersion(env: Env, trackId: string, version: string, exceptId: string | null = null): Promise<{ id: string; name: string; version: string } | null> {
+  const rows = (await env.DB.prepare("SELECT id, name, version FROM files WHERE track_id = ? AND version <> '' AND withdrawn_at IS NULL").bind(trackId).all<{ id: string; name: string; version: string }>()).results
+  return rows.find((r) => r.id !== exceptId && compareVersions(r.version, version) === 0) ?? null
+}
+
+const duplicateVersion = (version: string, trackName: string, existing: { name: string }): Failure => ({
+  error: `Version ${version} is already published in the track "${trackName}" (${existing.name}). Withdraw or delete that release first.`,
+  status: 409,
+})
+
 function readChannel(raw: string | undefined): { channel: Channel } | { error: string } {
   const channel = (raw ?? "").trim().toLowerCase() || "stable"
   return isChannel(channel) ? { channel } : { error: `channel must be one of: ${CHANNELS.join(", ")}.` }
@@ -173,6 +188,8 @@ export async function storeFile(env: Env, owner: FileOwner, input: StoreInput): 
     trackId = resolved.track.id
     statuses = resolved.track.statuses.split(",").filter(Boolean)
     checkDomain = resolved.track.check_domain
+    const existing = await releaseWithVersion(env, trackId, version.version)
+    if (existing) return duplicateVersion(version.version, resolved.track.name, existing)
   } else {
     statuses = input.statuses === undefined || input.statuses === "" ? defaultReleaseStatuses(set) : parseStatusKeys(input.statuses, set)
     if (!statuses) return { error: `statuses must be a comma separated list of licence statuses: ${set.map((s) => s.key).join(", ")}.`, status: 422 }
@@ -260,6 +277,11 @@ export async function updateFile(env: Env, owner: FileOwner, file: LicenseFile, 
   }
 
   const withdrawnAt = changes.withdrawn === undefined ? file.withdrawn_at : changes.withdrawn ? (file.withdrawn_at ?? Date.now()) : null
+  // A release that gets a new version, moves to another track or is restored must not repeat a version of its track.
+  if (version.version && trackId && withdrawnAt === null && (version.version !== file.version || trackId !== file.track_id || file.withdrawn_at !== null)) {
+    const existing = await releaseWithVersion(env, trackId, version.version, file.id)
+    if (existing) return duplicateVersion(version.version, trackName ?? (await getTrack(env, owner, trackId))?.name ?? "", existing)
+  }
   const notes = changes.notes === undefined ? file.notes : changes.notes.trim().slice(0, 500)
   const changelog = changes.changelog === undefined ? file.changelog : changes.changelog.trim().slice(0, MAX_CHANGELOG_LENGTH)
   const statements = [
@@ -289,7 +311,13 @@ export async function deleteFile(env: Env, owner: FileOwner, file: LicenseFile):
 async function deleteStoredObjects(env: Env, column: "license_id" | "app_id", id: string): Promise<void> {
   if (!storageConfigured(env)) return
   const rows = (await env.DB.prepare(`SELECT r2_key FROM files WHERE ${column} = ?`).bind(id).all<{ r2_key: string }>()).results
-  const keys = rows.map((r) => r.r2_key)
+  // Packages that imports in progress are writing, which have no file row yet.
+  const packages = (
+    await env.DB.prepare(`SELECT i.package_key FROM source_imports i JOIN release_sources s ON s.id = i.source_id WHERE s.${column} = ? AND i.package_key <> ''`)
+      .bind(id)
+      .all<{ package_key: string }>()
+  ).results
+  const keys = [...rows.map((r) => r.r2_key), ...packages.map((p) => p.package_key)]
   for (let i = 0; i < keys.length; i += 1000) await env.FILES.delete(keys.slice(i, i + 1000))
 }
 

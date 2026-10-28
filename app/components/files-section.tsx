@@ -459,7 +459,11 @@ function ReleaseFields({
           <FieldLabel htmlFor="release-version" help={VERSION_HELP}>
             Version
           </FieldLabel>
-          <Input id="release-version" value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.4.0, or empty for an attachment" disabled={disabled} aria-invalid={invalid} className="font-mono" />
+          <Input
+            id="release-version"
+            value={version}
+            onChange={(e) => setVersion(e.target.value)}
+            placeholder="1.4.0, or empty for an attachment" disabled={disabled} aria-invalid={invalid} className="font-mono" />
           {invalid && <p className="text-xs text-destructive">Use numbers separated by dots, optionally with a suffix: 1.4.0 or 2.0.0-beta.1.</p>}
         </div>
         <div className="space-y-1.5">

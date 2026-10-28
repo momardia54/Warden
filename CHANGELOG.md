@@ -7,18 +7,34 @@ All notable changes, newest first. Warden follows [semantic versioning](https://
 - **0.5.0, trust**: end-to-end tests on real Cloudflare (GitHub App, private repositories, phone width, CI), backups and export, two-factor sign-in or Cloudflare Access, a complete OpenAPI description checked by tests, independent security review
 - **1.0.0**: the check response and the API are frozen
 
-## 0.5.0 (unreleased)
+## 0.4.1 (2026-10-28)
 
-Not released yet: on the `develop` branch.
+Bug fixes. Migration 0015 runs by itself on the first request; nothing to change on your side.
 
-### Fixed
+### Fixed: dashboard speed
+
+- **Pages took several database round trips one after another.** The queries of each page are now sent together, and the status sets are read once per request instead of once per section: the overview, apps, app, analytics and licence pages wait for about half as many round trips as before.
+- **The Worker now uses Smart Placement** (`wrangler.jsonc`, available on every plan): Cloudflare may run it close to the database rather than close to the visitor, which shortens each of those round trips. It takes effect on the next deploy.
+- The sidebar marks the page you clicked at once, instead of dimming the previous one until the new page has loaded. Links to apps and licences on the overview and apps pages load their data on hover, as the sidebar and the licence list already did.
+
+### Fixed: releases and webhooks
+
+- **Uploading from the dashboard ignored the track chosen in the upload dialog.** For an app or licence with several tracks, every upload was refused with "choose a track".
+- **A version could be published twice in the same track** by uploading it again, by changing a release's version or track, or by restoring a withdrawn release. These now return `409` naming the release that holds the version (`1.4.0` and `v1.4.0` count as the same version); withdraw or delete that release first. Releases already duplicated are left as they are.
+- A tag whose build metadata contains a hyphen (`v1.4.0+build-7`) was published on the beta channel; only a pre-release suffix (`v1.4.0-rc.1`) selects beta.
+- **Expiry events could be delayed indefinitely.** Each scheduled run looked at the first 500 expired licences, including licences in their grace period that had nothing left to report, so with many of those the expiry of others was never reported. The scan now selects only licences with an event due.
+- The scheduled run delivers at most 40 webhooks per run (was 100), under the free plan's limit of 50 outgoing requests per invocation; the rest go out in the next runs.
+- Deleting a licence, an app or a repository connection while an import was in progress left the partly written package in R2.
+- The overview's "Needs attention" list said "Expires 8 days ago" for a licence in its grace period; it now says "Expired 8 days ago, in grace period".
+
+### Fixed: publishing from GitHub
 
 - **Publishing a large repository stopped the Worker** ("exceeded CPU time limit" or "exceeded memory limit"), on the Workers free plan from a few megabytes. An import used to hold the whole archive in memory twice and hash it chunk by chunk. It now streams the archive into R2 in 10 MB parts, repacks it part by part straight into the release's file and hashes each part once: a 46 MB WordPress archive takes about 0.2 s of CPU instead of being stopped at 1.7 s, with memory flat whatever the size ([docs/repositories.md](docs/repositories.md#limits)).
 - **Uploads** (dashboard and API) are stored first, then hashed in 10 MB blocks, instead of hashed chunk by chunk as they arrived, which used most of the CPU time of large uploads.
+- **Imports resume after a stop.** Each step of an import records its progress (migration 0015). If Cloudflare stops one midway, the scheduled run (every 10 minutes) continues it from the last part written, rather than the import failing after 15 minutes. An import is failed after 3 runs without progress or 6 hours in progress. While in progress, an import's `detail` names the current step.
 
 ### Changed
 
-- **Imports resume after a stop.** Each step of an import records its progress (migration 0015). If Cloudflare stops one midway, the scheduled run (every 10 minutes) continues it from the last part written, rather than the import failing after 15 minutes. An import is failed after 3 runs without progress or 6 hours in progress. While in progress, an import's `detail` names the current step.
 - A repository archive whose local file headers do not repeat the names of its central directory is refused as unsupported. GitHub archives are not affected.
 
 ## 0.4.0 (2026-10-11)

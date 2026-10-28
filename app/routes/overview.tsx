@@ -11,7 +11,7 @@ import { Button } from "#/components/ui/button"
 import { StatusBadge } from "#/components/status-badge"
 import { useAllStatuses, useStatusLabel } from "#/components/status-context"
 import { DEFAULT_COLOR } from "#/lib/statuses"
-import { describeExpiry, EXPIRING_WINDOW_DAYS, SILENT_AFTER_DAYS, VIEW_LABELS } from "#/lib/views"
+import { daysUntil, describeExpiry, EXPIRING_WINDOW_DAYS, SILENT_AFTER_DAYS, VIEW_LABELS } from "#/lib/views"
 import { cn } from "#/lib/utils"
 import { dailyTraffic } from "~/server/analytics.server"
 import { requireAuth } from "~/server/auth.server"
@@ -113,7 +113,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                 {attention.expiring.map((l) => (
                   <div key={`e-${l.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
                     <div className="min-w-0 flex-1">
-                      <Link to={`/licenses/${l.id}`} className="font-medium hover:underline">
+                      <Link to={`/licenses/${l.id}`} prefetch="intent" className="font-medium hover:underline">
                         {l.name}
                       </Link>
                       <div className="text-xs text-muted-foreground">
@@ -121,14 +121,17 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                         {l.customer_name ? `, ${l.customer_name}` : ""}
                       </div>
                     </div>
-                    <span className="text-sm text-amber-700 tabular-nums dark:text-amber-400">Expires {describeExpiry(l.expires_at)}</span>
+                    <span className="text-sm text-amber-700 tabular-nums dark:text-amber-400">
+                      {/* Listed licences are valid: one whose date has passed is in its grace period. */}
+                      {l.expires_at !== null && daysUntil(l.expires_at) < 0 ? `Expired ${describeExpiry(l.expires_at)}, in grace period` : `Expires ${describeExpiry(l.expires_at)}`}
+                    </span>
                     <QuickExtend licenseId={l.id} />
                   </div>
                 ))}
                 {attention.silent.map((l) => (
                   <div key={`s-${l.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
                     <div className="min-w-0 flex-1">
-                      <Link to={`/licenses/${l.id}`} className="font-medium hover:underline">
+                      <Link to={`/licenses/${l.id}`} prefetch="intent" className="font-medium hover:underline">
                         {l.name}
                       </Link>
                       <div className="text-xs text-muted-foreground">

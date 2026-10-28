@@ -95,12 +95,13 @@ const isValid = (sets: StatusSets, row: { status: string; owner: string }) => !S
 
 /** The full report of the Analytics page and of GET /api/v1/analytics. */
 export async function trafficReport(env: Env, scope: TrafficScope, days: number, now = Date.now()): Promise<TrafficReport> {
-  const daily = await dailyTraffic(env, scope, days, now)
-  const { from, series, checks, sets } = daily
+  const from = periodStart(days, now)
   const s = scopeSql(scope)
 
   const whole = Object.keys(scope).length === 0
-  const [siteTotals, refusedDownloads, perLicense, files, perIp, licensesPerIp, guarded] = await Promise.all([
+  // The daily series and the totals are independent queries: they are sent together.
+  const [daily, siteTotals, refusedDownloads, perLicense, files, perIp, licensesPerIp, guarded, newSites] = await Promise.all([
+    dailyTraffic(env, scope, days, now),
     env.DB.prepare(
       `SELECT COUNT(DISTINCT a.license_id || ' ' || a.domain) AS sites
        FROM activity a JOIN licenses l ON l.id = a.license_id
@@ -144,12 +145,11 @@ export async function trafficReport(env: Env, scope: TrafficScope, days: number,
     whole
       ? env.DB.prepare("SELECT kind, SUM(count) AS n FROM refused_requests WHERE day >= ? GROUP BY kind").bind(from / DAY_MS).all<{ kind: string; n: number }>()
       : Promise.resolve(null),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM activations ac JOIN licenses l ON l.id = ac.license_id WHERE ac.first_seen_at >= ?${scopeSql(scope, "ac.license_id").sql}`)
+      .bind(from, ...s.binds)
+      .first<{ n: number }>(),
   ])
-  const newSites = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM activations ac JOIN licenses l ON l.id = ac.license_id WHERE ac.first_seen_at >= ?${scopeSql(scope, "ac.license_id").sql}`
-  )
-    .bind(from, ...s.binds)
-    .first<{ n: number }>()
+  const { series, checks, sets } = daily
 
   // Refusals by reason. The same key can be labelled differently by two sets; the first label seen is kept.
   const reasons = new Map<string, InvalidReason>()

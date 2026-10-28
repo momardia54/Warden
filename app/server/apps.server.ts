@@ -124,28 +124,25 @@ export async function deleteApp(env: Env, app: App): Promise<{ ok: true } | { er
 }
 
 export async function listApps(env: Env, now = Date.now()): Promise<AppSummary[]> {
-  const apps = (
-    await env.DB.prepare(
+  // Independent reads, sent together: one round trip to the database instead of four.
+  const [{ results: apps }, { results: versions }, sets, { results: licenses }] = await Promise.all([
+    env.DB.prepare(
       `SELECT a.*,
         (SELECT COUNT(*) FROM licenses l WHERE l.app_id = a.id) AS licenses,
         (SELECT COUNT(*) FROM activations x JOIN licenses l ON l.id = x.license_id WHERE l.app_id = a.id) AS sites,
         (SELECT COUNT(*) FROM files f WHERE f.app_id = a.id) AS files
        FROM apps a ORDER BY a.name COLLATE NOCASE`
-    ).all<Omit<AppSummary, "latest_version" | "valid">>()
-  ).results
-  const versions = (
-    await env.DB.prepare("SELECT app_id, version, channel, withdrawn_at FROM files WHERE app_id IS NOT NULL AND version != '' AND withdrawn_at IS NULL").all<{ app_id: string; version: string; channel: string; withdrawn_at: null }>()
-  ).results
-  const sets = await loadStatusSets(env)
-  const licenses = (
-    await env.DB.prepare("SELECT l.app_id, l.status, l.expires_at, l.grace_days, a.grace_days AS app_grace_days FROM licenses l JOIN apps a ON a.id = l.app_id").all<{
+    ).all<Omit<AppSummary, "latest_version" | "valid">>(),
+    env.DB.prepare("SELECT app_id, version, channel, withdrawn_at FROM files WHERE app_id IS NOT NULL AND version != '' AND withdrawn_at IS NULL").all<{ app_id: string; version: string; channel: string; withdrawn_at: null }>(),
+    loadStatusSets(env),
+    env.DB.prepare("SELECT l.app_id, l.status, l.expires_at, l.grace_days, a.grace_days AS app_grace_days FROM licenses l JOIN apps a ON a.id = l.app_id").all<{
       app_id: string
       status: string
       expires_at: number | null
       grace_days: number | null
       app_grace_days: number | null
-    }>()
-  ).results
+    }>(),
+  ])
   return apps.map((app) => {
     const set = setForApp(sets, app.id)
     const valid = licenses.filter((l) => l.app_id === app.id && findStatus(set, effectiveStatusKey(l, set, now))?.grants_access).length
@@ -154,8 +151,7 @@ export async function listApps(env: Env, now = Date.now()): Promise<AppSummary[]
 }
 
 export async function getAppSummary(env: Env, idOrSlug: string): Promise<AppSummary | null> {
-  const app = await findApp(env, idOrSlug)
-  return app ? ((await listApps(env)).find((a) => a.id === app.id) ?? null) : null
+  return (await listApps(env)).find((a) => a.id === idOrSlug || a.slug === idOrSlug) ?? null
 }
 
 /** The licence values a new licence of this app starts with. Explicit input overrides them. */
@@ -234,9 +230,9 @@ export async function versionsInUse(env: Env, appId: string, now = Date.now()): 
 /** For each app: how many of its sites are behind the latest release their own licence is offered. */
 export async function outdatedSitesByApp(env: Env, apps: AppSummary[]): Promise<Record<string, number>> {
   const out: Record<string, number> = {}
-  for (const app of apps) {
-    const versions = await versionsInUse(env, app.id)
-    if (versions.outdated > 0) out[app.id] = versions.outdated
-  }
+  const all = await Promise.all(apps.map((app) => versionsInUse(env, app.id)))
+  apps.forEach((app, i) => {
+    if (all[i].outdated > 0) out[app.id] = all[i].outdated
+  })
   return out
 }

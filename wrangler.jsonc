@@ -5,6 +5,9 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"main": "./workers/app.ts",
 	"observability": { "enabled": true },
+	// Smart Placement (all plans): Cloudflare may run the Worker close to the database instead of close to the visitor.
+	// A dashboard page makes several database queries in a row, so this saves a round trip across regions for each one.
+	"placement": { "mode": "smart" },
 	// No database_name / database_id on purpose. On deploy Wrangler creates a database named
 	// "<worker-name>-db" and keeps reusing it. Worker names are unique per account, so two installs never
 	// share a database. The tables are created and upgraded by the Worker itself on first request.

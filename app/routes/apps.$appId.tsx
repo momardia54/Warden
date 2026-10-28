@@ -33,17 +33,19 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   await requireAuth(request, env)
   const app = await getAppSummary(env, params.appId)
   if (!app) throw new Response("App not found", { status: 404 })
-  const custom = await hasCustomSet(env, { app: app.id })
-  const [licenses, files, statuses, usage, versions, traffic] = await Promise.all([
+  // Everything the page shows is read at once; only the status counts wait, and only for an app with its own statuses.
+  const [custom, licenses, files, statuses, versions, traffic, tracks, githubApp] = await Promise.all([
+    hasCustomSet(env, { app: app.id }),
     queryLicenses(env, { appId: app.id, limit: 1000 }),
     listFiles(env, { app }),
     getStatusSetForApp(env, app.id),
-    custom ? statusCounts(env, { app: app.id }) : Promise.resolve({}),
     versionsInUse(env, app.id),
     dailyTraffic(env, { app: app.id }, 30, Date.now(), "checks"),
+    trackPanels(env, { app }, new URL(request.url).origin),
+    getGitHubApp(env),
   ])
-  const tracks = await trackPanels(env, { app }, new URL(request.url).origin)
-  return { app, licenses, files, statuses, custom, usage, versions, traffic: traffic.series, filesConfigured: storageConfigured(env), tracks, githubApp: (await getGitHubApp(env)) !== null }
+  const usage = custom ? await statusCounts(env, { app: app.id }) : {}
+  return { app, licenses, files, statuses, custom, usage, versions, traffic: traffic.series, filesConfigured: storageConfigured(env), tracks, githubApp: githubApp !== null }
 }
 
 export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {

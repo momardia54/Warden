@@ -8,7 +8,7 @@ import { createApiKey } from "../app/server/api-keys.server.ts"
 import { handleApi } from "../app/server/api.server.ts"
 import { createApp, versionsInUse, type App } from "../app/server/apps.server.ts"
 import { handleCheck } from "../app/server/check.server.ts"
-import { listFiles, storeFile, type FileOwner } from "../app/server/files.server.ts"
+import { listFiles, storeFile, updateFile, type FileOwner } from "../app/server/files.server.ts"
 import { createLicense, getLicense, setStatus, type LicenseInput } from "../app/server/licenses.server.ts"
 import { splitStatements } from "../app/server/migrate.server.ts"
 import { handleWebhook, listImports, saveSource } from "../app/server/sources.server.ts"
@@ -252,3 +252,32 @@ test("API: tracks, conflicts, what a licence receives, uploads into a track", as
   assert.equal((await call("DELETE", "/apps/harbor-theme/tracks/Final%20build")).status, 409)
   assert.equal((await call("DELETE", "/apps/harbor-theme/tracks/Final%20build?move_to=Updates")).json.deleted, true)
 })
+
+test("a version is published once per track: upload, edit and restore refuse a duplicate", async () => {
+  const { env } = setup()
+  const app = await newApp(env)
+  const owner = { app }
+  await track(env, owner, "Updates", "active")
+  const first = await release(env, owner, "1.4.0", "Updates")
+  const text = "other bytes"
+  const upload = (version: string) => storeFile(env, owner, { name: "x.zip", version, track: "Updates", checkDomain: false, size: text.length, body: new Response(text).body, contentType: "application/zip" })
+
+  // "v1.4.0" and "1.4.0" are the same version.
+  const duplicate = await upload("v1.4.0")
+  assert.ok("error" in duplicate && duplicate.status === 409, JSON.stringify(duplicate))
+  assert.match(duplicate.error, /already published in the track "Updates"/)
+
+  const second = await upload("1.5.0")
+  assert.ok("file" in second)
+  const edited = await updateFile(env, owner, second.file, { version: "1.4.0" })
+  assert.ok("error" in edited && edited.status === 409)
+
+  // A withdrawn release frees its version, and cannot be restored while another release holds it.
+  assert.ok("file" in (await updateFile(env, owner, first, { withdrawn: true })))
+  const again = await upload("1.4.0")
+  assert.ok("file" in again)
+  const withdrawn = (await listFiles(env, owner)).find((f) => f.id === first.id)!
+  const restored = await updateFile(env, owner, withdrawn, { withdrawn: false })
+  assert.ok("error" in restored && restored.status === 409)
+})
+

@@ -146,7 +146,7 @@ export async function apiWithinLimit(request: Request, env: Env, keyPrefix: stri
   return withinLimit(limiterFor(env, limits.api_key), `api:${new URL(request.url).host}:${keyPrefix}`)
 }
 
-/** After a check or download with a key that does not exist: feeds the "guessing licence keys" rule. */
+/** After a check or download with a key that does not exist: feeds the "Invalid licence keys" rule. */
 export function reportUnknownKey(env: Env, ctx: ExecutionContext, request: Request) {
   const ip = clientIp(request)
   if (ip) ctx.waitUntil(applyRules(env, ip, { kind: "invalid_key" }).catch((error) => console.error("Protection rules failed:", error)))

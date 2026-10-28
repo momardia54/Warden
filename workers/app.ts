@@ -83,7 +83,9 @@ export default {
     const now = controller.scheduledTime
     ctx.waitUntil(
       scanLicenseEvents(env, now)
-        .then(() => deliverDue(env, now, 100))
+        // At most 40 deliveries per run: the free plan allows 50 outgoing requests per invocation, and a resumed
+        // release import (below) needs a few. Deliveries left over go out on the next run.
+        .then(() => deliverDue(env, now, 40))
         .catch((error) => console.error("Warden webhooks failed:", error)),
     )
     ctx.waitUntil(resumeImports(env, now).catch((error) => console.error("Warden import resume failed:", error)))
