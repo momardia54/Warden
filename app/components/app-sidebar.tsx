@@ -1,7 +1,7 @@
 import { Boxes, ChartColumn, Plug, ShieldBan, KeyRound, Braces, LayoutDashboard, LogOut, Monitor, Moon, MoreHorizontal, Search, ShieldCheck, Sun } from "lucide-react"
 import { VERSION } from "#/lib/version"
 import { Kbd } from "#/components/command-menu"
-import { NavLink, useFetcher, useLocation } from "react-router"
+import { NavLink, useFetcher, useLocation, useNavigation } from "react-router"
 import { useTheme } from "next-themes"
 import {
   Sidebar,
@@ -39,7 +39,10 @@ const NAV = [
 ]
 
 function NavGroup({ label, items }: { label: string; items: typeof NAV }) {
+  // While a page loads, its item is already shown as current: the click is acknowledged at once.
+  const navigation = useNavigation()
   const location = useLocation()
+  const pathname = (navigation.location ?? location).pathname
   return (
     <SidebarGroup>
       <SidebarGroupLabel>{label}</SidebarGroupLabel>
@@ -47,9 +50,7 @@ function NavGroup({ label, items }: { label: string; items: typeof NAV }) {
         <SidebarMenu>
           {items.map((item) => (
             <SidebarMenuItem key={item.to}>
-              {/* NavLink adds a "pending" class while its page loads. A className function cannot be used here: the
-                  Slot of SidebarMenuButton merges class names as strings. */}
-              <SidebarMenuButton asChild isActive={location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)} tooltip={item.title} className="[&.pending]:opacity-60">
+              <SidebarMenuButton asChild isActive={pathname === item.to || pathname.startsWith(`${item.to}/`)} tooltip={item.title}>
                 <NavLink to={item.to} prefetch="intent">
                   <item.icon />
                   <span>{item.title}</span>

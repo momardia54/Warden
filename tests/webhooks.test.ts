@@ -185,3 +185,15 @@ test("time-based events: grace period started, expired and no recent check, each
     fetches.restore()
   }
 })
+
+test("licences already reported in their grace period do not hold up the expiry events of others", async () => {
+  const { env, api, deliveries } = await setup()
+  await api("POST", "/webhooks", { url: "https://hooks.example.com/w", events: ["license.grace_period_started", "license.expired"] })
+  const now = Date.now()
+  for (const name of ["Grace 1", "Grace 2", "Grace 3"]) await createLicense(env, { ...base, name, expires_at: now - DAY, grace_days: 30 })
+  // The first run reports the three grace periods; later runs, two licences at a time, must still reach the lapsed one.
+  assert.equal(await scanLicenseEvents(env, now, 10), 3)
+  await createLicense(env, { ...base, name: "Lapsed", expires_at: now - DAY })
+  assert.equal(await scanLicenseEvents(env, now + 60_000, 2), 1)
+  assert.ok((await deliveries()).some((d: any) => d.event === "license.expired" && JSON.parse(d.payload).data.license.name === "Lapsed"))
+})

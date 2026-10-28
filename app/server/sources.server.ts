@@ -23,7 +23,7 @@ import { fillPart, planRepack, readDirectory, sourceRange, tailLength, ZipError 
 import { readTextUpTo } from "./api-http.server"
 import { getApp } from "./apps.server"
 import { findAppRepository, getGitHubApp, installationToken } from "./github-app.server"
-import { fileKey, statusSetForOwner, storeFile, type FileOwner } from "./files.server"
+import { fileKey, releaseWithVersion, statusSetForOwner, storeFile, type FileOwner } from "./files.server"
 import { getLicense } from "./licenses.server"
 import { blockSize, hashObject, readRange, sha256Hasher, uploadStream } from "./storage.server"
 import { github } from "./source-providers/github.server"
@@ -292,6 +292,9 @@ export async function regenerateWebhookSecret(env: Env, source: ReleaseSource): 
 
 /** Disconnects the repository. Releases it already published stay. */
 export async function deleteSource(env: Env, source: ReleaseSource): Promise<void> {
+  // Imports in progress lose their record: their working copies and unpublished packages go first.
+  const running = (await env.DB.prepare("SELECT id, stage, upload_id, package_key FROM source_imports WHERE source_id = ? AND state = 'pending'").bind(source.id).all<Work & { id: string }>()).results
+  for (const row of running) await discardWork(env, row.id, row)
   await env.DB.batch([env.DB.prepare("DELETE FROM source_imports WHERE source_id = ?").bind(source.id), env.DB.prepare("DELETE FROM release_sources WHERE id = ?").bind(source.id)])
 }
 
@@ -475,9 +478,7 @@ async function publishTarget(env: Env, source: ReleaseSource, row: SourceImport)
   const track = source.track_id ? await getTrack(env, owner, source.track_id) : null
   if (!track) return failed("This repository is not connected to a track. Connect it to a track again.")
   // Versions are unique within a track: another track (a final build, say) may publish the same number.
-  const duplicate = await env.DB.prepare("SELECT name FROM files WHERE track_id = ? AND version = ? AND withdrawn_at IS NULL LIMIT 1")
-    .bind(track.id, row.version)
-    .first<{ name: string }>()
+  const duplicate = await releaseWithVersion(env, track.id, row.version)
   if (duplicate) {
     return { result: "skipped", detail: `Version ${row.version} is already published in "${track.name}" (${duplicate.name}). Withdraw or delete it, then retry, to publish this tag instead.` }
   }

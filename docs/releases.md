@@ -18,7 +18,7 @@ A track is what a set of licence statuses receives. An app (or a standalone lice
 
 - **Each status belongs to one track at most**, so a status never has two packages. Warden refuses a track that claims a status another track serves, and names that track.
 - A licence is offered **the latest release of the track that serves its current status**, nothing else: a Completed licence receives the latest Final build even when Updates has a higher version. When you change a licence's status, what its site is offered changes with it.
-- **Versions are unique per track**, not per app: the Final build can be 1.0.0 while Updates is at 1.4.0, or both can be 1.4.0.
+- **Versions are unique per track**, not per app: the Final build can be 1.0.0 while Updates is at 1.4.0, or both can be 1.4.0. Uploading a version the track already has (`v1.4.0` and `1.4.0` are the same), or changing or restoring a release to one, returns `409`; withdrawn releases do not count.
 - A track also sets the **domain check** of its releases.
 - A track receives releases by **upload**, or from a **connected repository** ([repositories.md](repositories.md)). Several tracks can be fed by one repository, told apart by tag prefix.
 - A licence of an app follows the app's tracks. It can have **tracks of its own**: for the statuses they serve, they replace the app's tracks (for example a custom build for one client); for the other statuses, the app's tracks still apply. The licence page says which track the licence receives now.

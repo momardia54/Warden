@@ -1,6 +1,7 @@
 import {
   addToSet, DEFAULT_COLOR, DEFAULT_STATUSES, defaultStatusKey, findStatus, isColor, moveInSet, removeFromSet, updateInSet, validateStatusSet, type StatusDef, type StatusFields, type StatusSet,
 } from "../lib/statuses"
+import { memo } from "./request-cache.server"
 
 type Row = { app_id: string | null; license_id: string | null; key: string; label: string; description: string; color: string; grants_access: number; on_expiry: string | null; check_message: string; is_default: number; position: number }
 
@@ -28,7 +29,12 @@ type LicenseRef = { id: string; app_id: string | null }
 /** Every customised set of statuses in the installation. Anything without a set uses the built-in defaults. */
 export type StatusSets = { byApp: Record<string, StatusSet>; byLicense: Record<string, StatusSet> }
 
-export async function loadStatusSets(env: Env): Promise<StatusSets> {
+export function loadStatusSets(env: Env): Promise<StatusSets> {
+  // Several loaders of one page need the sets: read them once per request (not after a change in the same request).
+  return memo(env, "statusSets", () => readStatusSets(env), { onlyWhenReadOnly: true })
+}
+
+async function readStatusSets(env: Env): Promise<StatusSets> {
   const rows = (await env.DB.prepare("SELECT * FROM statuses ORDER BY position, id").all<Row>()).results
   const sets: StatusSets = { byApp: {}, byLicense: {} }
   for (const row of rows) {

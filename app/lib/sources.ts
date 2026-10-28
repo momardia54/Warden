@@ -77,7 +77,7 @@ export function versionFromTag(tag: string): string | null {
 }
 
 /** Releases with a pre-release suffix (2.0.0-beta.1, 3.0-rc1) are published on the beta channel. */
-export const channelForVersion = (version: string): "stable" | "beta" => (version.includes("-") ? "beta" : "stable")
+export const channelForVersion = (version: string): "stable" | "beta" => (version.split("+")[0].includes("-") ? "beta" : "stable")
 
 /** Validates the folder name a package is repacked into. Returns an error message, or null when valid. */
 export function packageFolderError(folder: string): string | null {

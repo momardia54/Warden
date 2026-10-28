@@ -82,6 +82,9 @@ test("repositories, tags and channels are read", () => {
   assert.equal(versionFromTag("nightly"), null)
   assert.equal(channelForVersion("2.0.0-beta.1"), "beta")
   assert.equal(channelForVersion("2.0.0"), "stable")
+  // A hyphen in build metadata does not make a pre-release.
+  assert.equal(channelForVersion("1.4.0+build-7"), "stable")
+  assert.equal(channelForVersion("1.4.0-rc.1+build-7"), "beta")
 })
 
 // ---- the GitHub flow, with GitHub replaced by a stub --------------------------------------------------
@@ -346,11 +349,17 @@ test("an archive over the file limit is refused while it downloads, and nothing 
 })
 
 test("deleting the owner removes its source", async () => {
-  const { env, license, owner, track } = await setup()
+  const { env, objects, license, owner, track } = await setup()
   const gh = github()
-  await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme" })
+  const saved = await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme" })
+  assert.ok("source" in saved)
+  // An import in progress has written part of its package, which has no file row yet: it is deleted too.
+  const packageKey = `${license.id}/fil_unfinished`
+  await env.DB.prepare("INSERT INTO source_imports (id, source_id, ref, state, started_at, stage, package_key) VALUES ('imp_1', ?, 'v1.0.0', 'pending', ?, 'repack', ?)").bind(saved.source.id, Date.now(), packageKey).run()
+  await env.FILES.put(packageKey, "partial")
   await deleteLicense(env, license.id)
   assert.equal((await env.DB.prepare("SELECT COUNT(*) AS n FROM release_sources").first<{ n: number }>())?.n, 0)
+  assert.equal(objects.has(packageKey), false)
 
   const created = await createApp(env, { name: "Harbor Theme", slug: "harbor-theme", description: "", default_duration_days: null, default_status: "active", default_max_sites: null, default_message: "", notes: "" })
   assert.ok("app" in created)

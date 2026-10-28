@@ -68,7 +68,7 @@ export default function Apps({ loaderData }: Route.ComponentProps) {
                 {apps.map((app) => (
                   <TableRow key={app.id}>
                     <TableCell>
-                      <Link to={`/apps/${app.id}`} className="font-medium hover:underline">
+                      <Link to={`/apps/${app.id}`} prefetch="intent" className="font-medium hover:underline">
                         {app.name}
                       </Link>
                       <div className="text-xs text-muted-foreground">{app.description || app.slug}</div>

@@ -414,12 +414,12 @@ export type OverviewStats = {
 }
 
 export async function overviewStats(env: Env, now = Date.now()): Promise<OverviewStats> {
-  const sets = await loadStatusSets(env)
-  const rows = (
-    await env.DB.prepare("SELECT l.id, l.status, l.expires_at, l.last_check_at, l.created_at, l.app_id, l.grace_days, a.grace_days AS app_grace_days FROM licenses l LEFT JOIN apps a ON a.id = l.app_id").all<
+  const [sets, { results: rows }] = await Promise.all([
+    loadStatusSets(env),
+    env.DB.prepare("SELECT l.id, l.status, l.expires_at, l.last_check_at, l.created_at, l.app_id, l.grace_days, a.grace_days AS app_grace_days FROM licenses l LEFT JOIN apps a ON a.id = l.app_id").all<
       Pick<License, "id" | "status" | "expires_at" | "last_check_at" | "created_at" | "app_id" | "grace_days" | "app_grace_days">
-    >()
-  ).results
+    >(),
+  ])
   const stats: OverviewStats = { total: rows.length, valid: 0, invalid: 0, endingSoon: 0, silent: 0, byStatus: {} }
   for (const row of rows) {
     const set = setForLicense(sets, row)
@@ -438,8 +438,10 @@ export async function overviewStats(env: Env, now = Date.now()): Promise<Overvie
 
 /** Licences that need a decision: valid and expiring soon (soonest first), and valid but silent (longest first). */
 export async function attentionLists(env: Env, limit = 8, now = Date.now()): Promise<{ expiring: License[]; silent: License[] }> {
-  const sets = await loadStatusSets(env)
-  const rows = (await env.DB.prepare(`${SELECT_LICENSES} WHERE l.expires_at IS NOT NULL OR l.last_check_at IS NULL OR l.last_check_at < ?`).bind(now - SILENT_AFTER_DAYS * 86_400_000).all<License>()).results
+  const [sets, { results: rows }] = await Promise.all([
+    loadStatusSets(env),
+    env.DB.prepare(`${SELECT_LICENSES} WHERE l.expires_at IS NOT NULL OR l.last_check_at IS NULL OR l.last_check_at < ?`).bind(now - SILENT_AFTER_DAYS * 86_400_000).all<License>(),
+  ])
   const expiring = rows.filter((l) => inView(l, setForLicense(sets, l), "expiring", now)).sort((a, b) => (a.expires_at ?? 0) - (b.expires_at ?? 0))
   const silent = rows.filter((l) => inView(l, setForLicense(sets, l), "silent", now)).sort((a, b) => (a.last_check_at ?? a.created_at) - (b.last_check_at ?? b.created_at))
   return { expiring: expiring.slice(0, limit), silent: silent.slice(0, limit) }
@@ -507,9 +509,12 @@ export async function scanLicenseEvents(env: Env, now = Date.now(), limit = 500)
 
   const expired = (
     await env.DB.prepare(
-      `${SELECT_LICENSES} WHERE l.expires_at IS NOT NULL AND l.expires_at <= ? AND (l.grace_notified_for IS NOT l.expires_at OR l.expired_notified_for IS NOT l.expires_at) ORDER BY l.expires_at LIMIT ?`,
+      // Only licences with an event due: the grace event not sent yet, or the expiry event once the grace period is
+      // over. A licence in its grace period, already reported, is not read again until then.
+      `${SELECT_LICENSES} WHERE l.expires_at IS NOT NULL AND l.expires_at <= ? AND (l.grace_notified_for IS NOT l.expires_at
+         OR (l.expired_notified_for IS NOT l.expires_at AND l.expires_at + COALESCE(l.grace_days, a.grace_days, 0) * 86400000 <= ?)) ORDER BY l.expires_at LIMIT ?`,
     )
-      .bind(now, limit)
+      .bind(now, now, limit)
       .all<License>()
   ).results
   for (const license of expired) {

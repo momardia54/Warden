@@ -14,6 +14,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const stored = await storeFile(env, { license }, {
     name: q.get("name") ?? "",
     statuses: q.get("statuses") ?? undefined,
+    track: q.get("track"),
     checkDomain: q.get("check_domain") !== "false",
     version: q.get("version") ?? "",
     channel: q.get("channel") ?? undefined,

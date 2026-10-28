@@ -23,12 +23,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   await requireAuth(request, env)
   const url = new URL(request.url)
   const days = readRange(url.searchParams.get("range"))
-  const apps = (await listApps(env)).map((a) => ({ id: a.id, name: a.name }))
-  const appParam = url.searchParams.get("app") ?? ""
-  const app = appParam === "none" ? "none" : (apps.find((a) => a.id === appParam)?.id ?? "")
   // A licence (from "View all" on a licence's chart) takes precedence over the app filter.
   const licenseParam = url.searchParams.get("license")
-  const license = licenseParam ? await getLicense(env, licenseParam) : null
+  const [appList, license] = await Promise.all([listApps(env), licenseParam ? getLicense(env, licenseParam) : null])
+  const apps = appList.map((a) => ({ id: a.id, name: a.name }))
+  const appParam = url.searchParams.get("app") ?? ""
+  const app = appParam === "none" ? "none" : (apps.find((a) => a.id === appParam)?.id ?? "")
   const scope: TrafficScope = license ? { license: license.id } : app === "none" ? { standalone: true } : app ? { app } : {}
   return { report: await trafficReport(env, scope, days), apps, app, license: license ? { id: license.id, name: license.name } : null }
 }
