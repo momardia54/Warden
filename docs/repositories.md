@@ -80,7 +80,7 @@ phpunit.xml     export-ignore
 
 ## Recent tags
 
-The section lists the latest tags with their state: *In progress*, *Published*, *Skipped* or *Failed*, with the reason. *Retry* runs a failed or skipped tag again. GitHub may deliver the same webhook more than once; a tag is published only once.
+The section lists the latest tags with their state: *In progress* (with the current step, such as "Repacking the archive: part 3 of 5 written."), *Published*, *Skipped* or *Failed*, with the reason. *Retry* runs a failed or skipped tag again. GitHub may deliver the same webhook more than once; a tag is published only once.
 
 *Publish a tag* publishes an existing tag by hand, for example one pushed before the webhook was added.
 
@@ -88,8 +88,10 @@ The section lists the latest tags with their state: *In progress*, *Published*, 
 
 ## Limits
 
-- Packages are limited to 100 MB, like uploads.
-- Publishing runs in the background after the webhook is answered. An import that does not finish within 15 minutes is reported as failed and can be retried.
+- Packages are limited to 100 MB, like uploads. An archive over the limit is refused while it downloads.
+- Publishing runs in the background after the webhook is answered, in three steps: the archive is downloaded into R2, repacked into the release's file 10 MB at a time, then recorded. Each step saves its progress, which keeps memory and CPU time low enough for the Workers free plan whatever the size of the repository (a 46 MB WordPress archive uses about 0.2 s of CPU).
+- If Cloudflare stops an import midway (a Workers CPU, memory or time limit), the scheduled run resumes it from the last part written within 10 minutes. An import stopped 3 times without progress, or still in progress after 6 hours, is reported as failed and can be retried.
+- To make archives smaller, leave out what the package does not need with `export-ignore` (see [What a tag publishes](#what-a-tag-publishes)).
 - A repository connected with neither the GitHub App nor an access token is read anonymously: GitHub allows 60 API requests per hour from the Worker's address. Publishing a tag uses one or two.
 
 ## API

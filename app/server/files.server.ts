@@ -5,7 +5,8 @@ import type { App } from "./apps.server"
 import type { License } from "./licenses.server"
 import { getStatusSetForApp, getStatusSetForLicense } from "./statuses.server"
 import { getTrack, overriddenStatuses, resolveTrackForRelease } from "./tracks.server"
-import { newId, toHex } from "./util.server"
+import { hashObject } from "./storage.server"
+import { newId } from "./util.server"
 
 /** The owner of a file: a single licence, or an app (shared by every licence of that app). */
 export type FileOwner = { license: License } | { app: App }
@@ -108,7 +109,12 @@ export type StoreInput = {
   contentType?: string | null
   size: number
   body: ReadableStream | null
+  /** A file already written to R2 (by a repository import): recorded as it is, under this id, instead of `body`. */
+  stored?: { id: string; key: string; sha256: string }
 }
+
+/** Where a file of this owner is kept in R2. */
+export const fileKey = (owner: FileOwner, id: string) => `${ownerId(owner)}/${id}`
 
 type Failure = { error: string; status: number }
 
@@ -126,43 +132,21 @@ function readChannel(raw: string | undefined): { channel: Channel } | { error: s
   return isChannel(channel) ? { channel } : { error: `channel must be one of: ${CHANNELS.join(", ")}.` }
 }
 
-/** Feeds bytes to SHA-256 as they pass. Workers have a streaming digest; elsewhere (tests) the bytes are collected first. */
-function sha256Hasher(): { update: (chunk: Uint8Array) => Promise<void>; digest: () => Promise<string> } {
-  const Native = (crypto as unknown as { DigestStream?: new (algorithm: string) => WritableStream<Uint8Array> & { digest: Promise<ArrayBuffer> } }).DigestStream
-  if (typeof Native === "function") {
-    const stream = new Native("SHA-256")
-    const writer = stream.getWriter()
-    return {
-      update: (chunk) => writer.write(chunk),
-      digest: async () => {
-        await writer.close()
-        return toHex(await stream.digest)
-      },
-    }
-  }
-  const chunks: Uint8Array[] = []
-  return {
-    update: async (chunk) => void chunks.push(chunk),
-    digest: async () => toHex(await crypto.subtle.digest("SHA-256", await new Blob(chunks as BlobPart[]).arrayBuffer())),
-  }
-}
-
 /**
- * Streams the body through a SHA-256 hash. In a Worker the result is wrapped in a FixedLengthStream, because R2 needs to
- * know the length of a stream in advance; it also fails the upload if fewer or more bytes arrive than announced.
+ * Streams the body to R2 untouched (a native copy, almost free in CPU), then hashes the stored object in blocks: far
+ * cheaper than hashing the body chunk by chunk as it passes. In a Worker the body is wrapped in a FixedLengthStream,
+ * because R2 needs to know the length of a stream in advance; it also fails the upload if fewer or more bytes arrive
+ * than announced.
  */
-function hashedBody(body: ReadableStream<Uint8Array>, size: number): { stream: ReadableStream; digest: () => Promise<string> } {
-  const hasher = sha256Hasher()
-  const hashed = body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      async transform(chunk, controller) {
-        await hasher.update(chunk)
-        controller.enqueue(chunk)
-      },
-    })
-  )
-  const stream = typeof FixedLengthStream === "function" ? hashed.pipeThrough(new FixedLengthStream(size)) : hashed
-  return { stream, digest: hasher.digest }
+async function putAndHash(env: Env, key: string, body: ReadableStream<Uint8Array>, size: number, contentType: string): Promise<string> {
+  const stream = typeof FixedLengthStream === "function" ? body.pipeThrough(new FixedLengthStream(size)) : body
+  await env.FILES.put(key, stream, { httpMetadata: { contentType } })
+  try {
+    return await hashObject(env, key, size)
+  } catch (error) {
+    await env.FILES.delete(key)
+    throw error
+  }
 }
 
 /** Validates the input, streams the body to R2 and records the file. */
@@ -173,7 +157,7 @@ export async function storeFile(env: Env, owner: FileOwner, input: StoreInput): 
   const set = await statusSetForOwner(env, owner)
   if (!Number.isFinite(input.size) || input.size <= 0) return { error: "The request body is empty or has no Content-Length header.", status: 411 }
   if (input.size > MAX_FILE_BYTES) return { error: `The file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB limit.`, status: 413 }
-  if (!input.body) return { error: "The request has no body.", status: 422 }
+  if (!input.body && !input.stored) return { error: "The request has no body.", status: 422 }
   const version = readVersion(input.version)
   if ("error" in version) return { error: version.error, status: 422 }
   const channel = readChannel(input.channel)
@@ -194,12 +178,10 @@ export async function storeFile(env: Env, owner: FileOwner, input: StoreInput): 
     if (!statuses) return { error: `statuses must be a comma separated list of licence statuses: ${set.map((s) => s.key).join(", ")}.`, status: 422 }
   }
 
-  const id = newId("fil")
-  const key = `${ownerId(owner)}/${id}`
+  const id = input.stored?.id ?? newId("fil")
+  const key = input.stored?.key ?? fileKey(owner, id)
   const contentType = (input.contentType || "application/octet-stream").slice(0, 120)
-  const body = hashedBody(input.body, input.size)
-  await env.FILES.put(key, body.stream, { httpMetadata: { contentType } })
-  const sha256 = await body.digest()
+  const sha256 = input.stored?.sha256 ?? (await putAndHash(env, key, input.body!, input.size, contentType))
   const now = Date.now()
   const label = version.version ? `${name} (version ${version.version}${channel.channel === "beta" ? ", beta" : ""})` : name
   try {

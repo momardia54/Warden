@@ -86,21 +86,68 @@ export function mockFetch(answer: (sent: Sent) => Response | Promise<Response> =
   return { sent, restore: () => void (globalThis.fetch = real) }
 }
 
-/** A stand-in for an R2 bucket: enough of put/get/delete for the file tests. */
+/** A stand-in for an R2 bucket: put/get (with ranges)/delete/list and multipart uploads. */
 export function makeBucket() {
   const objects = new Map<string, { bytes: Uint8Array; contentType?: string }>()
+  /** Multipart uploads in progress, by upload id. */
+  const uploads = new Map<string, { key: string; contentType?: string; parts: Map<number, Uint8Array> }>()
+  const toBytes = async (body: ReadableStream | ArrayBuffer | ArrayBufferView | string) =>
+    typeof body === "string"
+      ? new TextEncoder().encode(body)
+      : body instanceof ArrayBuffer
+        ? new Uint8Array(body)
+        : ArrayBuffer.isView(body)
+          ? new Uint8Array(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength))
+          : new Uint8Array(await new Response(body).arrayBuffer())
+  const multipart = (uploadId: string, key: string) => ({
+    uploadId,
+    key,
+    async uploadPart(partNumber: number, body: ReadableStream | ArrayBuffer | ArrayBufferView | string) {
+      const upload = uploads.get(uploadId)
+      if (!upload) throw new Error("uploadPart: unknown upload")
+      upload.parts.set(partNumber, await toBytes(body))
+      return { partNumber, etag: `etag-${partNumber}` }
+    },
+    async complete(parts: { partNumber: number }[]) {
+      const upload = uploads.get(uploadId)
+      if (!upload) throw new Error("complete: unknown upload")
+      const chunks = parts.map((p) => upload.parts.get(p.partNumber)!)
+      objects.set(key, { bytes: new Uint8Array(Buffer.concat(chunks)), contentType: upload.contentType })
+      uploads.delete(uploadId)
+    },
+    async abort() {
+      uploads.delete(uploadId)
+    },
+  })
+  let nextUpload = 0
   const bucket = {
     async put(key: string, body: ReadableStream | ArrayBuffer | string, options?: { httpMetadata?: { contentType?: string } }) {
-      const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body instanceof ArrayBuffer ? new Uint8Array(body) : new Uint8Array(await new Response(body).arrayBuffer())
-      objects.set(key, { bytes, contentType: options?.httpMetadata?.contentType })
+      objects.set(key, { bytes: await toBytes(body), contentType: options?.httpMetadata?.contentType })
     },
-    async get(key: string) {
+    async get(key: string, options?: { range?: { offset: number; length: number } }) {
       const o = objects.get(key)
-      return o ? { body: new Response(o.bytes).body, size: o.bytes.length } : null
+      if (!o) return null
+      const bytes = options?.range ? o.bytes.subarray(options.range.offset, options.range.offset + options.range.length) : o.bytes
+      return { body: new Response(bytes).body, size: o.bytes.length, arrayBuffer: async () => bytes.slice().buffer }
+    },
+    async head(key: string) {
+      const o = objects.get(key)
+      return o ? { size: o.bytes.length } : null
     },
     async delete(keys: string | string[]) {
       for (const k of Array.isArray(keys) ? keys : [keys]) objects.delete(k)
     },
+    async list(options?: { prefix?: string }) {
+      return { objects: [...objects.keys()].filter((k) => k.startsWith(options?.prefix ?? "")).map((key) => ({ key })), truncated: false }
+    },
+    async createMultipartUpload(key: string, options?: { httpMetadata?: { contentType?: string } }) {
+      const uploadId = `upload-${++nextUpload}`
+      uploads.set(uploadId, { key, contentType: options?.httpMetadata?.contentType, parts: new Map() })
+      return multipart(uploadId, key)
+    },
+    resumeMultipartUpload(key: string, uploadId: string) {
+      return multipart(uploadId, key)
+    },
   } as unknown as R2Bucket
-  return { bucket, objects }
+  return { bucket, objects, uploads }
 }

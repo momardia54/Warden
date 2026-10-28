@@ -36,8 +36,17 @@ export type ImportState = (typeof IMPORT_STATES)[number]
 
 export const IMPORT_STATE_LABELS: Record<ImportState, string> = { pending: "In progress", imported: "Published", skipped: "Skipped", failed: "Failed" }
 
-/** An import still pending after this long is reported as failed: the Worker that ran it has stopped. */
-export const IMPORT_TIMEOUT_MS = 15 * 60_000
+/**
+ * An import still pending after this long is reported as failed. A stopped import is normally resumed by the cron
+ * (every 10 minutes) or failed after IMPORT_MAX_ATTEMPTS runs without progress, well before this.
+ */
+export const IMPORT_TIMEOUT_MS = 6 * 60 * 60_000
+
+/** How long a run holds an import. After that, the cron may resume it: the Worker that ran it has stopped. */
+export const IMPORT_CLAIM_MS = 3 * 60_000
+
+/** Runs in a row that may stop without progress before an import is failed. */
+export const IMPORT_MAX_ATTEMPTS = 3
 
 export const isProvider = (value: unknown): value is ProviderKey => typeof value === "string" && (PROVIDERS as readonly string[]).includes(value)
 export const isTrigger = (value: unknown): value is TriggerKey => typeof value === "string" && (TRIGGERS as readonly string[]).includes(value)
