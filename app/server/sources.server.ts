@@ -2,6 +2,8 @@ import { MAX_FILE_BYTES } from "../lib/files"
 import { generateSecret } from "../lib/random"
 import {
   channelForVersion,
+  IMPORT_CLAIM_MS,
+  IMPORT_MAX_ATTEMPTS,
   IMPORT_TIMEOUT_MS,
   isProvider,
   isTrigger,
@@ -17,12 +19,13 @@ import {
   type TriggerKey,
 } from "../lib/sources"
 import { splitStatusKeys } from "../lib/statuses"
-import { partsStream, repackZip, ZipError } from "../lib/zip"
+import { fillPart, planRepack, readDirectory, sourceRange, tailLength, ZipError } from "../lib/zip"
 import { readTextUpTo } from "./api-http.server"
 import { getApp } from "./apps.server"
 import { findAppRepository, getGitHubApp, installationToken } from "./github-app.server"
-import { statusSetForOwner, storeFile, type FileOwner } from "./files.server"
+import { fileKey, statusSetForOwner, storeFile, type FileOwner } from "./files.server"
 import { getLicense } from "./licenses.server"
+import { blockSize, hashObject, readRange, sha256Hasher, uploadStream } from "./storage.server"
 import { github } from "./source-providers/github.server"
 import type { ProviderFailure, ProviderSource, SourceProvider } from "./source-providers/types"
 import { getTrack, listTracks, type ReleaseTrack } from "./tracks.server"
@@ -73,6 +76,14 @@ export type SourceImport = {
   file_id: string | null
   started_at: number
   finished_at: number | null
+  /** Progress of a pending import (migration 0015): see runImport. */
+  stage: "" | "repack" | "store"
+  upload_id: string
+  package_key: string
+  parts: string
+  archive_size: number | null
+  attempts: number
+  claimed_until: number | null
 }
 
 /** A source as the dashboard and the API show it: without the token, with the webhook address. */
@@ -286,6 +297,10 @@ export async function deleteSource(env: Env, source: ReleaseSource): Promise<voi
 
 const timedOut = (row: SourceImport, now: number) => row.state === "pending" && now - row.started_at > IMPORT_TIMEOUT_MS
 const TIMEOUT_DETAIL = "The import did not finish. Retry it."
+const STOPPED_DETAIL = `Cloudflare stopped the import ${IMPORT_MAX_ATTEMPTS} times without progress, most likely at the Workers CPU or memory limit. Retry it, or make the repository archive smaller (export-ignore in .gitattributes).`
+
+/** The working copy of an import in R2: the downloaded archive. The package is written directly as the release's file. */
+const archiveKey = (importId: string) => `imports/${importId}/archive.zip`
 
 /** The latest imports of a source, newest first. Imports pending for too long are reported as failed. */
 export async function listImports(env: Env, sourceId: string, limit = 20, now = Date.now()): Promise<SourceImport[]> {
@@ -297,15 +312,38 @@ export function getImport(env: Env, sourceId: string, importId: string): Promise
   return env.DB.prepare("SELECT * FROM source_imports WHERE id = ? AND source_id = ?").bind(importId, sourceId).first<SourceImport>()
 }
 
-/** Marks imports that never finished as failed. Run by the daily cron. */
+/**
+ * Marks imports that never finished as failed, and deletes working copies left in R2 by imports that no longer run
+ * (for example when their repository was disconnected during the import). Run by the daily cron.
+ */
 export async function pruneImports(env: Env, now = Date.now()): Promise<void> {
-  await env.DB.prepare("UPDATE source_imports SET state = 'failed', detail = ?, finished_at = ? WHERE state = 'pending' AND started_at < ?")
-    .bind(TIMEOUT_DETAIL, now, now - IMPORT_TIMEOUT_MS)
-    .run()
+  const stale = (await env.DB.prepare("SELECT id FROM source_imports WHERE state = 'pending' AND started_at < ?").bind(now - IMPORT_TIMEOUT_MS).all<{ id: string }>()).results
+  for (const row of stale) await finish(env, row.id, "failed", TIMEOUT_DETAIL)
+  if (!env.FILES) return
+  const listed = await env.FILES.list({ prefix: "imports/", limit: 1000 })
+  const ids = [...new Set(listed.objects.map((o) => o.key.split("/")[1]))].slice(0, 100)
+  for (const id of ids) {
+    const row = await env.DB.prepare("SELECT state FROM source_imports WHERE id = ?").bind(id).first<{ state: string }>()
+    if (row?.state !== "pending") await env.FILES.delete(archiveKey(id))
+  }
+}
+
+type Work = Pick<SourceImport, "stage" | "upload_id" | "package_key">
+
+/** Aborts the import's unfinished upload and deletes its working copy and its unpublished package. */
+async function discardWork(env: Env, id: string, work: Work, keepPackage = false): Promise<void> {
+  if (!env.FILES) return
+  if (work.upload_id) await env.FILES.resumeMultipartUpload(work.stage === "repack" ? work.package_key : archiveKey(id), work.upload_id).abort().catch(() => {})
+  await env.FILES.delete(work.package_key && !keepPackage ? [archiveKey(id), work.package_key] : archiveKey(id)).catch(() => {})
 }
 
 async function finish(env: Env, id: string, state: ImportState, detail: string, fileId: string | null = null): Promise<void> {
-  await env.DB.prepare("UPDATE source_imports SET state = ?, detail = ?, file_id = ?, finished_at = ? WHERE id = ?").bind(state, detail.slice(0, 500), fileId, Date.now(), id).run()
+  const work = await env.DB.prepare("SELECT stage, upload_id, package_key FROM source_imports WHERE id = ?").bind(id).first<Work>()
+  await env.DB.prepare("UPDATE source_imports SET state = ?, detail = ?, file_id = ?, finished_at = ?, stage = '', upload_id = '', package_key = '', parts = '[]', claimed_until = NULL WHERE id = ?")
+    .bind(state, detail.slice(0, 500), fileId, Date.now(), id)
+    .run()
+  // A published package is the release's file: it stays.
+  if (work) await discardWork(env, id, work, state === "imported")
 }
 
 /**
@@ -324,7 +362,11 @@ export async function startImport(env: Env, ctx: ExecutionContext, source: Relea
   if (!id) {
     const existing = (await env.DB.prepare("SELECT * FROM source_imports WHERE source_id = ? AND ref = ?").bind(source.id, ref).first<SourceImport>())!
     if (existing.state !== "failed" && !timedOut(existing, now)) return existing
-    await env.DB.prepare("UPDATE source_imports SET state = 'pending', detail = '', commit_sha = ?, version = ?, file_id = NULL, started_at = ?, finished_at = NULL WHERE id = ?")
+    await discardWork(env, existing.id, existing)
+    await env.DB.prepare(
+      `UPDATE source_imports SET state = 'pending', detail = '', commit_sha = ?, version = ?, file_id = NULL, started_at = ?, finished_at = NULL,
+       stage = '', upload_id = '', package_key = '', parts = '[]', archive_size = NULL, attempts = 0, claimed_until = NULL WHERE id = ?`,
+    )
       .bind(commit || existing.commit_sha, version, now, existing.id)
       .run()
     id = existing.id
@@ -333,7 +375,8 @@ export async function startImport(env: Env, ctx: ExecutionContext, source: Relea
     const example = `${source.tag_prefix}v1.4.0`
     await finish(env, id, "skipped", `"${ref}" is not a version tag of this track, so nothing was published. Name its release tags like ${example}.`)
   } else {
-    ctx.waitUntil(runImport(env, source, id).catch((error) => console.error("Release import failed:", error)))
+    const importId = id
+    ctx.waitUntil(runImport(env, importId).catch((error) => console.error("Release import failed:", error)))
   }
   return (await env.DB.prepare("SELECT * FROM source_imports WHERE id = ?").bind(id).first<SourceImport>())!
 }
@@ -350,52 +393,191 @@ export async function retryImport(env: Env, ctx: ExecutionContext, source: Relea
   return startImport(env, ctx, source, row.ref, row.commit_sha, now)
 }
 
-/** Downloads, repacks and publishes one tag. Records the outcome on the import; never throws. */
-export async function runImport(env: Env, source: ReleaseSource, importId: string): Promise<void> {
-  const row = await env.DB.prepare("SELECT * FROM source_imports WHERE id = ?").bind(importId).first<SourceImport>()
-  if (!row) return
+/**
+ * Resumes an import whose Worker stopped before it finished. Run by the cron every 10 minutes, one import per run so
+ * that each gets the run's whole CPU allowance. A run that has just started is left alone until its claim expires.
+ */
+export async function resumeImports(env: Env, now = Date.now()): Promise<void> {
+  const row = await env.DB.prepare(
+    "SELECT id FROM source_imports WHERE state = 'pending' AND (claimed_until IS NULL OR claimed_until < ?) AND started_at < ? ORDER BY started_at LIMIT 1",
+  )
+    .bind(now, now - IMPORT_CLAIM_MS)
+    .first<{ id: string }>()
+  if (row) await runImport(env, row.id, now)
+}
+
+/** How a run ends. A step returns either the import as saved after it, or an outcome. */
+type Outcome = { result: ImportState; detail: string; fileId?: string }
+const failed = (detail: string): Outcome => ({ result: "failed", detail })
+
+/**
+ * Downloads, repacks and publishes one tag, in three steps that each record their progress: download the archive
+ * into R2, repack it part by part into a second object, publish that object. A run continues from the last step
+ * completed, so an import stopped by a Workers limit is resumed by the cron instead of starting over. Each step works
+ * in blocks of 10 MiB (storage.server.ts), which keeps memory and CPU low whatever the size of the repository.
+ * Records the outcome on the import; never throws.
+ */
+export async function runImport(env: Env, importId: string, now = Date.now()): Promise<void> {
+  // Claim the import: a second run (a redelivery, the cron) leaves it alone while this one holds it.
+  const claimed = await env.DB.prepare(
+    "UPDATE source_imports SET attempts = attempts + 1, claimed_until = ? WHERE id = ? AND state = 'pending' AND (claimed_until IS NULL OR claimed_until < ?) RETURNING *",
+  )
+    .bind(now + IMPORT_CLAIM_MS, importId, now)
+    .first<SourceImport>()
+  if (!claimed) return
+  let row = claimed
+  let outcome: Outcome
   try {
-    const owner = await ownerOf(env, source)
-    if (!owner) return finish(env, row.id, "failed", "The app or licence of this source no longer exists.")
-    const track = source.track_id ? await getTrack(env, owner, source.track_id) : null
-    if (!track) return finish(env, row.id, "failed", "This repository is not connected to a track. Connect it to a track again.")
-    // Versions are unique within a track: another track (a final build, say) may publish the same number.
-    const duplicate = await env.DB.prepare("SELECT name FROM files WHERE track_id = ? AND version = ? AND withdrawn_at IS NULL LIMIT 1")
-      .bind(track.id, row.version)
-      .first<{ name: string }>()
-    if (duplicate) return finish(env, row.id, "skipped", `Version ${row.version} is already published in "${track.name}" (${duplicate.name}). Withdraw or delete it, then retry, to publish this tag instead.`)
-
-    const provider = PROVIDER_IMPLEMENTATIONS[source.provider]
-    const access = await credentials(env, source)
-    if ("error" in access) return finish(env, row.id, "failed", access.error)
-    let commit = row.commit_sha
-    if (!commit) {
-      const resolved = await provider.resolveCommit(access, row.ref)
-      if ("error" in resolved) return finish(env, row.id, "failed", resolved.error)
-      commit = resolved.commit
-      await env.DB.prepare("UPDATE source_imports SET commit_sha = ? WHERE id = ?").bind(commit, row.id).run()
-    }
-    const archive = await provider.downloadArchive(access, commit, MAX_FILE_BYTES)
-    if ("error" in archive) return finish(env, row.id, "failed", archive.error)
-
-    const zip = repackZip(archive.bytes, source.package_folder)
-    if (zip.size > MAX_FILE_BYTES) return finish(env, row.id, "failed", `The package exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB file limit.`)
-    const name = packageFileName(source.package_folder, row.version)
-    const stored = await storeFile(env, owner, {
-      name,
-      version: row.version,
-      channel: channelForVersion(row.version),
-      track: track.id,
-      notes: `Published from ${PROVIDER_INFO[source.provider].host}/${source.repository}, tag ${row.ref}, commit ${commit.slice(0, 7)}.`,
-      contentType: "application/zip",
-      size: zip.size,
-      body: partsStream(zip.parts),
-    })
-    if ("error" in stored) return finish(env, row.id, "failed", stored.error)
-    await finish(env, row.id, "imported", `Published ${name}.`, stored.file.id)
+    outcome = await (async (): Promise<Outcome> => {
+      if (row.attempts > IMPORT_MAX_ATTEMPTS) return failed(STOPPED_DETAIL)
+      const source = await getSourceById(env, row.source_id)
+      if (!source) return failed("The repository was disconnected.")
+      const target = await publishTarget(env, source, row)
+      if ("result" in target) return target
+      if (row.stage === "") {
+        const downloaded = await download(env, source, row)
+        if ("result" in downloaded) return downloaded
+        row = downloaded
+      }
+      let sha256: string | null = null
+      if (row.stage === "repack") {
+        const repacked = await repack(env, source, row, target.owner)
+        if ("result" in repacked) return repacked
+        row = repacked.row
+        sha256 = repacked.sha256
+      }
+      return publish(env, source, row, target, sha256)
+    })()
   } catch (error) {
-    await finish(env, row.id, "failed", error instanceof ZipError ? error.message : `Unexpected error: ${error instanceof Error ? error.message : String(error)}`)
+    outcome = failed(error instanceof ZipError ? error.message : `Unexpected error: ${error instanceof Error ? error.message : String(error)}`)
   }
+  await finish(env, row.id, outcome.result, outcome.detail, outcome.fileId ?? null)
+}
+
+/**
+ * Saves the import's state and holds it for another claim period. `advanced` marks completed work (a step or a part),
+ * which starts the attempts again from zero; bookkeeping before the work does not, or a run that always stops at the
+ * same point would be retried forever.
+ */
+async function save(env: Env, id: string, detail: string, changes: Record<string, string | number | null>, advanced: boolean): Promise<SourceImport> {
+  const columns = Object.keys(changes)
+  return (await env.DB.prepare(
+    `UPDATE source_imports SET ${columns.map((c) => `${c} = ?, `).join("")}detail = ?, ${advanced ? "attempts = 0, " : ""}claimed_until = ? WHERE id = ? RETURNING *`,
+  )
+    .bind(...columns.map((c) => changes[c]), detail, Date.now() + IMPORT_CLAIM_MS, id)
+    .first<SourceImport>())!
+}
+
+/** Where the tag is published, checked on every run: the owner or track may have been removed meanwhile. */
+async function publishTarget(env: Env, source: ReleaseSource, row: SourceImport): Promise<{ owner: FileOwner; track: ReleaseTrack } | Outcome> {
+  const owner = await ownerOf(env, source)
+  if (!owner) return failed("The app or licence of this source no longer exists.")
+  const track = source.track_id ? await getTrack(env, owner, source.track_id) : null
+  if (!track) return failed("This repository is not connected to a track. Connect it to a track again.")
+  // Versions are unique within a track: another track (a final build, say) may publish the same number.
+  const duplicate = await env.DB.prepare("SELECT name FROM files WHERE track_id = ? AND version = ? AND withdrawn_at IS NULL LIMIT 1")
+    .bind(track.id, row.version)
+    .first<{ name: string }>()
+  if (duplicate) {
+    return { result: "skipped", detail: `Version ${row.version} is already published in "${track.name}" (${duplicate.name}). Withdraw or delete it, then retry, to publish this tag instead.` }
+  }
+  return { owner, track }
+}
+
+/** Step 1: streams the repository archive into R2. Not resumable midway (the provider's download cannot be), so a stopped download starts again. */
+async function download(env: Env, source: ReleaseSource, row: SourceImport): Promise<SourceImport | Outcome> {
+  await discardWork(env, row.id, row)
+  const provider = PROVIDER_IMPLEMENTATIONS[source.provider]
+  const access = await credentials(env, source)
+  if ("error" in access) return failed(access.error)
+  let commit = row.commit_sha
+  if (!commit) {
+    const resolved = await provider.resolveCommit(access, row.ref)
+    if ("error" in resolved) return failed(resolved.error)
+    commit = resolved.commit
+  }
+  row = await save(env, row.id, "Downloading the repository archive.", { commit_sha: commit, upload_id: "" }, false)
+  const archive = await provider.downloadArchive(access, commit, MAX_FILE_BYTES)
+  if ("error" in archive) return failed(archive.error)
+  const size = await uploadStream(env, archiveKey(row.id), archive.body, MAX_FILE_BYTES, async (uploadId) => {
+    await env.DB.prepare("UPDATE source_imports SET upload_id = ? WHERE id = ?").bind(uploadId, row.id).run()
+  })
+  if (size === null) return failed(`The repository archive exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB file limit.`)
+  return save(env, row.id, "Repacking the archive.", { stage: "repack", archive_size: size, upload_id: "", parts: "[]" }, true)
+}
+
+/**
+ * Step 2: writes the package (the archive with its top folder renamed) directly as the release's file, a multipart
+ * upload of one part per loop turn. Each part is recorded, so a stopped run continues with the next one. The package
+ * is hashed as it is written; a run that resumes midway leaves the hash to step 3.
+ */
+async function repack(env: Env, source: ReleaseSource, row: SourceImport, owner: FileOwner): Promise<{ row: SourceImport; sha256: string | null } | Outcome> {
+  const archive = archiveKey(row.id)
+  const size = row.archive_size ?? 0
+  const tailOffset = size - tailLength(size)
+  const tail = await readRange(env, archive, tailOffset, size - tailOffset)
+  const directory = readDirectory(tail, tailOffset)
+  const central = directory.centralOffset >= tailOffset ? tail.subarray(directory.centralOffset - tailOffset) : await readRange(env, archive, directory.centralOffset, size - directory.centralOffset)
+  const plan = planRepack(central, directory, source.package_folder)
+  if (plan.size > MAX_FILE_BYTES) return failed(`The package exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB file limit.`)
+
+  const block = blockSize()
+  const total = Math.ceil(plan.size / block)
+  let parts = JSON.parse(row.parts) as R2UploadedPart[]
+  let upload: R2MultipartUpload
+  if (row.upload_id) {
+    upload = env.FILES.resumeMultipartUpload(row.package_key, row.upload_id)
+  } else {
+    const fileId = newId("fil")
+    const key = fileKey(owner, fileId)
+    upload = await env.FILES.createMultipartUpload(key, { httpMetadata: { contentType: "application/zip" } })
+    parts = []
+    row = await save(env, row.id, row.detail, { file_id: fileId, package_key: key, upload_id: upload.uploadId, parts: "[]" }, false)
+  }
+  const hasher = parts.length === 0 ? sha256Hasher() : null
+  // The original bytes of each part are read while the previous part uploads.
+  const read = (n: number) => {
+    const start = n * block
+    const end = Math.min(plan.size, start + block)
+    const range = sourceRange(plan, start, end)
+    const bytes = range ? readRange(env, archive, range.from, range.to - range.from) : Promise.resolve(new Uint8Array(0))
+    bytes.catch(() => {})
+    return { start, end, from: range?.from ?? 0, bytes }
+  }
+  let next = parts.length < total ? read(parts.length) : null
+  for (let n = parts.length; n < total; n++) {
+    const current = next!
+    next = n + 1 < total ? read(n + 1) : null
+    const out = new Uint8Array(current.end - current.start)
+    fillPart(plan, current.start, out, await current.bytes, current.from)
+    await hasher?.update(out)
+    parts.push(await upload.uploadPart(n + 1, out))
+    row = await save(env, row.id, `Repacking the archive: part ${n + 1} of ${total} written.`, { parts: JSON.stringify(parts) }, true)
+  }
+  await upload.complete(parts)
+  row = await save(env, row.id, "Publishing the package.", { stage: "store", upload_id: "" }, true)
+  await env.FILES.delete(archive)
+  return { row, sha256: hasher ? await hasher.digest() : null }
+}
+
+/** Step 3: records the package as a release of the track. */
+async function publish(env: Env, source: ReleaseSource, row: SourceImport, { owner, track }: { owner: FileOwner; track: ReleaseTrack }, sha256: string | null): Promise<Outcome> {
+  const object = row.package_key ? await env.FILES.head(row.package_key) : null
+  if (!object || !row.file_id) return failed("The repacked package is missing from storage. Retry the import.")
+  const name = packageFileName(source.package_folder, row.version)
+  const stored = await storeFile(env, owner, {
+    name,
+    version: row.version,
+    channel: channelForVersion(row.version),
+    track: track.id,
+    notes: `Published from ${PROVIDER_INFO[source.provider].host}/${source.repository}, tag ${row.ref}, commit ${row.commit_sha.slice(0, 7)}.`,
+    contentType: "application/zip",
+    size: object.size,
+    body: null,
+    stored: { id: row.file_id, key: row.package_key, sha256: sha256 ?? (await hashObject(env, row.package_key, object.size)) },
+  })
+  if ("error" in stored) return failed(stored.error)
+  return { result: "imported", detail: `Published ${name}.`, fileId: stored.file.id }
 }
 
 /** What the provider is called with: the source's own token, or a short-lived token of the GitHub App. */

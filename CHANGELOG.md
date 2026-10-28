@@ -4,12 +4,22 @@ All notable changes, newest first. Warden follows [semantic versioning](https://
 
 **Next, towards 1.0.0** (details in [Roadmap.md](Roadmap.md)):
 
-- **0.5.0, trust**: end-to-end tests on real Cloudflare (GitHub App, private repositories, phone width, CI), backups and export, two-factor sign-in or Cloudflare Access, independent security review
+- **0.5.0, trust**: end-to-end tests on real Cloudflare (GitHub App, private repositories, phone width, CI), backups and export, two-factor sign-in or Cloudflare Access, a complete OpenAPI description checked by tests, independent security review
 - **1.0.0**: the check response and the API are frozen
 
 ## 0.5.0 (unreleased)
 
 Not released yet: on the `develop` branch.
+
+### Fixed
+
+- **Publishing a large repository stopped the Worker** ("exceeded CPU time limit" or "exceeded memory limit"), on the Workers free plan from a few megabytes. An import used to hold the whole archive in memory twice and hash it chunk by chunk. It now streams the archive into R2 in 10 MB parts, repacks it part by part straight into the release's file and hashes each part once: a 46 MB WordPress archive takes about 0.2 s of CPU instead of being stopped at 1.7 s, with memory flat whatever the size ([docs/repositories.md](docs/repositories.md#limits)).
+- **Uploads** (dashboard and API) are stored first, then hashed in 10 MB blocks, instead of hashed chunk by chunk as they arrived, which used most of the CPU time of large uploads.
+
+### Changed
+
+- **Imports resume after a stop.** Each step of an import records its progress (migration 0015). If Cloudflare stops one midway, the scheduled run (every 10 minutes) continues it from the last part written, rather than the import failing after 15 minutes. An import is failed after 3 runs without progress or 6 hours in progress. While in progress, an import's `detail` names the current step.
+- A repository archive whose local file headers do not repeat the names of its central directory is refused as unsupported. GitHub archives are not affected.
 
 ## 0.4.0 (2026-10-11)
 

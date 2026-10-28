@@ -23,6 +23,9 @@ export interface SourceProvider {
   checkAccess(source: ProviderSource): Promise<{ ok: true; private: boolean; id: number | null } | ProviderFailure>
   /** Resolves a reference (tag, branch or commit) to its commit. */
   resolveCommit(source: ProviderSource, ref: string): Promise<{ commit: string } | ProviderFailure>
-  /** Downloads the zip archive of the repository at a commit, refusing archives larger than `maxBytes`. */
-  downloadArchive(source: ProviderSource, commit: string, maxBytes: number): Promise<{ bytes: Uint8Array } | ProviderFailure>
+  /**
+   * Opens the zip archive of the repository at a commit, refusing one announced as larger than `maxBytes`. The body
+   * is streamed to storage by the caller, which also enforces the limit when no size is announced.
+   */
+  downloadArchive(source: ProviderSource, commit: string, maxBytes: number): Promise<{ body: ReadableStream<Uint8Array> } | ProviderFailure>
 }

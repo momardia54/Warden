@@ -55,6 +55,7 @@ Version 1.0.0 freezes the check response and the API, so everything that would c
 - [ ] **End-to-end tests on real Cloudflare**: the GitHub App flow with a real app, private repositories with a token, phone-width layout, and CI that deploys a throwaway Worker and runs the checks against it
 - [ ] **Backups and export**: documented and tested D1 export and restore, and a data export from the dashboard
 - [ ] **Dashboard sign-in hardening**: two-factor authentication for the admin, or documented use of Cloudflare Access in front of the dashboard
+- [ ] **Complete OpenAPI description**: a schema for every response (no prose-only responses), the list envelope and every error code, the public `/check` and `/download` endpoints with their signature headers, the webhook payload, deprecated parts marked; a test that validates real responses against it, and a published `openapi.json` in the repository and on the documentation site
 - [ ] **An independent security review** of the check, download, webhook and API code
 
 ### 1.0.0: stable

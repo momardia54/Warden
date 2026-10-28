@@ -2,18 +2,17 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { makeBucket, makeCtx, makeDb, mockFetch, type Sent } from "./helpers/d1.ts"
 import { channelForVersion, parseRepository, versionFromTag } from "../app/lib/sources.ts"
-import { repackZip, ZipError } from "../app/lib/zip.ts"
+import { fillPart, planRepack, readDirectory, repackZip, sourceRange, ZipError } from "../app/lib/zip.ts"
 import { createApiKey } from "../app/server/api-keys.server.ts"
 import { handleApi } from "../app/server/api.server.ts"
 import { createApp, deleteApp } from "../app/server/apps.server.ts"
 import { listFiles } from "../app/server/files.server.ts"
 import { createLicense, deleteLicense, type LicenseInput } from "../app/server/licenses.server.ts"
-import { getSourceForTrack, handleWebhook, listImports, pruneImports, retryImport, saveSource, startImport } from "../app/server/sources.server.ts"
+import { getSourceForTrack, handleWebhook, listImports, pruneImports, resumeImports, retryImport, saveSource, startImport } from "../app/server/sources.server.ts"
+import { setBlockSizeForTests } from "../app/server/storage.server.ts"
 import { hmacHex } from "../app/server/util.server.ts"
 import { createTrack, type ReleaseTrack } from "../app/server/tracks.server.ts"
 import { buildZip, readZip } from "./helpers/zip.ts"
-
-const join = (parts: Uint8Array[]) => new Uint8Array(Buffer.concat(parts))
 
 test("repacking renames the top-level folder and keeps every entry intact", () => {
   for (const descriptor of [false, true]) {
@@ -27,18 +26,50 @@ test("repacking renames the top-level folder and keeps every entry intact", () =
     )
     const out = repackZip(zip, "harbor-theme")
     assert.equal(out.previousFolder, "harbor-studio-harbor-theme-3f2a9c1")
-    const read = readZip(join(out.parts))
+    const read = readZip(out.bytes)
     assert.deepEqual(read.files, { "harbor-theme/": "", "harbor-theme/style.css": "/* Theme Name: Harbor */", "harbor-theme/inc/setup.php": "<?php // setup" })
     assert.equal(read.comment, "3f2a9c1")
-    assert.equal(out.size, join(out.parts).length)
+    assert.equal(out.size, out.bytes.length)
   }
   // Entries not inside one folder are moved into the new one.
   const flat = repackZip(buildZip([["a.txt", "a"], ["sub/b.txt", "b"]]), "harbor-plugin")
   assert.equal(flat.previousFolder, null)
-  assert.deepEqual(readZip(join(flat.parts)).files, { "harbor-plugin/a.txt": "a", "harbor-plugin/sub/b.txt": "b" })
+  assert.deepEqual(readZip(flat.bytes).files, { "harbor-plugin/a.txt": "a", "harbor-plugin/sub/b.txt": "b" })
 
   assert.throws(() => repackZip(new TextEncoder().encode("not a zip at all, just text"), "x"), ZipError)
   assert.throws(() => repackZip(buildZip([["a", "a"]]), "../escape"), ZipError)
+})
+
+test("repacking part by part, from ranges of the original, writes the same archive", () => {
+  const files: [string, string][] = Array.from({ length: 40 }, (_, i) => [`harbor-studio-harbor-theme-3f2a9c1/file-${i}.php`, `<?php // ${"x".repeat(i * 7)}`])
+  for (const descriptor of [false, true]) {
+    const zip = buildZip(files, { comment: "3f2a9c1", descriptor })
+    const whole = repackZip(zip, "harbor-theme")
+    for (const folder of ["harbor-theme", "h", "a-much-longer-package-folder-name-than-the-original-one"]) {
+      const expected = repackZip(zip, folder).bytes
+      // Only the end of the archive is read to plan; then each part reads just the range it needs.
+      const tailOffset = zip.length - Math.min(zip.length, 200)
+      const directory = readDirectory(zip.subarray(tailOffset), tailOffset < 0 ? 0 : tailOffset)
+      const plan = planRepack(zip.subarray(directory.centralOffset), directory, folder)
+      for (const block of [1, 7, 64, 1000, plan.size]) {
+        const out = new Uint8Array(plan.size)
+        for (let start = 0; start < plan.size; start += block) {
+          const end = Math.min(plan.size, start + block)
+          const range = sourceRange(plan, start, end)
+          const from = range?.from ?? 0
+          fillPart(plan, start, out.subarray(start, end), range ? zip.slice(from, range.to) : new Uint8Array(0), from)
+        }
+        assert.deepEqual(out, expected, `${folder}, blocks of ${block}`)
+      }
+    }
+    assert.equal(Object.keys(readZip(whole.bytes).files).length, 40)
+  }
+
+  // A local header whose name differs in length from its central directory entry is refused.
+  const zip = buildZip([["r-abc/readme.txt", "hi"]])
+  const tampered = zip.slice()
+  new DataView(tampered.buffer).setUint16(26, 3, true)
+  assert.throws(() => repackZip(tampered, "harbor"), ZipError)
 })
 
 test("repositories, tags and channels are read", () => {
@@ -196,13 +227,121 @@ test("failures are recorded and can be retried; existing versions are not publis
   assert.match(skipped.detail, /already published/)
   assert.equal((await listFiles(env, owner)).length, 1)
 
-  // An import whose Worker stopped is reported as failed, and marked so by the cron.
+  // An import pending for hours is reported as failed, and marked so by the cron.
   const stale = { id: "imp_stale" }
-  await env.DB.prepare("INSERT INTO source_imports (id, source_id, ref, version, state, started_at) VALUES (?, ?, 'v9.9.9', '9.9.9', 'pending', ?)").bind(stale.id, source.id, Date.now() - 60 * 60_000).run()
+  await env.DB.prepare("INSERT INTO source_imports (id, source_id, ref, version, state, started_at, claimed_until) VALUES (?, ?, 'v9.9.9', '9.9.9', 'pending', ?, ?)")
+    .bind(stale.id, source.id, Date.now() - 7 * 60 * 60_000, Date.now() + 60_000)
+    .run()
   assert.equal((await listImports(env, source.id)).find((i) => i.id === stale.id)?.state, "failed")
   await pruneImports(env)
   assert.equal((await env.DB.prepare("SELECT state FROM source_imports WHERE id = ?").bind(stale.id).first<{ state: string }>())?.state, "failed")
   await settle()
+  gh.restore()
+})
+
+test("a large archive is published in parts, and an import stopped midway is resumed by the cron", async (t) => {
+  setBlockSizeForTests(256)
+  t.after(() => setBlockSizeForTests(10 * 1024 * 1024))
+  const { env, objects, ctx, settle, owner, track } = await setup()
+  const files: [string, string][] = Array.from({ length: 30 }, (_, i) => [`harbor-studio-harbor-theme-3f2a9c1/inc/part-${i}.php`, `<?php // part ${i} ${"y".repeat(50)}`])
+  const archive = buildZip(files, { comment: SHA, descriptor: true })
+  // GitHub streams the archive in small chunks of uneven size, without a Content-Length.
+  const chunked = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          for (let at = 0; at < archive.length; at += 37) controller.enqueue(archive.slice(at, at + 37))
+          controller.close()
+        },
+      }),
+    )
+  const gh = github({ archive: chunked })
+  const saved = await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme" })
+  assert.ok("source" in saved)
+  const source = saved.source
+  const expected = Object.fromEntries(files.map(([name, text]) => [name.replace("harbor-studio-harbor-theme-3f2a9c1/", "harbor-theme/"), text]))
+
+  // Uninterrupted: the archive and the package are written in many parts, and the working copies are removed.
+  await startImport(env, ctx, source, "v1.0.0", SHA)
+  await settle()
+  const [first] = await listFiles(env, owner)
+  assert.equal(first?.version, "1.0.0")
+  assert.deepEqual(readZip(objects.get(first.r2_key)!.bytes).files, expected)
+  const { createHash } = await import("node:crypto")
+  assert.equal(first.sha256, createHash("sha256").update(objects.get(first.r2_key)!.bytes).digest("hex"))
+  assert.equal([...objects.keys()].filter((k) => k.startsWith("imports/")).length, 0)
+
+  // The Worker stops while writing the third part of the package (the release's file): the run never finishes.
+  const bucket = env.FILES as unknown as { createMultipartUpload: (key: string, o?: unknown) => Promise<{ uploadPart: (n: number, b: Uint8Array) => Promise<unknown> }> }
+  const create = bucket.createMultipartUpload.bind(bucket)
+  let stopAtPart: number | null = 3
+  bucket.createMultipartUpload = async (key, o) => {
+    const upload = await create(key, o)
+    const uploadPart = upload.uploadPart.bind(upload)
+    upload.uploadPart = (n, b) => (!key.startsWith("imports/") && n === stopAtPart ? new Promise(() => {}) : uploadPart(n, b))
+    return upload
+  }
+  // The run started here never settles, like a Worker stopped by Cloudflare.
+  const started = await startImport(env, { waitUntil() {} } as unknown as ExecutionContext, source, "v1.1.0", SHA)
+  for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r))
+  let row = (await env.DB.prepare("SELECT * FROM source_imports WHERE id = ?").bind(started.id).first<Record<string, unknown>>())!
+  assert.equal(row.state, "pending")
+  assert.equal(row.stage, "repack")
+  assert.equal(JSON.parse(String(row.parts)).length, 2)
+  assert.match(String(row.detail), /part 2 of \d+ written/)
+
+  // The cron leaves it alone while the run holds it, then resumes from part 3 without downloading again.
+  stopAtPart = null
+  const downloads = gh.sent.filter((s) => s.url.includes("/zipball/")).length
+  await resumeImports(env, Date.now())
+  assert.equal((await env.DB.prepare("SELECT state FROM source_imports WHERE id = ?").bind(started.id).first<{ state: string }>())?.state, "pending")
+  await resumeImports(env, Date.now() + 4 * 60_000)
+  row = (await env.DB.prepare("SELECT * FROM source_imports WHERE id = ?").bind(started.id).first<Record<string, unknown>>())!
+  assert.equal(row.state, "imported", String(row.detail))
+  assert.equal(gh.sent.filter((s) => s.url.includes("/zipball/")).length, downloads)
+  const second = (await listFiles(env, owner)).find((f) => f.version === "1.1.0")!
+  assert.deepEqual(readZip(objects.get(second.r2_key)!.bytes).files, expected)
+  assert.equal([...objects.keys()].filter((k) => k.startsWith("imports/")).length, 0)
+
+  // An import stopped again and again without progress is failed, and its working copies are removed.
+  await env.DB.prepare(
+    "INSERT INTO source_imports (id, source_id, ref, version, state, started_at, stage, attempts, claimed_until) VALUES ('imp_stuck', ?, 'v1.2.0', '1.2.0', 'pending', ?, 'repack', 3, ?)",
+  )
+    .bind(source.id, Date.now() - 60 * 60_000, Date.now() - 1000)
+    .run()
+  objects.set("imports/imp_stuck/archive.zip", { bytes: archive })
+  await resumeImports(env, Date.now())
+  const stuck = (await listImports(env, source.id)).find((i) => i.id === "imp_stuck")!
+  assert.equal(stuck.state, "failed")
+  assert.match(stuck.detail, /stopped the import 3 times without progress/)
+  assert.equal(objects.has("imports/imp_stuck/archive.zip"), false)
+
+  // The daily clean-up removes working copies of imports that no longer exist.
+  objects.set("imports/imp_gone/archive.zip", { bytes: archive })
+  await pruneImports(env)
+  assert.equal(objects.has("imports/imp_gone/archive.zip"), false)
+  gh.restore()
+})
+
+test("an archive over the file limit is refused while it downloads, and nothing is kept", async () => {
+  const { env, objects, ctx, settle, owner, track } = await setup()
+  const huge = () =>
+    new Response(
+      new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(1024 * 1024))
+        },
+      }),
+    )
+  const gh = github({ archive: huge })
+  const saved = await saveSource(env, owner, track, { repository: "harbor-studio/harbor-theme" })
+  assert.ok("source" in saved)
+  await startImport(env, ctx, saved.source, "v1.0.0", SHA)
+  await settle()
+  const [row] = await listImports(env, saved.source.id)
+  assert.equal(row.state, "failed")
+  assert.match(row.detail, /exceeds the 100 MB file limit/)
+  assert.equal(objects.size, 0)
   gh.restore()
 })
 

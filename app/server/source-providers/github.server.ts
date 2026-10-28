@@ -75,27 +75,8 @@ export const github: SourceProvider = {
     const response = await fetch(`${API}/repos/${repoPath(source)}/zipball/${commit}`, { headers: headers(source) })
     if (!response.ok || !response.body) return failure(response, `the archive of ${commit.slice(0, 7)}`)
     if (Number(response.headers.get("content-length") ?? 0) > maxBytes) return tooLarge(maxBytes)
-    // The archive is generated on the fly and usually has no Content-Length, so the limit is enforced while reading.
-    const reader = response.body.getReader()
-    const chunks: Uint8Array[] = []
-    let size = 0
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > maxBytes) {
-        await reader.cancel().catch(() => {})
-        return tooLarge(maxBytes)
-      }
-      chunks.push(value)
-    }
-    const bytes = new Uint8Array(size)
-    let offset = 0
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset)
-      offset += chunk.byteLength
-    }
-    return { bytes }
+    // The archive is generated on the fly and has no Content-Length: the caller enforces the limit while storing it.
+    return { body: response.body }
   },
 }
 

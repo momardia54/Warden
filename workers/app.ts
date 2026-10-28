@@ -7,7 +7,7 @@ import { pruneBlocks } from "../app/server/ip-blocks.server"
 import { pruneIpEvents } from "../app/server/protection.server"
 import { pruneActivity, scanLicenseEvents } from "../app/server/licenses.server"
 import { deliverDue, flushAfterResponse, pruneDeliveries, rememberOrigin } from "../app/server/webhooks.server"
-import { handleAppWebhook, handleWebhook, pruneImports } from "../app/server/sources.server"
+import { handleAppWebhook, handleWebhook, pruneImports, resumeImports } from "../app/server/sources.server"
 import { withDashboardHeaders } from "../app/server/headers.server"
 import { initRequestCache } from "../app/server/request-cache.server"
 import { ensureMigrated, migrationFailureResponse, type Migration } from "../app/server/migrate.server"
@@ -76,8 +76,8 @@ export default {
     return withDashboardHeaders(response, request)
   },
 
-  // Runs every 10 minutes (wrangler.jsonc): time-based webhook events and due deliveries each time, the clean-up once
-  // a day. One cron trigger only, since an account has a limited number of them.
+  // Runs every 10 minutes (wrangler.jsonc): time-based webhook events, due deliveries and a stopped release import
+  // each time, the clean-up once a day. One cron trigger only, since an account has a limited number of them.
   async scheduled(controller, env, ctx) {
     await ensureMigrated(env.DB, migrations)
     const now = controller.scheduledTime
@@ -86,6 +86,7 @@ export default {
         .then(() => deliverDue(env, now, 100))
         .catch((error) => console.error("Warden webhooks failed:", error)),
     )
+    ctx.waitUntil(resumeImports(env, now).catch((error) => console.error("Warden import resume failed:", error)))
     const at = new Date(now)
     if (at.getUTCHours() !== 3 || at.getUTCMinutes() >= 10) return
     ctx.waitUntil(pruneActivity(env).catch((error) => console.error("Warden prune failed:", error)))
