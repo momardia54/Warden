@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useFetcher, useRevalidator } from "react-router"
-import { Archive, ArchiveRestore, Copy, FileUp, FlaskConical, Layers, Link2, MoreHorizontal, Paperclip, Pencil, Plus, Trash2, Upload } from "lucide-react"
+import { Archive, ArchiveRestore, Copy, FileUp, FlaskConical, Layers, Link2, MoreHorizontal, Paperclip, Pencil, Plus, Siren, Trash2, Upload } from "lucide-react"
 import { ConfirmAction } from "#/components/confirm-action"
 import { TrackSource, type ImportView, type SourceView } from "#/components/release-source"
 import { FieldLabel, HelpTip } from "#/components/help-tip"
@@ -14,7 +14,7 @@ import { Input } from "#/components/ui/input"
 import { NativeSelect } from "#/components/ui/native-select"
 import { Textarea } from "#/components/ui/textarea"
 import { defaultReleaseStatuses, evaluateFileAccess, MAX_FILE_BYTES } from "#/lib/files"
-import { CHANNELS, isValidVersion, latestRelease, MAX_CHANGELOG_LENGTH, MAX_KEEP_RELEASES, releasesToPrune, sortForDisplay, type Channel } from "#/lib/releases"
+import { CHANNELS, isUrgent, isValidVersion, latestRelease, MAX_CHANGELOG_LENGTH, MAX_KEEP_RELEASES, releasesToPrune, sortForDisplay, withUrgent, withoutUrgent, type Channel } from "#/lib/releases"
 import { describeStatusKeys, splitStatusKeys, type StatusSet } from "#/lib/statuses"
 import { statusConflicts, trackOverlaps } from "#/lib/tracks"
 import { cn } from "#/lib/utils"
@@ -150,6 +150,8 @@ export function FilesSection({
     } catch {}
   }
   const setWithdrawn = (file: FileRow, withdrawn: boolean) => action.submit({ intent: "update-file", fileId: file.id, withdrawn: String(withdrawn) }, { method: "post" })
+  /** Adds the urgent marker to the release notes (or takes it out) and saves: sites that stage updates read it and install at once. */
+  const setUrgent = (file: FileRow, urgent: boolean) => action.submit({ intent: "update-file", fileId: file.id, changelog: urgent ? withUrgent(file.changelog) : withoutUrgent(file.changelog) }, { method: "post" })
 
   if (!configured) {
     return (
@@ -180,6 +182,11 @@ export function FilesSection({
                 {f.channel === "beta" && (
                   <Badge variant="info">
                     <FlaskConical /> Beta
+                  </Badge>
+                )}
+                {kind === "releases" && isUrgent(f.changelog) && (
+                  <Badge variant="destructive">
+                    <Siren /> Urgent
                   </Badge>
                 )}
                 {withdrawn && <Badge variant="secondary">Withdrawn</Badge>}
@@ -226,6 +233,11 @@ export function FilesSection({
                   {f.sha256 && (
                     <DropdownMenuItem onClick={() => copy(f.sha256, `${f.id}-sha`)}>
                       <Copy /> Copy SHA-256 checksum
+                    </DropdownMenuItem>
+                  )}
+                  {!row.shared && f.version && (
+                    <DropdownMenuItem onClick={() => setUrgent(f, !isUrgent(f.changelog))}>
+                      <Siren /> {isUrgent(f.changelog) ? "Remove urgent mark" : "Mark as urgent"}
                     </DropdownMenuItem>
                   )}
                   {!row.shared && f.version && (
