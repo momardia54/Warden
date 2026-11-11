@@ -7,6 +7,12 @@ All notable changes, newest first. Warden follows [semantic versioning](https://
 - **0.7.0, trust**: end-to-end tests on real Cloudflare (GitHub App, private repositories, phone width, CI), backups and export, two-factor sign-in or Cloudflare Access, a complete OpenAPI description checked by tests, independent security review
 - **1.0.0**: the check response and the API are frozen
 
+## 0.6.3 (2026-11-11)
+
+### Added
+
+- **Mark a release as urgent.** A release's menu has **Mark as urgent** (and **Remove urgent mark**). It adds `[urgent]` on its own line to the release notes and saves, and the release shows an **Urgent** badge while the notes carry it. Warden has no separate flag: sites read the marker in the notes they are sent (`changelog`), and a site that stages its updates, such as the Dev Base theme, installs an urgent release at once instead of waiting for its share of the rollout window. Typing `[urgent]` in the notes by hand does the same, and shows the badge too.
+
 ## 0.6.2 (2026-11-06)
 
 ### Changed

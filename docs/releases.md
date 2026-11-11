@@ -107,6 +107,10 @@ Tag selects the app, its status selects a track, and channel selects stable/beta
 
 The same fields can be sent in a POST body: `{ "tag": "parent-theme", "domain": "harborstudio.com", "version": "1.3.0", "channel": "beta" }`.
 
+### Urgent releases
+
+Warden has no urgent flag. A release is urgent when its public release notes contain `[urgent]` (any case). **Mark as urgent** in a release's menu adds that line to the notes and saves, and **Remove urgent mark** takes it out; the release shows an **Urgent** badge while the marker is there. The marker travels in `update.latest.changelog` of the check answer. Whether it means anything is up to the site's updater: a client that staggers its updates can read the marker and install at once.
+
 ## Knowing which versions are installed
 
 The version and channel a site sends are recorded with the site, per attached app, including while its licence is invalid. A site is compared with the release its own check offers: the latest release of the track serving its licence's status, on the channel the site checks. Each site has exactly one state:
